@@ -1,73 +1,73 @@
-# React + TypeScript + Vite
+# Charge Radiation Sandbox
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+An interactive visualizer for electromagnetic fields produced by moving point charges, using exact Liénard-Wiechert potentials. Watch causality in action: fields depend on where the charge *was* when it emitted the signal, not where it is now.
 
-Currently, two official plugins are available:
+## What you will be able to learn
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+After a few minutes of exploration you should be able to see and understand:
 
-## React Compiler
+- **Retarded time and causality** — field changes propagate outward at speed c; slow c down to make the delay visible
+- **Velocity field** — Coulomb-like, always present, decays as 1/R²
+- **Acceleration field (radiation)** — only appears during acceleration, decays as 1/R, and can outrun the Coulomb field at large distances
+- **Radiation shell** — stop a moving charge suddenly and watch a shell of radiation expand outward at c
+- **Relativistic beaming** — a fast-moving charge concentrates its field in the forward direction
+- **Superposition** — multiple charges produce fields that add linearly
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Planned demo modes
 
-## Expanding the ESLint configuration
+| Mode | What to look for |
+|------|-----------------|
+| Stationary charge | Pure Coulomb field; radial arrows, 1/R² decay |
+| Uniform velocity | Beamed field, no radiation shell |
+| Sudden stop (Bremsstrahlung) | Expanding radiation shell at c; distinct inside/outside regions |
+| Oscillating charge | Dipole radiation pattern |
+| Draggable charge | Accelerate by dragging; radiation pulses appear as you move |
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+These modes arrive across M2–M5. See `SPEC.md` for the full milestone schedule.
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+## Current status
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+**M1 complete — physics core only.** The app currently renders a placeholder screen; no visualization or interaction UI exists yet.
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+What is implemented and tested:
+
+- `src/physics/types.ts` — core types: `Vec2`, `KinematicState`, `SimConfig`, `RetardedSolveResult`, `LWFieldResult`
+- `src/physics/vec2.ts` — 2D vector math helpers
+- `src/physics/chargeHistory.ts` — per-charge kinematic history buffer with binary-search interpolation and pruning
+- `src/physics/retardedTime.ts` — retarded-time root-finder (fixed-point iteration, max 15 steps, graceful fallback)
+- `src/physics/lienardWiechert.ts` — exact LW field evaluator: velocity term (1/R²) + acceleration term (1/R) + B field
+
+## Getting started (developers)
+
+```bash
+npm install
+npm run dev      # start dev server with hot reload
+npm test         # run physics unit tests (Vitest)
+npm run lint     # ESLint on all source files
+npm run build    # TypeScript strict build
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### Architecture
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+The target layout is three layers with hard dependency rules:
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
 ```
+src/physics/     — pure TypeScript, zero React imports, fully unit-tested   [exists]
+src/rendering/   — pure functions, no canvas/DOM                            [M2]
+src/components/  — React components, owns canvases and interaction hooks    [M2+]
+```
+
+Only `src/physics/` is meaningfully established. `src/rendering/` does not exist yet, and `src/components/` is still placeholder Vite scaffolding.
+
+Key design decisions:
+
+- **Analytical over numerical** — exact Liénard-Wiechert potentials, not FDTD grid solvers
+- **History-driven** — `ChargeHistory` is the single source of truth for all charge kinematics; the retarded-time solver reads from it
+- **c is always a parameter** — the speed of light is never hardcoded; slowing it down is a first-class feature
+- **Ref-based live state** — animation-frame loops will read from refs; React state drives only the control panel UI
+
+### Reference docs
+
+- `IDEAS.md` — Liénard-Wiechert math, retarded-time derivation, and why FDTD was ruled out
+- `SPEC.md` — milestone definitions and acceptance criteria
+- `AGENTS.md` — code style, naming conventions, and architectural constraints

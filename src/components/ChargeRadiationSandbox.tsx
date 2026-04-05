@@ -63,8 +63,12 @@ export function ChargeRadiationSandbox() {
     handleGlobalPointerMove,
     handleGlobalPointerUp,
     zoomAtClientPoint,
+    zoomAtCenter,
     resetCamera,
+    panBy,
   } = useSandboxCamera({ containerRef });
+
+  const PAN_STEP_PX = 80;
 
   // Simulation refs — written by the RAF tick, read by VectorFieldCanvas.
   const historyRef = useRef(new ChargeHistory());
@@ -262,6 +266,13 @@ export function ChargeRadiationSandbox() {
         fieldLayer={fieldLayer}
         onDemoModeChange={setDemoMode}
         onFieldLayerChange={setFieldLayer}
+        onResetView={resetCamera}
+        onZoomIn={() => zoomAtCenter(zoom * 1.5)}
+        onZoomOut={() => zoomAtCenter(zoom / 1.5)}
+        onPanLeft={() => panBy(-PAN_STEP_PX, 0)}
+        onPanRight={() => panBy(PAN_STEP_PX, 0)}
+        onPanUp={() => panBy(0, -PAN_STEP_PX)}
+        onPanDown={() => panBy(0, PAN_STEP_PX)}
       />
     </div>
   );

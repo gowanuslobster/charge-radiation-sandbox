@@ -12,6 +12,13 @@ type Props = {
   fieldLayer: FieldLayer;
   onDemoModeChange: (mode: DemoMode) => void;
   onFieldLayerChange: (layer: FieldLayer) => void;
+  onResetView: () => void;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onPanLeft: () => void;
+  onPanRight: () => void;
+  onPanUp: () => void;
+  onPanDown: () => void;
 };
 
 const PANEL_STYLE: CSSProperties = {
@@ -48,6 +55,21 @@ const BTN_ROW_STYLE: CSSProperties = {
   flexWrap: 'wrap',
 };
 
+const ICON_BTN_STYLE: CSSProperties = {
+  width: '26px',
+  height: '26px',
+  borderRadius: '4px',
+  border: '1px solid rgba(255,255,255,0.15)',
+  background: 'rgba(255,255,255,0.05)',
+  color: 'rgba(200,180,160,0.8)',
+  cursor: 'pointer',
+  fontSize: '13px',
+  padding: 0,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+};
+
 function btn(active: boolean, color: string): CSSProperties {
   return {
     padding: '4px 10px',
@@ -61,7 +83,12 @@ function btn(active: boolean, color: string): CSSProperties {
   };
 }
 
-export function ControlPanel({ demoMode, fieldLayer, onDemoModeChange, onFieldLayerChange }: Props) {
+export function ControlPanel({
+  demoMode, fieldLayer,
+  onDemoModeChange, onFieldLayerChange,
+  onResetView, onZoomIn, onZoomOut,
+  onPanLeft, onPanRight, onPanUp, onPanDown,
+}: Props) {
   return (
     <div style={PANEL_STYLE}>
       <div>
@@ -92,6 +119,29 @@ export function ControlPanel({ demoMode, fieldLayer, onDemoModeChange, onFieldLa
             onClick={() => onFieldLayerChange('accel')}>
             Accel E
           </button>
+        </div>
+      </div>
+      <div>
+        <div style={LABEL_STYLE}>Camera</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', alignItems: 'flex-start' }}>
+          <button style={btn(false, '#ff9050')} onClick={onResetView}>Reset view</button>
+          <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+            <button style={ICON_BTN_STYLE} onClick={onZoomOut}>−</button>
+            <span style={{ color: 'rgba(200,180,160,0.4)', fontSize: '11px' }}>zoom</span>
+            <button style={ICON_BTN_STYLE} onClick={onZoomIn}>+</button>
+          </div>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, 26px)',
+            gridTemplateRows: 'repeat(3, 26px)',
+            gap: '3px',
+          }}>
+            <span /><button style={ICON_BTN_STYLE} onClick={onPanUp}>↑</button><span />
+            <button style={ICON_BTN_STYLE} onClick={onPanLeft}>←</button>
+            <span />
+            <button style={ICON_BTN_STYLE} onClick={onPanRight}>→</button>
+            <span /><button style={ICON_BTN_STYLE} onClick={onPanDown}>↓</button><span />
+          </div>
         </div>
       </div>
     </div>

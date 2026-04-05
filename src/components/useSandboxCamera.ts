@@ -42,12 +42,20 @@ export type UseSandboxCameraResult = {
   getWorldFromClientPoint(clientX: number, clientY: number): Vec2 | null;
   /** Zoom to desiredZoom (absolute level) keeping the given client point fixed in world space. */
   zoomAtClientPoint(clientX: number, clientY: number, desiredZoom: number): void;
+  /** Zoom to desiredZoom (absolute level) keeping the viewport center fixed. */
+  zoomAtCenter(desiredZoom: number): void;
   beginPan(clientX: number, clientY: number): void;
   /** Returns true if this hook owns the event (pointer is currently panning). */
   handleGlobalPointerMove(event: PointerEvent): boolean;
   handleGlobalPointerUp(): void;
   /** Reset zoom=1, offsetX=0, offsetY=0 and publish updated viewBounds. */
   resetCamera(): void;
+  /**
+   * Shift the view by a discrete step given in CSS pixels.
+   * Sign convention matches drag pan: positive screenDx shifts view left (world moves right);
+   * positive screenDy shifts view up (world moves down on screen).
+   */
+  panBy(screenDx: number, screenDy: number): void;
 };
 
 export function useSandboxCamera({
@@ -258,6 +266,32 @@ export function useSandboxCamera({
     }
   }, [publishViewBounds]);
 
+  const zoomAtCenter = useCallback(
+    (desiredZoom: number) => {
+      const container = containerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      zoomAtClientPoint(rect.left + rect.width / 2, rect.top + rect.height / 2, desiredZoom);
+    },
+    [containerRef, zoomAtClientPoint]
+  );
+
+  const panBy = useCallback(
+    (screenDx: number, screenDy: number) => {
+      const base = baseBoundsRef.current;
+      const container = containerRef.current;
+      if (!base || !container) return;
+      const rect = container.getBoundingClientRect();
+      const spanX = (base.maxX - base.minX) / zoomRef.current;
+      const spanY = (base.maxY - base.minY) / zoomRef.current;
+      // Same sign convention as handleGlobalPointerMove.
+      offsetXRef.current -= screenDx * spanX / rect.width;
+      offsetYRef.current += screenDy * spanY / rect.height;
+      publishViewBounds();
+    },
+    [containerRef, publishViewBounds]
+  );
+
   const resetCamera = useCallback(() => {
     zoomRef.current = 1;
     offsetXRef.current = 0;
@@ -272,9 +306,11 @@ export function useSandboxCamera({
     isPanning,
     getWorldFromClientPoint,
     zoomAtClientPoint,
+    zoomAtCenter,
     beginPan,
     handleGlobalPointerMove,
     handleGlobalPointerUp,
     resetCamera,
+    panBy,
   };
 }

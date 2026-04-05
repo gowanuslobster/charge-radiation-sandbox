@@ -27,7 +27,7 @@ These modes arrive across M2–M5. See `SPEC.md` for the full milestone schedule
 
 ## Current status
 
-**M1 complete — physics core only.** The app currently renders a placeholder screen; no visualization or interaction UI exists yet.
+**M2 complete — canvas 2D vector grid.** The app renders an interactive electromagnetic field visualizer. Pan with right-drag or middle-drag, zoom with the scroll wheel.
 
 What is implemented and tested:
 
@@ -36,6 +36,16 @@ What is implemented and tested:
 - `src/physics/chargeHistory.ts` — per-charge kinematic history buffer with binary-search interpolation and pruning
 - `src/physics/retardedTime.ts` — retarded-time root-finder (fixed-point iteration, max 15 steps, graceful fallback)
 - `src/physics/lienardWiechert.ts` — exact LW field evaluator: velocity term (1/R²) + acceleration term (1/R) + B field
+- `src/rendering/worldSpace.ts` — world↔canvas coordinate transforms, view-bounds helpers, history-horizon geometry
+- `src/rendering/arrows.ts` — field magnitude → visual weight mapping, orange→hot-yellow palette, arrow geometry
+- `src/components/useSandboxCamera.ts` — pan/zoom hook with RAF-batched state updates and zoom-about-cursor
+- `src/components/VectorFieldCanvas.tsx` — 40×40 arrow grid, continuous RAF loop, DPR-aware canvas
+- `src/components/ChargeRadiationSandbox.tsx` — simulation tick, seeding, camera wiring
+- `src/components/ControlPanel.tsx` — demo mode and field layer toggles
+
+**Implemented demo modes:** stationary charge (pure Coulomb field), uniform velocity (relativistic beaming visible).
+
+**Implemented controls:** demo mode toggle, field-layer toggle (Total E / Velocity E / Acceleration E), pan, zoom.
 
 ## Getting started (developers)
 
@@ -53,11 +63,9 @@ The target layout is three layers with hard dependency rules:
 
 ```
 src/physics/     — pure TypeScript, zero React imports, fully unit-tested   [exists]
-src/rendering/   — pure functions, no canvas/DOM                            [M2]
-src/components/  — React components, owns canvases and interaction hooks    [M2+]
+src/rendering/   — pure functions, no canvas/DOM                            [exists]
+src/components/  — React components, owns canvases and interaction hooks    [exists]
 ```
-
-Only `src/physics/` is meaningfully established. `src/rendering/` does not exist yet, and `src/components/` is still placeholder Vite scaffolding.
 
 Key design decisions:
 

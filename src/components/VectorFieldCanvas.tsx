@@ -55,33 +55,47 @@ function drawArrow(ctx: CanvasRenderingContext2D, spec: ArrowSpec): void {
 
   const rgb = `rgb(${color.r},${color.g},${color.b})`;
   ctx.strokeStyle = rgb;
+  ctx.fillStyle = rgb;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
+  // Glow pass — wider stroke on stem, blurred filled triangle on head.
   if (glowBlur > 0) {
     ctx.globalAlpha = glowAlpha;
     ctx.lineWidth = lineWidth + 2;
     ctx.shadowBlur = glowBlur;
     ctx.shadowColor = rgb;
+
     ctx.beginPath();
     ctx.moveTo(x0, y0);
     ctx.lineTo(x1, y1);
-    ctx.moveTo(w1x, w1y);
-    ctx.lineTo(headX, headY);
-    ctx.lineTo(w2x, w2y);
     ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(headX, headY);
+    ctx.lineTo(w1x, w1y);
+    ctx.lineTo(w2x, w2y);
+    ctx.closePath();
+    ctx.fill();
+
     ctx.shadowBlur = 0;
   }
 
+  // Core pass — crisp stem stroke + filled triangle arrowhead (field-sandbox style).
   ctx.globalAlpha = alpha;
   ctx.lineWidth = lineWidth;
+
   ctx.beginPath();
   ctx.moveTo(x0, y0);
   ctx.lineTo(x1, y1);
-  ctx.moveTo(w1x, w1y);
-  ctx.lineTo(headX, headY);
-  ctx.lineTo(w2x, w2y);
   ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(headX, headY);
+  ctx.lineTo(w1x, w1y);
+  ctx.lineTo(w2x, w2y);
+  ctx.closePath();
+  ctx.fill();
 }
 
 export function VectorFieldCanvas({
@@ -168,6 +182,12 @@ export function VectorFieldCanvas({
       const charge = chargeRef.current;
       const config = configRef.current;
 
+      // Arrow length cap: grid cell size × 0.45 prevents arrows exceeding their cell
+      // when zoomed in. field-sandbox avoids this with fixed screen-space spacing;
+      // we use a world-space grid so the cap is computed per frame from canvas size.
+      const gridSpacingPx = Math.min(cssW / gridW, cssH / gridH);
+      const maxLengthPx = gridSpacingPx * 0.45;
+
       // Evaluate LW field at each grid point and fill the pre-allocated pool.
       // obsPos is mutated in place — no per-grid-point allocation.
       // transformWorldPoint is inlined to avoid a Vec2 allocation per point.
@@ -195,7 +215,7 @@ export function VectorFieldCanvas({
           const cpx = transform.a * obsPos.x + transform.e;
           const cpy = transform.d * obsPos.y + transform.f;
 
-          if (fillArrowSpec(arrowPool[arrowCount], cpx, cpy, fieldVec, transform)) {
+          if (fillArrowSpec(arrowPool[arrowCount], cpx, cpy, fieldVec, transform, maxLengthPx)) {
             arrowCount++;
           }
         }

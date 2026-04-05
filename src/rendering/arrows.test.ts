@@ -102,9 +102,29 @@ describe('buildArrowSpec', () => {
     expect(dx * 0 + dy * (-10)).toBeGreaterThan(0);
   });
 
-  it('stem starts at the provided canvas origin', () => {
+  it('sample point lies between arrow tail and tip (centered layout)', () => {
+    // field-sandbox style: 45% behind, 55% ahead of the sample point.
     const spec = buildArrowSpec(75, 30, { x: 2, y: 0 }, TRANSFORM)!;
-    expect(spec.x0).toBe(75);
-    expect(spec.y0).toBe(30);
+    // For a +x field: tail is left of 75, tip is right of 75, y unchanged.
+    expect(spec.x0).toBeLessThan(75);
+    expect(spec.x1).toBeGreaterThan(75);
+    expect(spec.y0).toBeCloseTo(30, 5);
+    expect(spec.y1).toBeCloseTo(30, 5);
+  });
+
+  it('respects maxLengthPx cap: stem length does not exceed the cap', () => {
+    const cap = 8;
+    const spec = buildArrowSpec(50, 50, { x: 1, y: 0 }, TRANSFORM, cap)!;
+    const stemLen = Math.sqrt((spec.x1 - spec.x0) ** 2 + (spec.y1 - spec.y0) ** 2);
+    expect(stemLen).toBeLessThanOrEqual(cap + 1e-9);
+  });
+
+  it('maxLengthPx does not artificially shorten a short arrow', () => {
+    // A very weak field produces a short arrow — a large cap should not change it.
+    const specCapped = buildArrowSpec(50, 50, { x: 0.01, y: 0 }, TRANSFORM, 1000)!;
+    const specUncapped = buildArrowSpec(50, 50, { x: 0.01, y: 0 }, TRANSFORM)!;
+    const lenCapped = Math.sqrt((specCapped.x1 - specCapped.x0) ** 2 + (specCapped.y1 - specCapped.y0) ** 2);
+    const lenUncapped = Math.sqrt((specUncapped.x1 - specUncapped.x0) ** 2 + (specUncapped.y1 - specUncapped.y0) ** 2);
+    expect(lenCapped).toBeCloseTo(lenUncapped, 9);
   });
 });

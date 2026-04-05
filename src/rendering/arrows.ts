@@ -26,12 +26,11 @@ export type ArrowSpec = {
   glowAlpha: number;
 };
 
-// Tuning constants — adjusted after first visual inspection if LW field magnitudes
-// at the default view radius map too dim or too bright.
+// Tuning constants — matched to field-sandbox where possible.
+// See AGENTS.md "Visual and interaction consistency" for the deviation policy.
 const HINT_SCALE = 1.65;       // 1 − exp(−mag * HINT_SCALE) → saturation rate
 const HOTNESS_EXPONENT = 4.8;  // sharpens the hot-white transition
 const PALETTE_BREAK = 0.38;    // hint value where the gradient switches segments
-const ARROW_LENGTH_FACTOR = 0.45; // fraction of one world-unit-in-pixels for max arrow length
 
 /**
  * Map raw field magnitude to all visual weights.
@@ -89,18 +88,24 @@ export function arrowColor(hint: number, hotness: number): RGB {
  * The field direction is converted to canvas space using the transform scale factors
  * (not a full point transform): screenDx = worldDx * a, screenDy = worldDy * d.
  * Since d is negative, the Y-axis flip is automatic.
+ *
+ * maxLengthPx caps arrow length in screen pixels regardless of zoom.
+ * Callers should pass (gridSpacingPx * 0.45) to prevent arrows exceeding their
+ * grid cell at high zoom — a deviation from field-sandbox required by the
+ * world-space (not screen-space) grid layout used here.
  */
 export function fillArrowSpec(
   out: ArrowSpec,
   canvasX: number,
   canvasY: number,
   fieldVec: Vec2,
-  transform: WorldToScreenTransform
+  transform: WorldToScreenTransform,
+  maxLengthPx = Infinity
 ): boolean {
   const worldMag = Math.sqrt(fieldVec.x * fieldVec.x + fieldVec.y * fieldVec.y);
   if (worldMag < 1e-4) return false;
 
-  const { hint, hotness, lengthStrength } = fieldToVisual(worldMag);
+  const { hint, hotness, lengthStrength, intensityStrength } = fieldToVisual(worldMag);
 
   // Inline arrowColor: mutate out.color without allocating an RGB object.
   const color = out.color;
@@ -125,22 +130,32 @@ export function fillArrowSpec(
   const ndx = sdx / screenDirMag;
   const ndy = sdy / screenDirMag;
 
-  // Arrow length: up to ARROW_LENGTH_FACTOR world-units-in-pixels, scaled by visual strength.
-  const maxLen = ARROW_LENGTH_FACTOR * Math.abs(transform.a);
-  const arrowLen = maxLen * lengthStrength;
+  // Arrow length: field-sandbox power-curve formula, capped to maxLengthPx.
+  // The cap prevents arrows overflowing their grid cell when zoomed in —
+  // field-sandbox avoids this because it uses fixed screen-space grid spacing.
+  const arrowLen = Math.min(
+    2.8 + Math.pow(lengthStrength, 0.38) * 18 + hotness * 3.0,
+    maxLengthPx
+  );
 
-  out.x0 = canvasX;
-  out.y0 = canvasY;
-  out.x1 = canvasX + ndx * arrowLen;
-  out.y1 = canvasY + ndy * arrowLen;
+  // Center the arrow on the sample point (field-sandbox style: 45% tail, 55% tip).
+  // This makes the arrow read as "field at this location" rather than "starting from here."
+  out.x0 = canvasX - ndx * arrowLen * 0.45;
+  out.y0 = canvasY - ndy * arrowLen * 0.45;
+  out.x1 = canvasX + ndx * arrowLen * 0.55;
+  out.y1 = canvasY + ndy * arrowLen * 0.55;
   out.headX = out.x1;
   out.headY = out.y1;
   out.wingAngle = 0.62;
-  out.headLength = Math.max(3, arrowLen * 0.3);
-  out.lineWidth = 1 + hint * 1.5;
-  out.alpha = 0.3 + hint * 0.7;
-  out.glowBlur = hint > 0.5 ? hint * 6 : 0;
-  out.glowAlpha = hint * 0.35;
+  // Head length: field-sandbox formula — grows with strength, not just raw arrowLen.
+  out.headLength = Math.max(3, 2.4 + Math.pow(lengthStrength, 0.5) * 6.6 + hotness * 1.8);
+  // Line width: field-sandbox formula — power curve + hotness boost.
+  out.lineWidth = 0.5 + Math.pow(lengthStrength, 0.45) * 2.6 + hotness * 0.7;
+  // Alpha: starts dim, steepens quickly — suppresses near-zero-field arrows.
+  out.alpha = 0.12 + Math.pow(intensityStrength, 3.65) * 0.88;
+  // Glow: field-sandbox formula, continuous from hint > 0.1 (no hard pop at 0.5).
+  out.glowBlur = hint > 0.1 ? 1 + Math.pow(intensityStrength, 2.7) * 16 : 0;
+  out.glowAlpha = hint > 0.1 ? 0.15 + Math.pow(intensityStrength, 2.0) * 0.3 : 0;
 
   return true;
 }
@@ -157,7 +172,8 @@ export function buildArrowSpec(
   canvasX: number,
   canvasY: number,
   fieldVec: Vec2,
-  transform: WorldToScreenTransform
+  transform: WorldToScreenTransform,
+  maxLengthPx = Infinity
 ): ArrowSpec | null {
   const out: ArrowSpec = {
     x0: 0, y0: 0, x1: 0, y1: 0,
@@ -167,5 +183,5 @@ export function buildArrowSpec(
     color: { r: 0, g: 0, b: 0 },
     glowBlur: 0, glowAlpha: 0,
   };
-  return fillArrowSpec(out, canvasX, canvasY, fieldVec, transform) ? out : null;
+  return fillArrowSpec(out, canvasX, canvasY, fieldVec, transform, maxLengthPx) ? out : null;
 }

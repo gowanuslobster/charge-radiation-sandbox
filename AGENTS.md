@@ -44,6 +44,18 @@ Important notes:
 
 This project should look and feel like a member of the same family as `field-sandbox`. A student who has used field-sandbox to explore electrostatics should find the interaction model, visual style, and panel layout immediately familiar here.
 
+### field-sandbox is the visual gold standard
+
+**`field-sandbox` is the authoritative reference for all visual and interaction decisions in this project.** When implementing any visual feature — arrow geometry, glow/blur curves, alpha curves, color palettes, canvas draw calls, control panel layout, camera behavior — match `field-sandbox` as closely as the code will allow.
+
+Deviate from field-sandbox only when:
+- The physics or architecture genuinely requires it (e.g., this project uses world-space grid spacing rather than fixed screen-space spacing, so arrow length must be capped relative to the world-space grid cell rather than being a fixed pixel value), or
+- A profiling measurement shows the field-sandbox approach causes unacceptable performance regression on this project's physics workload.
+
+When a deviation is made, document it in a code comment explaining why.
+
+If field-sandbox cannot be accessed directly, `wave-optics-sandbox` is the secondary reference. Do not invent a new visual approach when a working one exists in either sibling project.
+
 ### General principle
 
 Wherever this project implements a feature that has an analogue in field-sandbox (camera, charge manipulation, vector rendering, control panel, cursor readout), match the UX behavior and code organization. Do not invent a new interaction pattern when a working one already exists in the sibling project.

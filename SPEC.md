@@ -137,7 +137,7 @@ Implement the full interaction model (pan/zoom camera, floating control panel) a
 
 **Acceptance criteria:**
 - Scroll-to-zoom centered on cursor, right-drag to pan, matching field-sandbox
-- Floating control panel with: mode selector, play/pause/step/reset, `c` slider, field layer toggles (total field, velocity only, acceleration only)
+- Floating control panel with: mode selector, play/pause/step (implemented in M3), reset, `c` slider, field layer toggles (total field, velocity only, acceleration only)
 - Cursor readout showing field values at hover position (RAF-batched)
 - All five canonical demo modes functional and selectable
 - `c` slider works: lowering `c` visibly exaggerates causality delays; history buffer adjusts pruning window; graceful clamping if history underruns
@@ -173,7 +173,7 @@ Support two or more charges with independent history buffers. Fields superpose l
 - Does not own simulation behavior — pure UI surface
 - Sections:
   - **Mode selector:** dropdown or button group for the canonical demo modes
-  - **Playback:** play / pause / step / reset buttons
+  - **Playback:** play / pause / step (implemented in M3) / reset buttons
   - **Speed of light:** slider for `c` with visible numeric readout
   - **Field layers:** toggles for total field, velocity field, acceleration field
   - **Grid density:** selector (low / medium / high)

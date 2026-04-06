@@ -13,8 +13,11 @@ type FieldLayer = 'total' | 'vel' | 'accel';
 type Props = {
   demoMode: DemoMode;
   fieldLayer: FieldLayer;
+  isPaused: boolean;
   onDemoModeChange: (mode: DemoMode) => void;
   onFieldLayerChange: (layer: FieldLayer) => void;
+  onPauseToggle: () => void;
+  onStepForward: () => void;
   onResetView: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -31,8 +34,9 @@ const TOGGLE_BASE = 'rounded-md px-3 py-2 text-sm font-medium transition-all dur
 const ICON_BASE = 'flex h-7 w-7 items-center justify-center rounded-md text-sm text-white/85 bg-white/[0.12] hover:bg-white/20 transition-colors duration-200';
 
 export function ControlPanel({
-  demoMode, fieldLayer,
+  demoMode, fieldLayer, isPaused,
   onDemoModeChange, onFieldLayerChange,
+  onPauseToggle, onStepForward,
   onResetView, onZoomIn, onZoomOut,
   onPanLeft, onPanRight, onPanUp, onPanDown,
 }: Props) {
@@ -60,6 +64,23 @@ export function ControlPanel({
               ? 'bg-orange-400 text-black shadow-[0_0_16px_rgba(251,146,60,0.5)]'
               : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
             Sudden stop
+          </button>
+        </div>
+      </div>
+
+      {/* Playback */}
+      <div>
+        <p className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400">Playback</p>
+        <div className="flex gap-1.5">
+          <button type="button" onClick={onPauseToggle}
+            className={`${TOGGLE_BASE} ${isPaused
+              ? 'bg-indigo-300 text-black shadow-[0_0_16px_rgba(165,180,252,0.45)]'
+              : 'bg-indigo-400/20 text-indigo-200 hover:bg-indigo-400/35'}`}>
+            {isPaused ? 'Resume' : 'Pause'}
+          </button>
+          <button type="button" onClick={onStepForward}
+            className="rounded-md px-3 py-2 text-sm font-medium bg-zinc-200/20 text-zinc-200 hover:bg-zinc-200/32 transition-colors duration-200">
+            Step →
           </button>
         </div>
       </div>

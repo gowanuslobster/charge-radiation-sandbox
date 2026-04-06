@@ -89,6 +89,22 @@ export function ChargeRadiationSandbox() {
   const demoModeRef = useRef(demoMode);
   useEffect(() => { demoModeRef.current = demoMode; }, [demoMode]);
 
+  // Pause / step-forward state.
+  // isPausedRef is read inside the RAF closure; isPaused drives the button label.
+  // pendingStepRef signals the next tick to advance by STEP_DT and then stop again.
+  const [isPaused, setIsPaused] = useState(false);
+  const isPausedRef = useRef(false);
+  const pendingStepRef = useRef(false);
+
+  const togglePause = useCallback(() => {
+    isPausedRef.current = !isPausedRef.current;
+    setIsPaused(isPausedRef.current);
+  }, []);
+
+  const stepForward = useCallback(() => {
+    pendingStepRef.current = true;
+  }, []);
+
   // ─── Seeding ────────────────────────────────────────────────────────────────
 
   const reseed = useCallback((mode: DemoMode, db: WorldBounds) => {
@@ -149,10 +165,19 @@ export function ChargeRadiationSandbox() {
       // Step 0: initialization guard — no-op until first reseed completes.
       if (!hasSeededRef.current) return;
 
-      // Steps 1-2: advance simulation time, capped to 50 ms to prevent spiral-of-death
-      // when the tab is hidden (browsers throttle RAF on hidden tabs).
-      const dt = Math.min(wallTime - lastWallTimeRef.current, 50) / 1000;
+      // Steps 1-2: advance simulation time.
+      // lastWallTimeRef is always updated, even when paused, so resume is seamless.
+      // dt is capped to 50 ms to prevent spiral-of-death when the tab is hidden.
+      const rawDt = Math.min(wallTime - lastWallTimeRef.current, 50) / 1000;
       lastWallTimeRef.current = wallTime;
+
+      // Pause / step-forward: when paused and no step is pending, freeze here.
+      // When a step is pending, advance by one fixed step (≈1/30 s) and stop again.
+      const STEP_DT = 1 / 30;
+      if (isPausedRef.current && !pendingStepRef.current) return;
+      const dt = isPausedRef.current ? STEP_DT : rawDt;
+      if (isPausedRef.current) pendingStepRef.current = false;
+
       simTimeRef.current += dt;
 
       // Step 3: sample source state.
@@ -265,8 +290,11 @@ export function ChargeRadiationSandbox() {
       <ControlPanel
         demoMode={demoMode}
         fieldLayer={fieldLayer}
+        isPaused={isPaused}
         onDemoModeChange={setDemoMode}
         onFieldLayerChange={setFieldLayer}
+        onPauseToggle={togglePause}
+        onStepForward={stepForward}
         onResetView={resetCamera}
         onZoomIn={() => zoomAtCenter(zoom * 1.5)}
         onZoomOut={() => zoomAtCenter(zoom / 1.5)}

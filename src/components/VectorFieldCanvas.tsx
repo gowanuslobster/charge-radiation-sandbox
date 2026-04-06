@@ -23,65 +23,45 @@ type Props = {
   gridW?: number; // default 40
   gridH?: number; // default 40
   fieldLayer: 'total' | 'vel' | 'accel';
-  /**
-   * True while the user is panning. Reserved for a future quality tradeoff
-   * (e.g., reduce grid density during pan). Currently unused in M2.
-   */
+  /** True while the user is panning — halves grid density for responsiveness. */
   isPanning?: boolean;
+  isPausedRef?: RefObject<boolean>;
   /** Forwarded to the canvas element. Caller uses position:absolute inset:0. */
   style?: CSSProperties;
 };
 
-function drawArrow(ctx: CanvasRenderingContext2D, spec: ArrowSpec): void {
-  const { x0, y0, x1, y1, headX, headY, wingAngle, headLength, lineWidth, alpha, color, glowBlur, glowAlpha } = spec;
-
+// Shared wing-endpoint computation: rotate backward direction by ±wingAngle.
+// Returns [w1x, w1y, w2x, w2y].
+function wingPoints(spec: ArrowSpec): [number, number, number, number] {
+  const { x0, y0, x1, y1, headX, headY, wingAngle, headLength } = spec;
   const dx = x1 - x0;
   const dy = y1 - y0;
   const len = Math.sqrt(dx * dx + dy * dy);
-  if (len < 1) return;
-
   const ux = dx / len;
   const uy = dy / len;
-
-  // Wing endpoints: rotate backward direction (−ux, −uy) by ±wingAngle.
-  // Rotation of (−ux, −uy) by +θ: (−ux·cosθ + uy·sinθ, −ux·sinθ − uy·cosθ)
-  // Rotation of (−ux, −uy) by −θ: (−ux·cosθ − uy·sinθ,  ux·sinθ − uy·cosθ)
   const cos = Math.cos(wingAngle);
   const sin = Math.sin(wingAngle);
-  const w1x = headX + headLength * (-ux * cos + uy * sin);
-  const w1y = headY + headLength * (-ux * sin - uy * cos);
-  const w2x = headX + headLength * (-ux * cos - uy * sin);
-  const w2y = headY + headLength * (ux * sin - uy * cos);
+  return [
+    headX + headLength * (-ux * cos + uy * sin),
+    headY + headLength * (-ux * sin - uy * cos),
+    headX + headLength * (-ux * cos - uy * sin),
+    headY + headLength * (ux * sin - uy * cos),
+  ];
+}
+
+// Pass 1: crisp core arrow — stem stroke + filled triangle arrowhead. No shadow.
+function drawArrowCore(ctx: CanvasRenderingContext2D, spec: ArrowSpec): void {
+  const { x0, y0, x1, y1, headX, headY, lineWidth, alpha, color } = spec;
+
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  if (Math.sqrt(dx * dx + dy * dy) < 1) return;
 
   const rgb = `rgb(${color.r},${color.g},${color.b})`;
   ctx.strokeStyle = rgb;
   ctx.fillStyle = rgb;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-
-  // Glow pass — wider stroke on stem, blurred filled triangle on head.
-  if (glowBlur > 0) {
-    ctx.globalAlpha = glowAlpha;
-    ctx.lineWidth = lineWidth + 2;
-    ctx.shadowBlur = glowBlur;
-    ctx.shadowColor = rgb;
-
-    ctx.beginPath();
-    ctx.moveTo(x0, y0);
-    ctx.lineTo(x1, y1);
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.moveTo(headX, headY);
-    ctx.lineTo(w1x, w1y);
-    ctx.lineTo(w2x, w2y);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.shadowBlur = 0;
-  }
-
-  // Core pass — crisp stem stroke + filled triangle arrowhead (field-sandbox style).
   ctx.globalAlpha = alpha;
   ctx.lineWidth = lineWidth;
 
@@ -90,6 +70,35 @@ function drawArrow(ctx: CanvasRenderingContext2D, spec: ArrowSpec): void {
   ctx.lineTo(x1, y1);
   ctx.stroke();
 
+  const [w1x, w1y, w2x, w2y] = wingPoints(spec);
+  ctx.beginPath();
+  ctx.moveTo(headX, headY);
+  ctx.lineTo(w1x, w1y);
+  ctx.lineTo(w2x, w2y);
+  ctx.closePath();
+  ctx.fill();
+}
+
+// Pass 2 (glow): draw the wider glow shape without any shadow.
+// The caller composites this onto the main canvas with a CSS blur filter,
+// so one Gaussian blur covers all glow arrows instead of one per arrow.
+function drawArrowGlowShape(ctx: CanvasRenderingContext2D, spec: ArrowSpec): void {
+  const { x0, y0, x1, y1, headX, headY, lineWidth, glowAlpha, color } = spec;
+
+  const rgb = `rgb(${color.r},${color.g},${color.b})`;
+  ctx.strokeStyle = rgb;
+  ctx.fillStyle = rgb;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.globalAlpha = glowAlpha;
+  ctx.lineWidth = lineWidth + 2;
+
+  ctx.beginPath();
+  ctx.moveTo(x0, y0);
+  ctx.lineTo(x1, y1);
+  ctx.stroke();
+
+  const [w1x, w1y, w2x, w2y] = wingPoints(spec);
   ctx.beginPath();
   ctx.moveTo(headX, headY);
   ctx.lineTo(w1x, w1y);
@@ -107,8 +116,8 @@ export function VectorFieldCanvas({
   gridW = 40,
   gridH = 40,
   fieldLayer,
-  // isPanning is reserved for a future quality tradeoff (e.g., reduce grid density
-  // during active pan). Not used in M2.
+  isPanning = false,
+  isPausedRef,
   style,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -117,8 +126,10 @@ export function VectorFieldCanvas({
   // without needing to restart the effect when props change.
   const boundsRef = useRef(bounds);
   const fieldLayerRef = useRef(fieldLayer);
+  const isPanningRef = useRef(isPanning);
   useEffect(() => { boundsRef.current = bounds; }, [bounds]);
   useEffect(() => { fieldLayerRef.current = fieldLayer; }, [fieldLayer]);
+  useEffect(() => { isPanningRef.current = isPanning; }, [isPanning]);
 
   // Main RAF loop. Restarts only if grid dimensions change (rare).
   useEffect(() => {
@@ -128,6 +139,12 @@ export function VectorFieldCanvas({
     if (!ctx) return;
 
     let rafId: number;
+
+    // Off-DOM canvas for the glow pass. Glow shapes are drawn here (no shadowBlur),
+    // then composited onto the main canvas with ctx.filter = 'blur(8px)' — one
+    // Gaussian blur per frame instead of one per arrow.
+    const glowCanvas = document.createElement('canvas');
+    const glowCtx = glowCanvas.getContext('2d')!;
 
     // Pre-allocate object pool for the 40×40 grid loop (AGENTS.md §123: avoid inner-loop
     // allocation). Each slot owns its RGB so fillArrowSpec can mutate color in place.
@@ -143,6 +160,10 @@ export function VectorFieldCanvas({
     // Scratch observation-position object: mutated per grid point, never reallocated.
     const obsPos = { x: 0, y: 0 };
 
+    // Cached arrow count from the last solve. When paused, we skip the solve and
+    // redraw the existing pool contents. Initialised to -1 so the first frame always solves.
+    let cachedArrowCount = -1;
+
     // DPR-aware sizing via ResizeObserver.
     // Setting canvas.width/height resets the ctx transform, so we re-apply DPR scale here.
     // Re-check canvas/ctx inside the callback: TypeScript does not carry null-narrowing
@@ -156,6 +177,10 @@ export function VectorFieldCanvas({
       canvas.width = cssW * dpr;
       canvas.height = cssH * dpr;
       ctx.scale(dpr, dpr);
+      // Glow canvas lives in CSS pixel space (no DPR scale) — it is drawn
+      // into the DPR-scaled main ctx via drawImage, which handles the upscale.
+      glowCanvas.width = cssW;
+      glowCanvas.height = cssH;
     });
     ro.observe(canvas);
 
@@ -167,70 +192,102 @@ export function VectorFieldCanvas({
       const cssH = canvas.clientHeight;
       if (cssW === 0 || cssH === 0) return;
 
+      // When paused and the pool is already populated, skip the LW solve and
+      // redraw the cached arrows. The charge marker still redraws so the canvas
+      // doesn't go blank, but avoids 1600 unnecessary solves per frame.
+      const paused = isPausedRef?.current ?? false;
+      const needsSolve = !paused || cachedArrowCount < 0;
+
       ctx.clearRect(0, 0, cssW, cssH);
       ctx.globalAlpha = 1;
       ctx.shadowBlur = 0;
 
       const currentBounds = boundsRef.current;
       const transform = getWorldToScreenTransform(currentBounds, cssW, cssH);
-      const spanX = currentBounds.maxX - currentBounds.minX;
-      const spanY = currentBounds.maxY - currentBounds.minY;
       const layer = fieldLayerRef.current;
 
-      const history = historyRef.current;
-      const simTime = simulationTimeRef.current;
-      const charge = chargeRef.current;
-      const config = configRef.current;
+      // During active pan, halve the grid to cut solve count by 75%.
+      const activeGridW = isPanningRef.current ? Math.ceil(gridW / 2) : gridW;
+      const activeGridH = isPanningRef.current ? Math.ceil(gridH / 2) : gridH;
 
       // Arrow length cap: grid cell size × 0.45 prevents arrows exceeding their cell
       // when zoomed in. field-sandbox avoids this with fixed screen-space spacing;
       // we use a world-space grid so the cap is computed per frame from canvas size.
-      const gridSpacingPx = Math.min(cssW / gridW, cssH / gridH);
+      const gridSpacingPx = Math.min(cssW / activeGridW, cssH / activeGridH);
       const maxLengthPx = gridSpacingPx * 0.45;
 
-      // Evaluate LW field at each grid point and fill the pre-allocated pool.
-      // obsPos is mutated in place — no per-grid-point allocation.
-      // transformWorldPoint is inlined to avoid a Vec2 allocation per point.
-      let arrowCount = 0;
-      for (let j = 0; j < gridH; j++) {
-        for (let i = 0; i < gridW; i++) {
-          obsPos.x = currentBounds.minX + (i + 0.5) * spanX / gridW;
-          obsPos.y = currentBounds.minY + (j + 0.5) * spanY / gridH;
+      if (needsSolve) {
+        const spanX = currentBounds.maxX - currentBounds.minX;
+        const spanY = currentBounds.maxY - currentBounds.minY;
+        const history = historyRef.current;
+        const simTime = simulationTimeRef.current;
+        const charge = chargeRef.current;
+        const config = configRef.current;
 
-          const result = evaluateLienardWiechertField({
-            observationPos: obsPos,
-            observationTime: simTime,
-            history,
-            charge,
-            config,
-          });
-          if (!result) continue;
+        // Evaluate LW field at each grid point and fill the pre-allocated pool.
+        // obsPos is mutated in place — no per-grid-point allocation.
+        // transformWorldPoint is inlined to avoid a Vec2 allocation per point.
+        let arrowCount = 0;
+        for (let j = 0; j < activeGridH; j++) {
+          for (let i = 0; i < activeGridW; i++) {
+            obsPos.x = currentBounds.minX + (i + 0.5) * spanX / activeGridW;
+            obsPos.y = currentBounds.minY + (j + 0.5) * spanY / activeGridH;
 
-          const fieldVec =
-            layer === 'vel' ? result.eVel :
-            layer === 'accel' ? result.eAccel :
-            result.eTotal;
+            const result = evaluateLienardWiechertField({
+              observationPos: obsPos,
+              observationTime: simTime,
+              history,
+              charge,
+              config,
+            });
+            if (!result) continue;
 
-          // Inline transformWorldPoint: screenX = a*wx + e, screenY = d*wy + f.
-          const cpx = transform.a * obsPos.x + transform.e;
-          const cpy = transform.d * obsPos.y + transform.f;
+            const fieldVec =
+              layer === 'vel' ? result.eVel :
+              layer === 'accel' ? result.eAccel :
+              result.eTotal;
 
-          if (fillArrowSpec(arrowPool[arrowCount], cpx, cpy, fieldVec, transform, maxLengthPx)) {
-            arrowCount++;
+            // Inline transformWorldPoint: screenX = a*wx + e, screenY = d*wy + f.
+            const cpx = transform.a * obsPos.x + transform.e;
+            const cpy = transform.d * obsPos.y + transform.f;
+
+            if (fillArrowSpec(arrowPool[arrowCount], cpx, cpy, fieldVec, transform, maxLengthPx)) {
+              arrowCount++;
+            }
           }
         }
+        cachedArrowCount = arrowCount;
       }
 
-      // Draw all arrows.
+      // Two-pass draw: core arrows first (no shadow state), then glow-only pass.
+      // Batching shadowBlur changes avoids toggling the GPU compositor per arrow.
+      const arrowCount = cachedArrowCount;
+
+      // Pass 1: core (stem + arrowhead, no shadow).
       for (let k = 0; k < arrowCount; k++) {
-        drawArrow(ctx, arrowPool[k]);
+        drawArrowCore(ctx, arrowPool[k]);
       }
+
+      // Pass 2: glow overlay.
+      // Draw glow shapes onto the off-DOM glowCanvas (no shadowBlur), then
+      // composite the whole canvas onto the main canvas with a single CSS blur.
+      // One Gaussian blur per frame instead of one per qualifying arrow.
+      glowCtx.clearRect(0, 0, cssW, cssH);
+      for (let k = 0; k < arrowCount; k++) {
+        const spec = arrowPool[k];
+        if (spec.glowBlur > 0) {
+          drawArrowGlowShape(glowCtx, spec);
+        }
+      }
+      ctx.save();
+      ctx.filter = 'blur(8px)';
       ctx.globalAlpha = 1;
-      ctx.shadowBlur = 0;
+      ctx.drawImage(glowCanvas, 0, 0);
+      ctx.restore();
 
       // Draw source charge marker from newest recorded state.
       // newest() is null before the first reseed completes (brief window during mount).
-      const newest = history.newest();
+      const newest = historyRef.current.newest();
       if (newest !== null) {
         const mp = transformWorldPoint(newest.pos, transform);
         const radius = 8;

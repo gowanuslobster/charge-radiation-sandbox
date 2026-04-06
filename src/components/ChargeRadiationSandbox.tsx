@@ -285,6 +285,7 @@ export function ChargeRadiationSandbox() {
         bounds={viewBounds}
         fieldLayer={fieldLayer}
         isPanning={isPanning}
+        isPausedRef={isPausedRef}
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
       />
       <ControlPanel

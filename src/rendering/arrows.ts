@@ -153,9 +153,10 @@ export function fillArrowSpec(
   out.lineWidth = 0.5 + Math.pow(lengthStrength, 0.45) * 2.6 + hotness * 0.7;
   // Alpha: starts dim, steepens quickly — suppresses near-zero-field arrows.
   out.alpha = 0.12 + Math.pow(intensityStrength, 3.65) * 0.88;
-  // Glow: field-sandbox formula, continuous from hint > 0.1 (no hard pop at 0.5).
-  out.glowBlur = hint > 0.1 ? 1 + Math.pow(intensityStrength, 2.7) * 16 : 0;
-  out.glowAlpha = hint > 0.1 ? 0.15 + Math.pow(intensityStrength, 2.0) * 0.3 : 0;
+  // Glow: only for arrows above the visual midpoint — keeps the expensive shadow
+  // compositor path off low-intensity (dim, distant) arrows.
+  out.glowBlur = hint > 0.5 ? 1 + Math.pow(intensityStrength, 2.7) * 16 : 0;
+  out.glowAlpha = hint > 0.5 ? 0.15 + Math.pow(intensityStrength, 2.0) * 0.3 : 0;
 
   return true;
 }

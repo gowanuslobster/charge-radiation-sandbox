@@ -28,26 +28,19 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { ChargeHistory } from '../physics/chargeHistory';
 import { magnitude } from '../physics/vec2';
-import type { KinematicState, SimConfig } from '../physics/types';
+import type { SimConfig } from '../physics/types';
+import {
+  type DemoMode,
+  sampleSourceState,
+  maxHistorySpeed,
+  brakingSubstepTimes,
+} from '../physics/demoModes';
 import { useSandboxCamera } from './useSandboxCamera';
 import { VectorFieldCanvas } from './VectorFieldCanvas';
 import { ControlPanel } from './ControlPanel';
 import { isWithinBounds, maxCornerDist, type WorldBounds } from '../rendering/worldSpace';
 
-type DemoMode = 'stationary' | 'uniform_velocity';
 type FieldLayer = 'total' | 'vel' | 'accel';
-
-/**
- * Analytical source state for M2 demo modes.
- * Both modes have an exact closed-form solution for any t, including negative t.
- */
-function sampleSourceState(mode: DemoMode, t: number): KinematicState {
-  if (mode === 'stationary') {
-    return { t, pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 }, accel: { x: 0, y: 0 } };
-  }
-  // Uniform velocity: v = 0.6c (c=1), moving in +x. Kinematic formula is exact for all t.
-  return { t, pos: { x: 0.6 * t, y: 0 }, vel: { x: 0.6, y: 0 }, accel: { x: 0, y: 0 } };
-}
 
 export function ChargeRadiationSandbox() {
   const [fieldLayer, setFieldLayer] = useState<FieldLayer>('total');
@@ -181,13 +174,27 @@ export function ChargeRadiationSandbox() {
 
       // Steps 5-7: record state, set velocity-aware history horizon, prune.
       const history = historyRef.current;
+      const config = configRef.current;
+
+      // For sudden_stop, record exact phase-boundary times and interior substeps
+      // before the main state. This prevents ChargeHistory's linear interpolation
+      // from smearing the acceleration step across an entire frame interval.
+      if (mode === 'sudden_stop') {
+        const prevSimTime = simTimeRef.current - dt;
+        for (const tSub of brakingSubstepTimes(prevSimTime, simTimeRef.current)) {
+          history.recordState(sampleSourceState('sudden_stop', tSub));
+        }
+      }
       history.recordState(sourceState);
 
-      const config = configRef.current;
-      const speed = magnitude(sourceState.vel);
-      // Precondition: speed < config.c (same contract as M1 MAX_BETA_SQ guard).
+      // Use peak mode speed (not current speed) for the history horizon.
+      // For sudden_stop this keeps outside-shell history after the charge stops:
+      // those observers need the pre-stop moving history at effective travel time
+      // R/(c−V), not R/c. See demoModes.ts: maxHistorySpeed for the M5 caveat.
+      const horizonSpeed = maxHistorySpeed(mode);
+      // Precondition: horizonSpeed < config.c (same contract as M1 MAX_BETA_SQ guard).
       history.setMaxHistoryTime(
-        maxCornerDist(sourceState.pos, viewBoundsRef.current) / (config.c - speed)
+        maxCornerDist(sourceState.pos, viewBoundsRef.current) / (config.c - horizonSpeed)
       );
       history.pruneToWindow(simTimeRef.current);
     }

@@ -81,9 +81,9 @@ If you have access to the `field-sandbox` codebase (located at `../field-sandbox
 
 If you cannot access field-sandbox directly, follow these concrete patterns:
 
-- **Arrow rendering:** thin stems with arrowheads, length proportional to field magnitude with clamping to prevent visual overflow, color-coded by magnitude or field component, drawn on a Canvas 2D layer.
+- **Arrow rendering:** match the arrow style from `field-sandbox/src/components/VectorFieldCanvas.tsx` as closely as possible. Do not change arrow geometry, color palette, glow curves, or visual weight formulas unless specifically asked to do so.
 - **Color palette:** dark background (near-black). Orange tones for positive / strong field regions, blue tones for negative / weak regions. Consistent with the electrostatics sibling project.
-- **Control panel:** a floating panel overlaid on the canvas, with collapsible sections. The panel is a pure UI surface — it does not own simulation behavior. Simulation state changes flow through hooks or refs, not through the panel component.
+- **Control panel:** match the visual style of `field-sandbox/src/components/FieldSandboxControlPanel.tsx` as closely as possible — panel shape, button look, font size, label style, and brightness. Do not change control panel styling unless specifically asked to do so.
 - **Camera model:** scroll-to-zoom centered on the cursor position, right-drag or middle-drag to pan. World-to-screen and screen-to-world coordinate transforms are centralized in a single module or hook, not scattered across components.
 - **Charge interaction:** left-drag to reposition charges. Visual feedback during drag (e.g., the charge follows the pointer smoothly). Position updates are `requestAnimationFrame`-batched, not committed to React state on every raw `pointermove`.
 - **Cursor readout:** hovering over the canvas shows local field values (E magnitude, individual components, or B). The readout is RAF-batched to avoid triggering React renders on every pointer event.

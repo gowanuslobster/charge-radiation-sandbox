@@ -1,10 +1,12 @@
 // ControlPanel — floating glass panel for mode and field-layer controls.
 //
 // Pure presentation component. No simulation state, no physics knowledge.
+//
+// Visual style matches field-sandbox: rounded-2xl panel, zinc-400 section labels,
+// tinted-bg inactive buttons, solid-bg + black text + glow active buttons, text-sm (14px).
 
 import type { CSSProperties } from 'react';
-
-type DemoMode = 'stationary' | 'uniform_velocity';
+import type { DemoMode } from '../physics/demoModes';
 type FieldLayer = 'total' | 'vel' | 'accel';
 
 type Props = {
@@ -28,58 +30,70 @@ const PANEL_STYLE: CSSProperties = {
   background: 'rgba(0,0,0,0.65)',
   backdropFilter: 'blur(8px)',
   WebkitBackdropFilter: 'blur(8px)',
-  border: '1px solid rgba(255,140,60,0.3)',
-  borderRadius: '8px',
-  padding: '12px 14px',
+  border: '1px solid rgba(255,140,60,0.2)',
+  borderRadius: '16px',
+  padding: '16px',
   display: 'flex',
   flexDirection: 'column',
   gap: '12px',
-  color: '#d0c0b0',
-  fontSize: '12px',
+  color: '#e4e4e7',
+  fontSize: '14px',
   userSelect: 'none',
   pointerEvents: 'auto',
 };
 
+// Matches field-sandbox: text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400
 const LABEL_STYLE: CSSProperties = {
-  fontWeight: 600,
-  marginBottom: '5px',
-  color: 'rgba(255,160,80,0.7)',
-  fontSize: '10px',
+  fontWeight: 500,
+  marginBottom: '6px',
+  color: '#a1a1aa',
+  fontSize: '11px',
   textTransform: 'uppercase',
-  letterSpacing: '0.8px',
+  letterSpacing: '0.15em',
 };
 
 const BTN_ROW_STYLE: CSSProperties = {
   display: 'flex',
-  gap: '5px',
+  gap: '6px',
   flexWrap: 'wrap',
 };
 
+// Neutral icon buttons (zoom ±, pan arrows): subtle tinted bg, bright text, no border.
+// Matches field-sandbox zoom-out / reset-view style: bg-zinc-200/20 text-zinc-200.
 const ICON_BTN_STYLE: CSSProperties = {
-  width: '26px',
-  height: '26px',
-  borderRadius: '4px',
-  border: '1px solid rgba(255,255,255,0.15)',
-  background: 'rgba(255,255,255,0.05)',
-  color: 'rgba(200,180,160,0.8)',
+  width: '28px',
+  height: '28px',
+  borderRadius: '6px',
+  border: 'none',
+  background: 'rgba(255,255,255,0.12)',
+  color: 'rgba(255,255,255,0.85)',
   cursor: 'pointer',
-  fontSize: '13px',
+  fontSize: '14px',
+  fontWeight: 500,
   padding: 0,
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
+  transition: 'background 0.2s',
 };
 
+/**
+ * Button style matching field-sandbox:
+ *   inactive — tinted bg at ~18% opacity, color as text, no border
+ *   active   — solid bright bg, black text, glow shadow
+ */
 function btn(active: boolean, color: string): CSSProperties {
   return {
-    padding: '4px 10px',
-    borderRadius: '4px',
-    border: `1px solid ${active ? color : 'rgba(255,255,255,0.1)'}`,
-    background: active ? color + '28' : 'transparent',
-    color: active ? color : 'rgba(200,180,160,0.6)',
+    padding: '6px 12px',
+    borderRadius: '6px',
+    border: 'none',
+    background: active ? color : `${color}2e`,
+    color: active ? '#000' : color,
     cursor: 'pointer',
-    fontSize: '12px',
-    transition: 'border-color 0.1s, color 0.1s, background 0.1s',
+    fontSize: '14px',
+    fontWeight: 500,
+    transition: 'all 0.2s',
+    boxShadow: active ? `0 0 16px ${color}70` : 'none',
   };
 }
 
@@ -102,6 +116,10 @@ export function ControlPanel({
             onClick={() => onDemoModeChange('uniform_velocity')}>
             Uniform velocity
           </button>
+          <button style={btn(demoMode === 'sudden_stop', '#ff9050')}
+            onClick={() => onDemoModeChange('sudden_stop')}>
+            Sudden stop
+          </button>
         </div>
       </div>
       <div>
@@ -123,17 +141,17 @@ export function ControlPanel({
       </div>
       <div>
         <div style={LABEL_STYLE}>Camera</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', alignItems: 'flex-start' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-start' }}>
           <button style={btn(false, '#ff9050')} onClick={onResetView}>Reset view</button>
-          <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
             <button style={ICON_BTN_STYLE} onClick={onZoomOut}>−</button>
-            <span style={{ color: 'rgba(200,180,160,0.4)', fontSize: '11px' }}>zoom</span>
+            <span style={{ color: '#71717a', fontSize: '11px' }}>zoom</span>
             <button style={ICON_BTN_STYLE} onClick={onZoomIn}>+</button>
           </div>
           <div style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(3, 26px)',
-            gridTemplateRows: 'repeat(3, 26px)',
+            gridTemplateColumns: 'repeat(3, 28px)',
+            gridTemplateRows: 'repeat(3, 28px)',
             gap: '3px',
           }}>
             <span /><button style={ICON_BTN_STYLE} onClick={onPanUp}>↑</button><span />

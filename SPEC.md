@@ -42,7 +42,7 @@ The current official scope includes:
 - a configurable speed of light (`c`) parameter with history buffer pruning that updates accordingly
 - a Canvas 2D vector grid renderer (Path A) sampling the field on a grid and drawing arrows
 - a set of canonical demo modes covering the key pedagogical scenarios
-- a floating control panel and camera/interaction model consistent with `field-sandbox`
+- a floating control panel with mode, field-layer, and basic playback controls plus a camera/interaction model consistent with `field-sandbox`
 - automated test coverage for the physics core (history buffer, retarded-time solver, LW field values against analytical cases)
 
 The current official scope does not include:
@@ -131,13 +131,13 @@ Implement charge dragging with real-time history recording and field updates.
 - Radiation pulses are visible during and after drag acceleration events
 - The field updates in real time at usable frame rate
 
-### M5: Camera, control panel, and remaining demo modes
+### M5: Expand controls and remaining demo modes
 
-Implement the full interaction model (pan/zoom camera, floating control panel) and the remaining canonical demo modes (oscillating charge, uniform velocity preset).
+Extend the existing camera/control-panel system with the remaining controls and demo modes, especially the configurable speed of light and cursor readout.
 
 **Acceptance criteria:**
 - Scroll-to-zoom centered on cursor, right-drag to pan, matching field-sandbox
-- Floating control panel with: mode selector, play/pause/step (implemented in M3), reset, `c` slider, field layer toggles (total field, velocity only, acceleration only)
+- Floating control panel with: mode selector, play/pause/step/reset, `c` slider, field layer toggles (total field, velocity only, acceleration only)
 - Cursor readout showing field values at hover position (RAF-batched)
 - All five canonical demo modes functional and selectable
 - `c` slider works: lowering `c` visibly exaggerates causality delays; history buffer adjusts pruning window; graceful clamping if history underruns

@@ -25,6 +25,7 @@ This project is a sibling to `field-sandbox` (electrostatics) and `wave-optics-s
 ## Actual stack and architecture
 
 - **Framework:** React + TypeScript, bundled with Vite
+- **Styling:** Tailwind CSS v4 via `@tailwindcss/vite`, with `src/index.css` as the single CSS entry point
 - **Physics core:** Lienard-Wiechert field solver with per-charge history buffers under `src/physics/`
 - **Primary rendering (Path A):** Canvas 2D vector grid — CPU-based retarded-time root-finder, renders field arrows over a sampled grid
 - **Future rendering (Path B):** WebGL fragment shader — GPU-parallel retarded-time solve and LW evaluation per pixel

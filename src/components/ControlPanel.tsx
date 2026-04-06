@@ -2,11 +2,12 @@
 //
 // Pure presentation component. No simulation state, no physics knowledge.
 //
-// Visual style matches field-sandbox: rounded-2xl panel, zinc-400 section labels,
-// tinted-bg inactive buttons, solid-bg + black text + glow active buttons, text-sm (14px).
+// Visual style matches field-sandbox (FieldSandboxControlPanel.tsx):
+// rounded-2xl panel, zinc-400 section labels, tinted-bg inactive buttons,
+// solid-bg + black text + glow active buttons, text-sm throughout.
+// All styling via Tailwind — no inline CSSProperties.
 
-import type { CSSProperties } from 'react';
-import type { DemoMode } from '../physics/demoModes';
+import type { DemoMode } from '@/physics/demoModes';
 type FieldLayer = 'total' | 'vel' | 'accel';
 
 type Props = {
@@ -23,79 +24,11 @@ type Props = {
   onPanDown: () => void;
 };
 
-const PANEL_STYLE: CSSProperties = {
-  position: 'absolute',
-  top: '1rem',
-  left: '1rem',
-  background: 'rgba(0,0,0,0.65)',
-  backdropFilter: 'blur(8px)',
-  WebkitBackdropFilter: 'blur(8px)',
-  border: '1px solid rgba(255,140,60,0.2)',
-  borderRadius: '16px',
-  padding: '16px',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '12px',
-  color: '#e4e4e7',
-  fontSize: '14px',
-  userSelect: 'none',
-  pointerEvents: 'auto',
-};
+// Shared base classes for all mode/field toggle buttons.
+const TOGGLE_BASE = 'rounded-md px-3 py-2 text-sm font-medium transition-all duration-200';
 
-// Matches field-sandbox: text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400
-const LABEL_STYLE: CSSProperties = {
-  fontWeight: 500,
-  marginBottom: '6px',
-  color: '#a1a1aa',
-  fontSize: '11px',
-  textTransform: 'uppercase',
-  letterSpacing: '0.15em',
-};
-
-const BTN_ROW_STYLE: CSSProperties = {
-  display: 'flex',
-  gap: '6px',
-  flexWrap: 'wrap',
-};
-
-// Neutral icon buttons (zoom ±, pan arrows): subtle tinted bg, bright text, no border.
-// Matches field-sandbox zoom-out / reset-view style: bg-zinc-200/20 text-zinc-200.
-const ICON_BTN_STYLE: CSSProperties = {
-  width: '28px',
-  height: '28px',
-  borderRadius: '6px',
-  border: 'none',
-  background: 'rgba(255,255,255,0.12)',
-  color: 'rgba(255,255,255,0.85)',
-  cursor: 'pointer',
-  fontSize: '14px',
-  fontWeight: 500,
-  padding: 0,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  transition: 'background 0.2s',
-};
-
-/**
- * Button style matching field-sandbox:
- *   inactive — tinted bg at ~18% opacity, color as text, no border
- *   active   — solid bright bg, black text, glow shadow
- */
-function btn(active: boolean, color: string): CSSProperties {
-  return {
-    padding: '6px 12px',
-    borderRadius: '6px',
-    border: 'none',
-    background: active ? color : `${color}2e`,
-    color: active ? '#000' : color,
-    cursor: 'pointer',
-    fontSize: '14px',
-    fontWeight: 500,
-    transition: 'all 0.2s',
-    boxShadow: active ? `0 0 16px ${color}70` : 'none',
-  };
-}
+// Shared base classes for icon buttons (zoom ±, pan arrows).
+const ICON_BASE = 'flex h-7 w-7 items-center justify-center rounded-md text-sm text-white/85 bg-white/[0.12] hover:bg-white/20 transition-colors duration-200';
 
 export function ControlPanel({
   demoMode, fieldLayer,
@@ -104,64 +37,82 @@ export function ControlPanel({
   onPanLeft, onPanRight, onPanUp, onPanDown,
 }: Props) {
   return (
-    <div style={PANEL_STYLE}>
+    <div className="absolute left-4 top-4 z-20 flex flex-col gap-3 rounded-2xl border border-orange-400/20 bg-black/65 p-4 text-sm text-zinc-200 backdrop-blur-md select-none pointer-events-auto">
+
+      {/* Mode */}
       <div>
-        <div style={LABEL_STYLE}>Mode</div>
-        <div style={BTN_ROW_STYLE}>
-          <button style={btn(demoMode === 'stationary', '#ff9050')}
-            onClick={() => onDemoModeChange('stationary')}>
+        <p className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400">Mode</p>
+        <div className="flex flex-wrap gap-1.5">
+          <button type="button" onClick={() => onDemoModeChange('stationary')}
+            className={`${TOGGLE_BASE} ${demoMode === 'stationary'
+              ? 'bg-orange-400 text-black shadow-[0_0_16px_rgba(251,146,60,0.5)]'
+              : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
             Stationary
           </button>
-          <button style={btn(demoMode === 'uniform_velocity', '#ff9050')}
-            onClick={() => onDemoModeChange('uniform_velocity')}>
+          <button type="button" onClick={() => onDemoModeChange('uniform_velocity')}
+            className={`${TOGGLE_BASE} ${demoMode === 'uniform_velocity'
+              ? 'bg-orange-400 text-black shadow-[0_0_16px_rgba(251,146,60,0.5)]'
+              : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
             Uniform velocity
           </button>
-          <button style={btn(demoMode === 'sudden_stop', '#ff9050')}
-            onClick={() => onDemoModeChange('sudden_stop')}>
+          <button type="button" onClick={() => onDemoModeChange('sudden_stop')}
+            className={`${TOGGLE_BASE} ${demoMode === 'sudden_stop'
+              ? 'bg-orange-400 text-black shadow-[0_0_16px_rgba(251,146,60,0.5)]'
+              : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
             Sudden stop
           </button>
         </div>
       </div>
+
+      {/* Field layer */}
       <div>
-        <div style={LABEL_STYLE}>Field</div>
-        <div style={BTN_ROW_STYLE}>
-          <button style={btn(fieldLayer === 'total', '#ff9050')}
-            onClick={() => onFieldLayerChange('total')}>
+        <p className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400">Field</p>
+        <div className="flex flex-wrap gap-1.5">
+          <button type="button" onClick={() => onFieldLayerChange('total')}
+            className={`${TOGGLE_BASE} ${fieldLayer === 'total'
+              ? 'bg-orange-400 text-black shadow-[0_0_16px_rgba(251,146,60,0.5)]'
+              : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
             Total E
           </button>
-          <button style={btn(fieldLayer === 'vel', '#50c8ff')}
-            onClick={() => onFieldLayerChange('vel')}>
+          <button type="button" onClick={() => onFieldLayerChange('vel')}
+            className={`${TOGGLE_BASE} ${fieldLayer === 'vel'
+              ? 'bg-cyan-300 text-black shadow-[0_0_16px_rgba(94,220,255,0.45)]'
+              : 'bg-cyan-400/20 text-cyan-200 hover:bg-cyan-400/35'}`}>
             Velocity E
           </button>
-          <button style={btn(fieldLayer === 'accel', '#ffd050')}
-            onClick={() => onFieldLayerChange('accel')}>
+          <button type="button" onClick={() => onFieldLayerChange('accel')}
+            className={`${TOGGLE_BASE} ${fieldLayer === 'accel'
+              ? 'bg-amber-300 text-black shadow-[0_0_16px_rgba(251,191,36,0.45)]'
+              : 'bg-amber-400/20 text-amber-200 hover:bg-amber-400/35'}`}>
             Accel E
           </button>
         </div>
       </div>
+
+      {/* Camera */}
       <div>
-        <div style={LABEL_STYLE}>Camera</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-start' }}>
-          <button style={btn(false, '#ff9050')} onClick={onResetView}>Reset view</button>
-          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-            <button style={ICON_BTN_STYLE} onClick={onZoomOut}>−</button>
-            <span style={{ color: '#71717a', fontSize: '11px' }}>zoom</span>
-            <button style={ICON_BTN_STYLE} onClick={onZoomIn}>+</button>
+        <p className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400">Camera</p>
+        <div className="flex flex-col items-start gap-1.5">
+          <button type="button" onClick={onResetView}
+            className="rounded-md px-3 py-2 text-sm font-medium bg-zinc-200/20 text-zinc-200 hover:bg-zinc-200/32 transition-colors duration-200">
+            Reset view
+          </button>
+          <div className="flex items-center gap-1.5">
+            <button type="button" onClick={onZoomOut} className={ICON_BASE}>−</button>
+            <span className="text-[11px] text-zinc-500">zoom</span>
+            <button type="button" onClick={onZoomIn} className={ICON_BASE}>+</button>
           </div>
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(3, 28px)',
-            gridTemplateRows: 'repeat(3, 28px)',
-            gap: '3px',
-          }}>
-            <span /><button style={ICON_BTN_STYLE} onClick={onPanUp}>↑</button><span />
-            <button style={ICON_BTN_STYLE} onClick={onPanLeft}>←</button>
+          {/* Pan arrow pad — 3×3 grid, center cell empty */}
+          <div className="grid gap-0.5 [grid-template-columns:repeat(3,1.75rem)] [grid-template-rows:repeat(3,1.75rem)]">
+            <span /><button type="button" onClick={onPanUp} className={ICON_BASE}>↑</button><span />
+            <button type="button" onClick={onPanLeft} className={ICON_BASE}>←</button>
             <span />
-            <button style={ICON_BTN_STYLE} onClick={onPanRight}>→</button>
-            <span /><button style={ICON_BTN_STYLE} onClick={onPanDown}>↓</button><span />
+            <button type="button" onClick={onPanRight} className={ICON_BASE}>→</button>
+            <span /><button type="button" onClick={onPanDown} className={ICON_BASE}>↓</button><span />
           </div>
         </div>
       </div>
+
     </div>
   );
 }

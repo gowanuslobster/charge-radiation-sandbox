@@ -26,19 +26,19 @@
 //   because recorded history would be lost; M3 should accept clamp fallback instead.
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { ChargeHistory } from '../physics/chargeHistory';
-import { magnitude } from '../physics/vec2';
-import type { SimConfig } from '../physics/types';
+import { ChargeHistory } from '@/physics/chargeHistory';
+import { magnitude } from '@/physics/vec2';
+import type { SimConfig } from '@/physics/types';
 import {
   type DemoMode,
   sampleSourceState,
   maxHistorySpeed,
   brakingSubstepTimes,
-} from '../physics/demoModes';
+} from '@/physics/demoModes';
 import { useSandboxCamera } from './useSandboxCamera';
 import { VectorFieldCanvas } from './VectorFieldCanvas';
 import { ControlPanel } from './ControlPanel';
-import { isWithinBounds, maxCornerDist, type WorldBounds } from '../rendering/worldSpace';
+import { isWithinBounds, maxCornerDist, type WorldBounds } from '@/rendering/worldSpace';
 
 type FieldLayer = 'total' | 'vel' | 'accel';
 
@@ -248,13 +248,7 @@ export function ChargeRadiationSandbox() {
   return (
     <div
       ref={containerRef}
-      style={{
-        position: 'relative',
-        width: '100%',
-        height: '100%',
-        background: '#0d0d12',
-        overflow: 'hidden',
-      }}
+      className="relative w-full h-full overflow-hidden bg-[#0d0d12]"
       onPointerDown={handlePointerDown}
       onContextMenu={e => e.preventDefault()}
     >

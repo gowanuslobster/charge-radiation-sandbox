@@ -75,6 +75,12 @@ Key design decisions:
 - **c is always a parameter** — the speed of light is never hardcoded; slowing it down is a first-class feature
 - **Ref-based live state** — animation-frame loops will read from refs; React state drives only the control panel UI
 
+### Stack
+
+- **Build:** Vite + `@vitejs/plugin-react`
+- **Styling:** Tailwind CSS v4 (`@tailwindcss/vite`) — all UI components use Tailwind classes; `src/index.css` is the single CSS entry point
+- **Import alias:** `@/` maps to `src/` — use `@/...` for cross-directory imports (e.g., `@/physics/types`), `./...` for same-directory imports
+
 ### Reference docs
 
 - `IDEAS.md` — Liénard-Wiechert math, retarded-time derivation, and why FDTD was ruled out

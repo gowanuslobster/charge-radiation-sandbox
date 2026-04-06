@@ -8,7 +8,7 @@
 // M2 uses the positive/orange palette only.
 // A blue (negative charge) palette will gate on charge sign in M5+.
 
-import type { Vec2 } from '../physics/types';
+import type { Vec2 } from '@/physics/types';
 import type { WorldToScreenTransform } from './worldSpace';
 
 export type RGB = { r: number; g: number; b: number };

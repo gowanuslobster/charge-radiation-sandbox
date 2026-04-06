@@ -160,6 +160,18 @@ The retarded-time solver and vector grid sampler run once per grid point per fra
   - control-panel components
 - Keep behavior stable unless the user explicitly asks for behavior changes.
 
+### Import conventions
+
+Use `@/` for cross-directory imports (e.g., `@/physics/types`, `@/rendering/worldSpace`).
+Use `./` for same-directory imports (e.g., `./arrows`, `./chargeHistory`).
+This matches the field-sandbox sibling convention and keeps import paths stable across refactors.
+
+### Styling conventions
+
+All UI components use Tailwind CSS v4. Do not add inline `CSSProperties` to UI files.
+`src/index.css` is the single CSS entry point; `@import "tailwindcss"` must remain its first line.
+Global design tokens (background, foreground) live in the `@theme inline` block in `index.css`.
+
 ### Naming conventions
 
 - Prefer names that reflect the conceptual role of the code, not just the implementation detail.

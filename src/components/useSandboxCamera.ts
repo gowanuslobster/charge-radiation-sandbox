@@ -14,8 +14,8 @@
 // measured container size by an internal ResizeObserver.
 
 import { useState, useRef, useCallback, useEffect, type RefObject } from 'react';
-import { getViewBounds, screenToWorld, type WorldBounds } from '../rendering/worldSpace';
-import type { Vec2 } from '../physics/types';
+import { getViewBounds, screenToWorld, type WorldBounds } from '@/rendering/worldSpace';
+import type { Vec2 } from '@/physics/types';
 
 const HALF_HEIGHT = 4.0; // world units, half-height of the default view
 

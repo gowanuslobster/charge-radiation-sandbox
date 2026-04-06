@@ -8,11 +8,11 @@
 // and the next RAF tick picks up the new values via boundsRef / fieldLayerRef.
 
 import { useEffect, useRef, type CSSProperties, type RefObject } from 'react';
-import type { SimConfig } from '../physics/types';
-import type { ChargeHistory } from '../physics/chargeHistory';
-import { evaluateLienardWiechertField } from '../physics/lienardWiechert';
-import { getWorldToScreenTransform, transformWorldPoint, type WorldBounds } from '../rendering/worldSpace';
-import { fillArrowSpec, type ArrowSpec } from '../rendering/arrows';
+import type { SimConfig } from '@/physics/types';
+import type { ChargeHistory } from '@/physics/chargeHistory';
+import { evaluateLienardWiechertField } from '@/physics/lienardWiechert';
+import { getWorldToScreenTransform, transformWorldPoint, type WorldBounds } from '@/rendering/worldSpace';
+import { fillArrowSpec, type ArrowSpec } from '@/rendering/arrows';
 
 type Props = {
   historyRef: RefObject<ChargeHistory>;

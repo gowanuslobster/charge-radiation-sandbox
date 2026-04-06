@@ -6,7 +6,7 @@
 // All world↔canvas conversions must flow through these functions exclusively.
 // Never hardcode a Y-flip sign in drawing code; use the transform's negative `d` value.
 
-import type { Vec2 } from '../physics/types';
+import type { Vec2 } from '@/physics/types';
 
 export type WorldBounds = { minX: number; maxX: number; minY: number; maxY: number };
 

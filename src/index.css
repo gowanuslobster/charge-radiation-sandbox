@@ -1,7 +1,8 @@
-:root {
-  --panel-accent: rgba(255, 140, 60, 0.8);
-  --panel-accent-dim: rgba(255, 140, 60, 0.2);
-  --panel-bg: rgba(0, 0, 0, 0.65);
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: #0d0d12;
+  --color-foreground: #e4e4e7;
 }
 
 html, body, #root {

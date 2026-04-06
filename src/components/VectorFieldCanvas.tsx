@@ -26,6 +26,13 @@ type Props = {
   /** True while the user is panning — halves grid density for responsiveness. */
   isPanning?: boolean;
   isPausedRef?: RefObject<boolean>;
+  /** Incremented by ChargeRadiationSandbox on every reseed; forces a re-solve even when paused. */
+  simEpochRef?: RefObject<number>;
+  /**
+   * World-space x coordinate of an optional wall marker (sudden_stop mode).
+   * Null = no wall drawn. The marker is a short vertical line with diagonal ticks.
+   */
+  wallWorldX?: number | null;
   /** Forwarded to the canvas element. Caller uses position:absolute inset:0. */
   style?: CSSProperties;
 };
@@ -118,6 +125,8 @@ export function VectorFieldCanvas({
   fieldLayer,
   isPanning = false,
   isPausedRef,
+  simEpochRef,
+  wallWorldX = null,
   style,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -127,9 +136,11 @@ export function VectorFieldCanvas({
   const boundsRef = useRef(bounds);
   const fieldLayerRef = useRef(fieldLayer);
   const isPanningRef = useRef(isPanning);
+  const wallWorldXRef = useRef(wallWorldX);
   useEffect(() => { boundsRef.current = bounds; }, [bounds]);
   useEffect(() => { fieldLayerRef.current = fieldLayer; }, [fieldLayer]);
   useEffect(() => { isPanningRef.current = isPanning; }, [isPanning]);
+  useEffect(() => { wallWorldXRef.current = wallWorldX; }, [wallWorldX]);
 
   // Main RAF loop. Restarts only if grid dimensions change (rare).
   useEffect(() => {
@@ -163,6 +174,21 @@ export function VectorFieldCanvas({
     // Cached arrow count from the last solve. When paused, we skip the solve and
     // redraw the existing pool contents. Initialised to -1 so the first frame always solves.
     let cachedArrowCount = -1;
+    // Snapshot of every input to evaluateLienardWiechertField / fillArrowSpec.
+    // The cache is valid iff all of these match. Any change forces a re-solve —
+    // this is the complete list; adding a new physics input here is enough to make
+    // the pause-skip safe for that input too.
+    //   simTime  — covers running playback AND step-forward
+    //   epoch    — covers reseeds where simTime stays 0 (e.g. mode switch at t=0)
+    //   bounds   — covers pan and zoom
+    //   layer    — covers field-layer toggle while paused
+    let lastSolvedSimTime = NaN;
+    let lastSolvedEpoch = -1;
+    let lastSolvedMinX = NaN;
+    let lastSolvedMaxX = NaN;
+    let lastSolvedMinY = NaN;
+    let lastSolvedMaxY = NaN;
+    let lastSolvedLayer = '';
 
     // DPR-aware sizing via ResizeObserver.
     // Setting canvas.width/height resets the ctx transform, so we re-apply DPR scale here.
@@ -195,16 +221,29 @@ export function VectorFieldCanvas({
       // When paused and the pool is already populated, skip the LW solve and
       // redraw the cached arrows. The charge marker still redraws so the canvas
       // doesn't go blank, but avoids 1600 unnecessary solves per frame.
+      // Exception: always re-solve when simEpoch changes (reseed after mode switch
+      // or auto-reseed), even while paused, so the field never shows stale arrows.
       const paused = isPausedRef?.current ?? false;
-      const needsSolve = !paused || cachedArrowCount < 0;
+      const currentSimTime = simulationTimeRef.current;
+      const currentEpoch = simEpochRef?.current ?? 0;
+      const currentBounds = boundsRef.current;
+      const layer = fieldLayerRef.current;
+      const needsSolve =
+        !paused ||
+        cachedArrowCount < 0 ||
+        currentSimTime !== lastSolvedSimTime ||
+        currentEpoch !== lastSolvedEpoch ||
+        currentBounds.minX !== lastSolvedMinX ||
+        currentBounds.maxX !== lastSolvedMaxX ||
+        currentBounds.minY !== lastSolvedMinY ||
+        currentBounds.maxY !== lastSolvedMaxY ||
+        layer !== lastSolvedLayer;
 
       ctx.clearRect(0, 0, cssW, cssH);
       ctx.globalAlpha = 1;
       ctx.shadowBlur = 0;
 
-      const currentBounds = boundsRef.current;
       const transform = getWorldToScreenTransform(currentBounds, cssW, cssH);
-      const layer = fieldLayerRef.current;
 
       // During active pan, halve the grid to cut solve count by 75%.
       const activeGridW = isPanningRef.current ? Math.ceil(gridW / 2) : gridW;
@@ -257,6 +296,13 @@ export function VectorFieldCanvas({
           }
         }
         cachedArrowCount = arrowCount;
+        lastSolvedSimTime = currentSimTime;
+        lastSolvedEpoch = currentEpoch;
+        lastSolvedMinX = currentBounds.minX;
+        lastSolvedMaxX = currentBounds.maxX;
+        lastSolvedMinY = currentBounds.minY;
+        lastSolvedMaxY = currentBounds.maxY;
+        lastSolvedLayer = layer;
       }
 
       // Two-pass draw: core arrows first (no shadow state), then glow-only pass.
@@ -285,6 +331,46 @@ export function VectorFieldCanvas({
       ctx.drawImage(glowCanvas, 0, 0);
       ctx.restore();
 
+      // Wall marker — drawn after arrows so it appears on top of the field layer,
+      // but before the charge marker so the charge renders above the wall.
+      // Vertical line + diagonal ticks (standard physics wall symbol).
+      const wallX = wallWorldXRef.current;
+      if (wallX !== null) {
+        const wx = transform.a * wallX + transform.e; // world x → canvas x
+        // y=0 in world (the charge's travel axis) → canvas y.
+        const wy = transform.d * 0 + transform.f;
+        const HALF_H = 80;   // half-height of the vertical bar (px)
+        const TICK_LEN = 12; // diagonal tick length (px)
+        const TICK_COUNT = 7;
+
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255,200,120,0.85)';
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = 'round';
+        ctx.globalAlpha = 1;
+        ctx.shadowColor = 'rgba(255,200,120,0.4)';
+        ctx.shadowBlur = 6;
+
+        // Vertical bar.
+        ctx.beginPath();
+        ctx.moveTo(wx, wy - HALF_H);
+        ctx.lineTo(wx, wy + HALF_H);
+        ctx.stroke();
+
+        ctx.shadowBlur = 0;
+
+        // Diagonal ticks extending to the right — classic physics wall hatch.
+        for (let i = 0; i <= TICK_COUNT; i++) {
+          const ty = wy - HALF_H + (2 * HALF_H) * i / TICK_COUNT;
+          ctx.beginPath();
+          ctx.moveTo(wx, ty);
+          ctx.lineTo(wx + TICK_LEN, ty + TICK_LEN);
+          ctx.stroke();
+        }
+
+        ctx.restore();
+      }
+
       // Draw source charge marker from newest recorded state.
       // newest() is null before the first reseed completes (brief window during mount).
       const newest = historyRef.current.newest();
@@ -293,6 +379,94 @@ export function VectorFieldCanvas({
         const radius = 8;
 
         ctx.save();
+
+        // Velocity arrow — drawn first so the charge circle renders on top of its base.
+        // Only shown for β > 0.005; hidden for stationary charges.
+        // Arrow length: max(β, 0.15) × (cssW × 0.20) — floors at β=0.15 visual size
+        // so slow charges still show a legible arrow. At β=1 the arrow is ~1/5 screen width.
+        // Direction is transformed to canvas space (transform.d < 0 applies the Y-flip).
+        const vel = newest.vel;
+        const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
+        const beta = speed / configRef.current.c;
+        if (beta > 0.005) {
+          const MAX_VEL_ARROW_PX = cssW * 0.20;
+          const BETA_FLOOR = 0.15; // visual minimum — arrow never smaller than this fraction
+          const HEAD_LEN = 10;
+
+          // Unit vector in canvas space: scale world components by transform diagonal.
+          const cdx = vel.x * transform.a;
+          const cdy = vel.y * transform.d; // d < 0 → Y-axis flip
+          const cMag = Math.sqrt(cdx * cdx + cdy * cdy);
+          const nx = cdx / cMag;
+          const ny = cdy / cMag;
+
+          // Arrow starts at circle edge; length floored at BETA_FLOOR × MAX.
+          const arrowLen = Math.max(beta, BETA_FLOOR) * MAX_VEL_ARROW_PX;
+          const stemStartX = mp.x + nx * radius;
+          const stemStartY = mp.y + ny * radius;
+          const tipX = stemStartX + nx * arrowLen;
+          const tipY = stemStartY + ny * arrowLen;
+
+          // Open V arrowhead — field-sandbox style: two strokes, not a filled triangle.
+          // Wings: 10px back from tip, ±5.5px perpendicular. No trig needed.
+          // Perpendicular to (nx, ny): left = (−ny, nx), right = (ny, −nx).
+          const w1x = tipX - nx * HEAD_LEN - ny * 5.5;
+          const w1y = tipY - ny * HEAD_LEN + nx * 5.5;
+          const w2x = tipX - nx * HEAD_LEN + ny * 5.5;
+          const w2y = tipY - ny * HEAD_LEN - nx * 5.5;
+
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          ctx.globalAlpha = 1;
+
+          // Glow underlay — solid, wide, low alpha (field-sandbox pattern).
+          ctx.strokeStyle = 'rgba(159,247,255,0.18)';
+          ctx.lineWidth = 5;
+          ctx.setLineDash([]);
+          ctx.beginPath();
+          ctx.moveTo(stemStartX, stemStartY);
+          ctx.lineTo(tipX, tipY);
+          ctx.stroke();
+
+          // Dashed stem — matches field-sandbox strokeDasharray="8 7".
+          ctx.strokeStyle = 'rgba(159,247,255,0.85)';
+          ctx.lineWidth = 2.4;
+          ctx.setLineDash([8, 7]);
+          ctx.beginPath();
+          ctx.moveTo(stemStartX, stemStartY);
+          ctx.lineTo(tipX, tipY);
+          ctx.stroke();
+
+          // Solid open V arrowhead (no dash on wings).
+          ctx.setLineDash([]);
+          ctx.lineWidth = 2.4;
+          ctx.beginPath();
+          ctx.moveTo(tipX, tipY);
+          ctx.lineTo(w1x, w1y);
+          ctx.moveTo(tipX, tipY);
+          ctx.lineTo(w2x, w2y);
+          ctx.stroke();
+
+          // Speed label — anchored just past the arrowhead tip in the arrow direction.
+          // Dark shadow ensures legibility over bright field arrows.
+          const label = `${beta.toFixed(2)}c`;
+          const labelDist = HEAD_LEN + 10;
+          const labelX = tipX + nx * labelDist;
+          const labelY = tipY + ny * labelDist;
+
+          ctx.setLineDash([]);
+          ctx.font = 'bold 15px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.shadowColor = 'rgba(0,0,0,0.85)';
+          ctx.shadowBlur = 4;
+          ctx.fillStyle = 'rgba(159,247,255,0.95)';
+          ctx.fillText(label, labelX, labelY);
+          ctx.shadowBlur = 0;
+        }
+
+        // Charge circle and sign label.
+        ctx.globalAlpha = 1;
         ctx.beginPath();
         ctx.arc(mp.x, mp.y, radius, 0, Math.PI * 2);
         ctx.fillStyle = '#ff7a3f';
@@ -307,6 +481,7 @@ export function VectorFieldCanvas({
         ctx.textBaseline = 'middle';
         ctx.globalAlpha = 1;
         ctx.fillText('+', mp.x, mp.y);
+
         ctx.restore();
       }
     }

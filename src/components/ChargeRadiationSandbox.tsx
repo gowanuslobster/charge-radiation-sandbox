@@ -34,6 +34,7 @@ import {
   sampleSourceState,
   maxHistorySpeed,
   brakingSubstepTimes,
+  SUDDEN_STOP_X_STOP,
 } from '@/physics/demoModes';
 import { useSandboxCamera } from './useSandboxCamera';
 import { VectorFieldCanvas } from './VectorFieldCanvas';
@@ -66,6 +67,8 @@ export function ChargeRadiationSandbox() {
   // Simulation refs — written by the RAF tick, read by VectorFieldCanvas.
   const historyRef = useRef(new ChargeHistory());
   const simTimeRef = useRef(0);
+  // Incremented on every reseed so VectorFieldCanvas re-solves even when paused.
+  const simEpochRef = useRef(0);
   const chargeRef = useRef(1);
   const configRef = useRef<SimConfig>({ c: 1.0, softening: 0.01 });
   const rafRef = useRef(0);
@@ -115,6 +118,7 @@ export function ChargeRadiationSandbox() {
     historyRef.current = new ChargeHistory();
     simTimeRef.current = 0;
     lastWallTimeRef.current = performance.now();
+    simEpochRef.current += 1;
 
     // Snapshot the source-centered bounds for the auto-reseed check.
     reseedBoundsRef.current = db;
@@ -282,10 +286,12 @@ export function ChargeRadiationSandbox() {
         simulationTimeRef={simTimeRef}
         chargeRef={chargeRef}
         configRef={configRef}
+        simEpochRef={simEpochRef}
         bounds={viewBounds}
         fieldLayer={fieldLayer}
         isPanning={isPanning}
         isPausedRef={isPausedRef}
+        wallWorldX={demoMode === 'sudden_stop' ? SUDDEN_STOP_X_STOP : null}
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
       />
       <ControlPanel

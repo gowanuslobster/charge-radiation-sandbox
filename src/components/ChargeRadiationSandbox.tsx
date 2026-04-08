@@ -243,8 +243,13 @@ export function ChargeRadiationSandbox() {
           if (speed > dragPeakSpeedRef.current) dragPeakSpeedRef.current = speed;
         } else if (!isDraggingRef.current && dragStateRef.current) {
           // Released or pause-ended: freeze immediately.
-          // The velocity discontinuity is a real stopping event in history — correct.
-          dragStateRef.current = stoppedDragState(dragStateRef.current.pos);
+          // Consume rawDragPosRef if set — this captures a final pointer position that
+          // arrived between the last RAF tick and the pointerup/pause event.
+          // Clear rawDragPosRef here (not in the event handler) so the next drag start
+          // sees null and waits for its own first pointermove before computing kinematics.
+          const finalPos = rawDragPosRef.current ?? dragStateRef.current.pos;
+          rawDragPosRef.current = null;
+          dragStateRef.current = stoppedDragState(finalPos);
           // dragPeakSpeedRef is NOT reset here — far observers may still need
           // the wider history window from earlier fast motion.
         }
@@ -328,10 +333,9 @@ export function ChargeRadiationSandbox() {
       handleGlobalPointerUp();
       if (e.button === 0 && isDraggingRef.current) {
         isDraggingRef.current = false;
-        // Clear stale position so the next drag start doesn't consume it
-        // before the first pointermove of the new drag arrives.
-        rawDragPosRef.current = null;
-        // Tick sees isDraggingRef === false next frame and records stopped state.
+        // rawDragPosRef is intentionally NOT cleared here.
+        // The tick's stop branch consumes the final pointer position and clears it,
+        // so that a release between RAF ticks is not lost.
       }
     };
     window.addEventListener('pointermove', onMove);

@@ -492,6 +492,11 @@ export function VectorFieldCanvas({
       cancelAnimationFrame(rafId);
       ro.disconnect();
     };
+  // isPausedRef and simEpochRef are intentionally read via refs inside the RAF closure
+  // rather than listed as deps — adding them would restart the loop on every pause toggle
+  // and reseed, which would reset the glow canvas and pool. The ref pattern is the
+  // correct idiom for values that must be readable from a long-lived RAF loop.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [historyRef, simulationTimeRef, chargeRef, configRef, gridW, gridH]);
 
   return <canvas ref={canvasRef} style={style} />;

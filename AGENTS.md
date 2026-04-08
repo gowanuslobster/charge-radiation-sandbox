@@ -59,7 +59,7 @@ If field-sandbox cannot be accessed directly, `wave-optics-sandbox` is the secon
 
 ### General principle
 
-Wherever this project implements a feature that has an analogue in field-sandbox (camera, charge manipulation, vector rendering, control panel, cursor readout), match the UX behavior and code organization. Do not invent a new interaction pattern when a working one already exists in the sibling project.
+Wherever this project implements a feature that has an analogue in field-sandbox (camera, charge manipulation, vector rendering, field-line / streamline overlays, control panel, cursor readout), match the UX behavior and code organization. Do not invent a new interaction pattern when a working one already exists in the sibling project.
 
 ### Reference files (for agents that can access the field-sandbox repo)
 

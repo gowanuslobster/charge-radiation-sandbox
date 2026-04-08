@@ -131,18 +131,33 @@ Implement charge dragging with real-time history recording and field updates.
 - Radiation pulses are visible during and after drag acceleration events
 - The field updates in real time at usable frame rate
 
-### M5: Expand controls and remaining demo modes
+### M5: Expand controls and sudden-stop teaching overlays
 
-Extend the existing camera/control-panel system with the remaining controls and demo modes, especially the configurable speed of light and cursor readout.
+Extend the existing camera/control-panel system with the remaining controls and overlays, especially the configurable speed of light, cursor readout, and richer sudden-stop interaction.
 
 **Acceptance criteria:**
-- Scroll-to-zoom centered on cursor, right-drag to pan, matching field-sandbox
-- Floating control panel with: mode selector, play/pause/step/reset, `c` slider, field layer toggles (total field, velocity only, acceleration only)
-- Cursor readout showing field values at hover position (RAF-batched)
-- All five canonical demo modes functional and selectable
+- Floating control panel includes: mode selector, play/pause/step/reset, `c` slider, field layer toggles (total field, velocity only, acceleration only)
+- Cursor readout shows local field values at hover position (RAF-batched)
+- All five canonical demo modes are functional and selectable
 - `c` slider works: lowering `c` visibly exaggerates causality delays; history buffer adjusts pruning window; graceful clamping if history underruns
+- In `sudden_stop` mode, the student can trigger the stop event interactively with a control (for example, a `Stop now` button) instead of relying only on a fixed scripted stopping point
+- The `sudden_stop` mode keeps its finite braking ramp and shell-thickness physics; the interactive control changes only when the braking phase begins, not the braking duration or the radiation-shell model
+- In `sudden_stop` mode, an optional ghost-charge overlay can be shown/hidden to illustrate the extrapolated would-have-been motion after the real charge stops
+- The ghost overlay is pedagogical only: it is a visual aid for the outside-of-shell velocity field, not a second physical source that contributes to the actual LW field solve
 
-### M6: Multiple charges
+### M6: Paused streamline overlays
+
+Add optional field-line / streamline overlays for single-charge scenes when the simulation is paused or stepped to a fixed frame.
+
+**Acceptance criteria:**
+- When playback is paused, the student can toggle a streamline overlay that traces the instantaneous electric field of the current single-charge frame
+- The streamline overlay is computed on demand for the paused frame and reused until the frame or relevant settings change; it is not continuously recomputed during normal playback
+- In `sudden_stop` mode, the paused streamline overlay makes the shell kink / before-after structure visually legible
+- In `sudden_stop` mode, when the ghost-charge overlay is enabled, the student can optionally show/hide a second streamline overlay for the ghost's extrapolated velocity-field pattern
+- Streamline overlays are labeled and documented as an instantaneous visualization aid for a time-dependent field, not as material lines that physically move with the charge
+- Performance remains acceptable because streamline tracing is restricted to paused / stepped frames and initially scoped to single-charge scenes
+
+### M7: Multiple charges
 
 Support two or more charges with independent history buffers. Fields superpose linearly.
 
@@ -158,7 +173,9 @@ Support two or more charges with independent history buffers. Fields superpose l
 
 - Full-window canvas with a dark (near-black) background
 - Charge rendered as a filled circle with a sign indicator (+/−) at its current position
-- Optional: ghost marker at the retarded position to help students visualize the causality delay
+- Optional teaching markers/overlays may be shown to clarify causality, including:
+  - a retarded-position marker
+  - an extrapolated ghost-charge marker in `sudden_stop` mode showing the would-have-been continued motion outside the radiation shell
 
 ### Vector field layer
 
@@ -173,10 +190,12 @@ Support two or more charges with independent history buffers. Fields superpose l
 - Does not own simulation behavior — pure UI surface
 - Sections:
   - **Mode selector:** dropdown or button group for the canonical demo modes
-  - **Playback:** play / pause / step (implemented in M3) / reset buttons
+  - **Playback:** play / pause / step / reset buttons
   - **Speed of light:** slider for `c` with visible numeric readout
   - **Field layers:** toggles for total field, velocity field, acceleration field
   - **Grid density:** selector (low / medium / high)
+  - **Mode-specific controls:** when relevant, additional controls such as a manual `Stop now` trigger for `sudden_stop`
+  - **Teaching overlays:** toggles for pedagogical overlays such as ghost-charge markers and paused-frame streamline displays
 
 ### Camera
 
@@ -206,7 +225,7 @@ After the physics and interaction model are validated, the renderer can be upgra
 - **Self-consistent dynamics:** charges responding to each other's fields via Lorentz force integration. Architecturally possible but physically subtle (radiation reaction, Abraham-Lorentz force). Treat as a separate deliberate expansion.
 - **Magnetic field visualization:** B is computed for free from the LW equations, but adding a visual layer for it (arrows, heatmap) is deferred until the E-field visualization is stable.
 - **Poynting vector / energy flow:** plausible later as a derived overlay. Requires both E and B, which are already computed.
-- **Field line tracing:** continuous field lines (as in field-sandbox) are harder for time-dependent fields because they must be recomputed every frame. Deferred unless a performant approach is found.
+- **Continuous live field-line tracing:** continuously recomputed field lines during normal playback remain deferred because time-dependent LW fields would require expensive re-tracing every frame. Paused-frame streamline overlays are covered by M6 instead.
 - **Potential visualization:** scalar potential heatmap is less natural for the LW framework than for electrostatics. Deferred.
 - **Sound or haptic feedback:** not in scope.
 

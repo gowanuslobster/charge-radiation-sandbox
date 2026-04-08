@@ -65,6 +65,12 @@ export function ControlPanel({
               : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
             Sudden stop
           </button>
+          <button type="button" onClick={() => onDemoModeChange('draggable')}
+            className={`${TOGGLE_BASE} ${demoMode === 'draggable'
+              ? 'bg-orange-400 text-black shadow-[0_0_16px_rgba(251,146,60,0.5)]'
+              : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
+            Draggable
+          </button>
         </div>
       </div>
 

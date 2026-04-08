@@ -103,6 +103,18 @@ describe('sampleSourceState: sudden_stop', () => {
   });
 });
 
+describe('sampleSourceState: draggable', () => {
+  it('returns zeroed pos/vel/accel for any t (exhaustiveness stub, never called live)', () => {
+    for (const t of [-5, 0, 1, 10]) {
+      const s = sampleSourceState('draggable', t);
+      expect(s.t).toBe(t);
+      expect(s.pos.x).toBe(0); expect(s.pos.y).toBe(0);
+      expect(s.vel.x).toBe(0); expect(s.vel.y).toBe(0);
+      expect(s.accel.x).toBe(0); expect(s.accel.y).toBe(0);
+    }
+  });
+});
+
 // ─── maxHistorySpeed ──────────────────────────────────────────────────────────
 
 describe('maxHistorySpeed', () => {
@@ -116,6 +128,10 @@ describe('maxHistorySpeed', () => {
 
   it('sudden_stop → SUDDEN_STOP_V (retains moving history after stop)', () => {
     expect(maxHistorySpeed('sudden_stop')).toBe(SUDDEN_STOP_V);
+  });
+
+  it('draggable → 0 (dynamic speed tracked separately via dragPeakSpeedRef)', () => {
+    expect(maxHistorySpeed('draggable')).toBe(0);
   });
 });
 

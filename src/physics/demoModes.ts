@@ -6,7 +6,7 @@
 
 import type { KinematicState } from './types';
 
-export type DemoMode = 'stationary' | 'uniform_velocity' | 'sudden_stop';
+export type DemoMode = 'stationary' | 'uniform_velocity' | 'sudden_stop' | 'draggable';
 
 // ─── sudden_stop constants ───────────────────────────────────────────────────
 
@@ -40,6 +40,12 @@ export const SUDDEN_STOP_X_STOP =
  */
 export function sampleSourceState(mode: DemoMode, t: number): KinematicState {
   if (mode === 'stationary') {
+    return { t, pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 }, accel: { x: 0, y: 0 } };
+  }
+
+  // draggable: live tick bypasses sampleSourceState entirely and reads from drag refs.
+  // This branch exists only to satisfy exhaustiveness — it is never called during simulation.
+  if (mode === 'draggable') {
     return { t, pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 }, accel: { x: 0, y: 0 } };
   }
 
@@ -109,6 +115,9 @@ export function sampleSourceState(mode: DemoMode, t: number): KinematicState {
  */
 export function maxHistorySpeed(mode: DemoMode): number {
   if (mode === 'stationary') return 0;
+  // draggable: speed is dynamic and tracked via dragPeakSpeedRef in the sandbox.
+  // Return 0 here; the tick uses dragPeakSpeedRef directly for the horizon calculation.
+  if (mode === 'draggable') return 0;
   return SUDDEN_STOP_V; // uniform_velocity and sudden_stop both peak at SUDDEN_STOP_V
 }
 

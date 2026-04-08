@@ -13,6 +13,7 @@ import type { ChargeHistory } from '@/physics/chargeHistory';
 import { evaluateLienardWiechertField } from '@/physics/lienardWiechert';
 import { getWorldToScreenTransform, transformWorldPoint, type WorldBounds } from '@/rendering/worldSpace';
 import { fillArrowSpec, type ArrowSpec } from '@/rendering/arrows';
+import { CHARGE_MARKER_RADIUS_PX } from '@/rendering/chargeMarker';
 
 type Props = {
   historyRef: RefObject<ChargeHistory>;
@@ -376,7 +377,7 @@ export function VectorFieldCanvas({
       const newest = historyRef.current.newest();
       if (newest !== null) {
         const mp = transformWorldPoint(newest.pos, transform);
-        const radius = 8;
+        const radius = CHARGE_MARKER_RADIUS_PX;
 
         ctx.save();
 

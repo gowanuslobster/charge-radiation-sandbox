@@ -7,8 +7,8 @@
 // When React props (bounds, fieldLayer, isPanning) change, the component re-renders
 // and the next RAF tick picks up the new values via boundsRef / fieldLayerRef.
 
-import { useEffect, useRef, type CSSProperties, type RefObject } from 'react';
-import type { SimConfig } from '@/physics/types';
+import { useEffect, useRef, type CSSProperties, type RefObject, type MutableRefObject } from 'react';
+import type { SimConfig, Vec2 } from '@/physics/types';
 import type { ChargeHistory } from '@/physics/chargeHistory';
 import { evaluateLienardWiechertField } from '@/physics/lienardWiechert';
 import { getWorldToScreenTransform, transformWorldPoint, type WorldBounds } from '@/rendering/worldSpace';
@@ -30,10 +30,15 @@ type Props = {
   /** Incremented by ChargeRadiationSandbox on every reseed; forces a re-solve even when paused. */
   simEpochRef?: RefObject<number>;
   /**
-   * World-space x coordinate of an optional wall marker (sudden_stop mode).
-   * Null = no wall drawn. The marker is a short vertical line with diagonal ticks.
+   * World-space position of the ghost charge (extrapolated would-have-been position).
+   * Null = no ghost drawn. Written by ChargeRadiationSandbox; read here for rendering only.
    */
-  wallWorldX?: number | null;
+  ghostPosRef?: RefObject<Vec2 | null>;
+  /**
+   * Optional external MutableRefObject to receive the canvas element.
+   * Used by useCursorReadout to attach canvas-scoped pointer listeners.
+   */
+  canvasRefProp?: MutableRefObject<HTMLCanvasElement | null>;
   /** Forwarded to the canvas element. Caller uses position:absolute inset:0. */
   style?: CSSProperties;
 };
@@ -127,21 +132,20 @@ export function VectorFieldCanvas({
   isPanning = false,
   isPausedRef,
   simEpochRef,
-  wallWorldX = null,
+  ghostPosRef,
+  canvasRefProp,
   style,
 }: Props) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Mirror props into refs so the RAF closure always reads current values
   // without needing to restart the effect when props change.
   const boundsRef = useRef(bounds);
   const fieldLayerRef = useRef(fieldLayer);
   const isPanningRef = useRef(isPanning);
-  const wallWorldXRef = useRef(wallWorldX);
   useEffect(() => { boundsRef.current = bounds; }, [bounds]);
   useEffect(() => { fieldLayerRef.current = fieldLayer; }, [fieldLayer]);
   useEffect(() => { isPanningRef.current = isPanning; }, [isPanning]);
-  useEffect(() => { wallWorldXRef.current = wallWorldX; }, [wallWorldX]);
 
   // Main RAF loop. Restarts only if grid dimensions change (rare).
   useEffect(() => {
@@ -183,6 +187,7 @@ export function VectorFieldCanvas({
     //   epoch    — covers reseeds where simTime stays 0 (e.g. mode switch at t=0)
     //   bounds   — covers pan and zoom
     //   layer    — covers field-layer toggle while paused
+    //   c        — covers c-slider adjustment while paused (retarded time shifts)
     let lastSolvedSimTime = NaN;
     let lastSolvedEpoch = -1;
     let lastSolvedMinX = NaN;
@@ -190,6 +195,7 @@ export function VectorFieldCanvas({
     let lastSolvedMinY = NaN;
     let lastSolvedMaxY = NaN;
     let lastSolvedLayer = '';
+    let lastSolvedC = NaN;
 
     // DPR-aware sizing via ResizeObserver.
     // Setting canvas.width/height resets the ctx transform, so we re-apply DPR scale here.
@@ -238,7 +244,8 @@ export function VectorFieldCanvas({
         currentBounds.maxX !== lastSolvedMaxX ||
         currentBounds.minY !== lastSolvedMinY ||
         currentBounds.maxY !== lastSolvedMaxY ||
-        layer !== lastSolvedLayer;
+        layer !== lastSolvedLayer ||
+        configRef.current.c !== lastSolvedC;
 
       ctx.clearRect(0, 0, cssW, cssH);
       ctx.globalAlpha = 1;
@@ -304,6 +311,7 @@ export function VectorFieldCanvas({
         lastSolvedMinY = currentBounds.minY;
         lastSolvedMaxY = currentBounds.maxY;
         lastSolvedLayer = layer;
+        lastSolvedC = configRef.current.c;
       }
 
       // Two-pass draw: core arrows first (no shadow state), then glow-only pass.
@@ -331,46 +339,6 @@ export function VectorFieldCanvas({
       ctx.globalAlpha = 1;
       ctx.drawImage(glowCanvas, 0, 0);
       ctx.restore();
-
-      // Wall marker — drawn after arrows so it appears on top of the field layer,
-      // but before the charge marker so the charge renders above the wall.
-      // Vertical line + diagonal ticks (standard physics wall symbol).
-      const wallX = wallWorldXRef.current;
-      if (wallX !== null) {
-        const wx = transform.a * wallX + transform.e; // world x → canvas x
-        // y=0 in world (the charge's travel axis) → canvas y.
-        const wy = transform.d * 0 + transform.f;
-        const HALF_H = 80;   // half-height of the vertical bar (px)
-        const TICK_LEN = 12; // diagonal tick length (px)
-        const TICK_COUNT = 7;
-
-        ctx.save();
-        ctx.strokeStyle = 'rgba(255,200,120,0.85)';
-        ctx.lineWidth = 2.5;
-        ctx.lineCap = 'round';
-        ctx.globalAlpha = 1;
-        ctx.shadowColor = 'rgba(255,200,120,0.4)';
-        ctx.shadowBlur = 6;
-
-        // Vertical bar.
-        ctx.beginPath();
-        ctx.moveTo(wx, wy - HALF_H);
-        ctx.lineTo(wx, wy + HALF_H);
-        ctx.stroke();
-
-        ctx.shadowBlur = 0;
-
-        // Diagonal ticks extending to the right — classic physics wall hatch.
-        for (let i = 0; i <= TICK_COUNT; i++) {
-          const ty = wy - HALF_H + (2 * HALF_H) * i / TICK_COUNT;
-          ctx.beginPath();
-          ctx.moveTo(wx, ty);
-          ctx.lineTo(wx + TICK_LEN, ty + TICK_LEN);
-          ctx.stroke();
-        }
-
-        ctx.restore();
-      }
 
       // Draw source charge marker from newest recorded state.
       // newest() is null before the first reseed completes (brief window during mount).
@@ -485,6 +453,23 @@ export function VectorFieldCanvas({
 
         ctx.restore();
       }
+
+      // Ghost charge marker — dashed circle at the extrapolated would-have-been position.
+      // Purely visual: not a physics source. Only drawn when ghostPosRef is non-null.
+      const ghostPos = ghostPosRef?.current ?? null;
+      if (ghostPos !== null) {
+        const gp = transformWorldPoint(ghostPos, transform);
+        ctx.save();
+        ctx.globalAlpha = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = 'rgba(200,200,200,0.55)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(gp.x, gp.y, CHARGE_MARKER_RADIUS_PX, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
+      }
     }
 
     rafId = requestAnimationFrame(frame);
@@ -499,5 +484,13 @@ export function VectorFieldCanvas({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [historyRef, simulationTimeRef, chargeRef, configRef, gridW, gridH]);
 
-  return <canvas ref={canvasRef} style={style} />;
+  return (
+    <canvas
+      ref={(el) => {
+        canvasRef.current = el;
+        if (canvasRefProp) canvasRefProp.current = el;
+      }}
+      style={style}
+    />
+  );
 }

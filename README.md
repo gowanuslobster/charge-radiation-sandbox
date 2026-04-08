@@ -27,7 +27,7 @@ These modes arrive across M2–M5. See `SPEC.md` for the full milestone schedule
 
 ## Current status
 
-**M4 complete — interactive dragging.** The app renders an interactive electromagnetic field visualizer with four demo modes. Pan with right-drag or middle-drag, zoom with the scroll wheel. In Draggable mode, left-drag the charge to produce radiation pulses directly.
+**M5 complete — speed of light slider, interactive sudden stop, ghost overlay, oscillating mode, cursor readout.** The app renders an interactive electromagnetic field visualizer with five demo modes. Pan with right-drag or middle-drag, zoom with the scroll wheel. In Draggable mode, left-drag the charge to produce radiation pulses directly.
 
 What is implemented and tested:
 
@@ -36,20 +36,21 @@ What is implemented and tested:
 - `src/physics/chargeHistory.ts` — per-charge kinematic history buffer with binary-search interpolation and pruning
 - `src/physics/retardedTime.ts` — retarded-time root-finder (fixed-point iteration, max 15 steps, graceful fallback)
 - `src/physics/lienardWiechert.ts` — exact LW field evaluator: velocity term (1/R²) + acceleration term (1/R) + B field
-- `src/physics/demoModes.ts` — analytical kinematics for each demo mode; substep helper for shell sharpness
+- `src/physics/demoModes.ts` — analytical kinematics for each demo mode; `sampleSuddenStopState` for interactive braking; substep helper for shell sharpness
 - `src/physics/dragKinematics.ts` — tick-owned drag kinematics: EMA smoothing, zero-motion guard, speed cap
 - `src/rendering/worldSpace.ts` — world↔canvas coordinate transforms, view-bounds helpers, history-horizon geometry
 - `src/rendering/arrows.ts` — field magnitude → visual weight mapping, orange→hot-yellow palette, arrow geometry
 - `src/rendering/chargeMarker.ts` — shared visual radius constant for the charge marker
 - `src/rendering/chargeHitTest.ts` — hit-test helper for drag start
 - `src/components/useSandboxCamera.ts` — pan/zoom hook with RAF-batched state updates and zoom-about-cursor
-- `src/components/VectorFieldCanvas.tsx` — 40×40 arrow grid, continuous RAF loop, DPR-aware canvas
-- `src/components/ChargeRadiationSandbox.tsx` — simulation tick, seeding, drag handling, camera wiring
-- `src/components/ControlPanel.tsx` — demo mode and field layer toggles
+- `src/components/useCursorReadout.ts` — canvas-scoped hover listeners, RAF-batched LW field evaluation at cursor position
+- `src/components/VectorFieldCanvas.tsx` — 40×40 arrow grid, ghost charge overlay, continuous RAF loop, DPR-aware canvas
+- `src/components/ChargeRadiationSandbox.tsx` — simulation tick, seeding, drag handling, camera wiring, M5 control handlers
+- `src/components/ControlPanel.tsx` — mode selector, playback controls (play/pause/step/reset), c slider, field layer toggles, mode-specific controls, teaching overlays, cursor readout display
 
-**Implemented demo modes:** stationary charge (pure Coulomb field), uniform velocity (relativistic beaming visible), sudden stop (Bremsstrahlung radiation shell expanding at c), draggable charge (student-driven radiation).
+**Implemented demo modes:** stationary charge (pure Coulomb field), uniform velocity (relativistic beaming visible), sudden stop (Bremsstrahlung radiation shell; interactive stop trigger), oscillating charge (continuous dipole radiation pattern), draggable charge (student-driven radiation).
 
-**Implemented controls:** demo mode toggle, field-layer toggle (Total E / Velocity E / Acceleration E), pan, zoom, pause/step.
+**Implemented controls:** demo mode toggle (5 modes), field-layer toggle (Total E / Velocity E / Acceleration E), play/pause/step/reset, speed-of-light slider (c = 0.65–3.0), interactive Stop now trigger (sudden stop mode), ghost charge overlay toggle, cursor field readout, pan, zoom.
 
 ## Getting started (developers)
 

@@ -28,18 +28,20 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { ChargeHistory } from '@/physics/chargeHistory';
 import { magnitude } from '@/physics/vec2';
-import type { SimConfig } from '@/physics/types';
+import type { SimConfig, Vec2 } from '@/physics/types';
 import {
   type DemoMode,
   sampleSourceState,
+  sampleSuddenStopState,
   maxHistorySpeed,
   brakingSubstepTimes,
-  SUDDEN_STOP_X_STOP,
+  SUDDEN_STOP_V,
 } from '@/physics/demoModes';
 import { type DragState, computeDragState, stoppedDragState } from '@/physics/dragKinematics';
 import { useSandboxCamera } from './useSandboxCamera';
 import { VectorFieldCanvas } from './VectorFieldCanvas';
 import { ControlPanel } from './ControlPanel';
+import { useCursorReadout } from './useCursorReadout';
 import { isWithinBounds, maxCornerDist, worldToScreen, type WorldBounds } from '@/rendering/worldSpace';
 import { hitTestCharge } from '@/rendering/chargeHitTest';
 
@@ -48,6 +50,12 @@ type FieldLayer = 'total' | 'vel' | 'accel';
 export function ChargeRadiationSandbox() {
   const [fieldLayer, setFieldLayer] = useState<FieldLayer>('total');
   const [demoMode, setDemoMode] = useState<DemoMode>('stationary');
+  const [isPaused, setIsPaused] = useState(false);
+
+  // M5 UI state — drives ControlPanel display; mirrored to refs for tick access.
+  const [stopTriggered, setStopTriggered] = useState(false);
+  const [showGhost, setShowGhost] = useState(false);
+  const [c, setC] = useState(1.0);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const {
@@ -97,32 +105,39 @@ export function ChargeRadiationSandbox() {
 
   // Pause / step-forward state.
   // isPausedRef is read inside the RAF closure; isPaused drives the button label.
-  // pendingStepRef signals the next tick to advance by STEP_DT and then stop again.
-  const [isPaused, setIsPaused] = useState(false);
   const isPausedRef = useRef(false);
   const pendingStepRef = useRef(false);
 
+  // ─── M5 refs ─────────────────────────────────────────────────────────────────
+
+  // stopTriggerTimeRef: sim time at which the user triggered the stop.
+  // null = pre-trigger (charge still behaving as uniform_velocity).
+  // non-null = post-trigger (sampleSuddenStopState with this brakeStartTime).
+  const stopTriggerTimeRef = useRef<number | null>(null);
+
+  // showGhostRef: mirrors showGhost state for synchronous read by the tick.
+  const showGhostRef = useRef(false);
+  useEffect(() => { showGhostRef.current = showGhost; }, [showGhost]);
+
+  // ghostPosRef: world-space position of the ghost charge overlay.
+  // Written by tick (during playback) and by handlers (for paused responsiveness).
+  // Read by VectorFieldCanvas for rendering only — not a physics source.
+  const ghostPosRef = useRef<Vec2 | null>(null);
+
+  // Canvas ref: shared between VectorFieldCanvas (for drawing) and useCursorReadout
+  // (for canvas-scoped pointer listeners).
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
   // ─── Drag state (draggable mode) ─────────────────────────────────────────────
 
-  // Drag input: pointer handlers write these; tick reads them.
-  // isDraggingRef: true while the user holds the left button on the charge.
-  // rawDragPosRef: latest world-space pointer position; null until first pointermove.
   const isDraggingRef = useRef(false);
   const rawDragPosRef = useRef<{ x: number; y: number } | null>(null);
-
-  // Drag kinematics: owned entirely by the simulation tick.
-  // Updated every tick via computeDragState / stoppedDragState.
   const dragStateRef = useRef<DragState | null>(null);
-
-  // Retained peak speed for the velocity-aware history horizon.
-  // Only resets on reseed / mode-change — NOT on each new pointer-down — so that
-  // far observers keep the wider history window from earlier fast motion.
   const dragPeakSpeedRef = useRef(0);
 
   const togglePause = useCallback(() => {
     isPausedRef.current = !isPausedRef.current;
     if (isPausedRef.current && isDraggingRef.current) {
-      // End any active drag immediately when the simulation is paused.
       isDraggingRef.current = false;
     }
     setIsPaused(isPausedRef.current);
@@ -135,8 +150,11 @@ export function ChargeRadiationSandbox() {
   // ─── Seeding ────────────────────────────────────────────────────────────────
 
   const reseed = useCallback((mode: DemoMode, db: WorldBounds) => {
+    // Clear M5 trigger state unconditionally on every reseed.
+    stopTriggerTimeRef.current = null;
+    ghostPosRef.current = null;
+
     // Reset camera so reseedBoundsRef is always source-centered.
-    // defaultBounds == the bounds at zoom=1, offset=0, which is passed as `db`.
     resetCamera();
 
     historyRef.current = new ChargeHistory();
@@ -144,16 +162,15 @@ export function ChargeRadiationSandbox() {
     lastWallTimeRef.current = performance.now();
     simEpochRef.current += 1;
 
-    // Snapshot the source-centered bounds for the auto-reseed check.
     reseedBoundsRef.current = db;
 
-    // ── Draggable mode: single stationary history entry at center; no analytic seeding.
+    // ── Draggable mode: single stationary history entry at center.
     if (mode === 'draggable') {
       const center = { x: (db.minX + db.maxX) / 2, y: (db.minY + db.maxY) / 2 };
       dragStateRef.current = { pos: center, vel: { x: 0, y: 0 }, accel: { x: 0, y: 0 } };
       rawDragPosRef.current = null;
       isDraggingRef.current = false;
-      dragPeakSpeedRef.current = 0; // reset on reseed / mode-change only
+      dragPeakSpeedRef.current = 0;
       historyRef.current.recordState({
         pos: center, vel: { x: 0, y: 0 }, accel: { x: 0, y: 0 }, t: 0,
       });
@@ -162,11 +179,9 @@ export function ChargeRadiationSandbox() {
     }
 
     // Seed history with analytically computed past states.
-    // seedSpeed drives the velocity-aware horizon (see module comment).
     const seedState = sampleSourceState(mode, 0);
-    const seedSpeed = magnitude(seedState.vel); // 0 for stationary, 0.6 for uniform_velocity
+    const seedSpeed = magnitude(seedState.vel);
     const config = configRef.current;
-    // Precondition: seedSpeed < config.c (same contract as M1 MAX_BETA_SQ guard).
     const historyWindow = maxCornerDist(seedState.pos, db) / (config.c - seedSpeed);
     const n = Math.ceil(historyWindow / 0.05);
     const history = historyRef.current;
@@ -177,26 +192,78 @@ export function ChargeRadiationSandbox() {
     hasSeededRef.current = true;
   }, [resetCamera]);
 
-  // Effect A — initial seed: fires once when the container is first measured.
-  // demoMode is intentionally excluded: initial mode is read from demoModeRef to
-  // handle the (unlikely) case where demoMode changes before the first measurement.
-  // A window resize changes defaultBounds → triggers this effect → exits via hasSeededRef
-  // guard → no spurious reseed. Effect B handles all subsequent mode changes.
+  // Effect A — initial seed.
   useEffect(() => {
     if (defaultBounds === null) return;
-    if (hasSeededRef.current) return; // already seeded — ignore subsequent resize events
+    if (hasSeededRef.current) return;
     reseed(demoModeRef.current, defaultBounds);
-  }, [defaultBounds, reseed]); // demoMode intentionally excluded
+  }, [defaultBounds, reseed]);
 
-  // Effect B — mode-change reseed: fires when demoMode changes after initialization.
-  // defaultBounds is intentionally read via ref (not listed as a dep) so that a window
-  // resize changing defaultBounds never triggers a spurious reseed through this path.
+  // Effect B — mode-change reseed.
   useEffect(() => {
-    if (!hasSeededRef.current) return; // not yet initialized — Effect A handles first seed
+    if (!hasSeededRef.current) return;
     const db = defaultBoundsRef.current;
     if (db === null) return;
     reseed(demoMode, db);
-  }, [demoMode, reseed]); // defaultBounds intentionally excluded via ref
+    ghostPosRef.current = null;
+    // Resetting derived UI state after a mode-change reseed is a one-way update
+    // (mode → reset) with no loop risk. Disable the set-state-in-effect lint rule
+    // for these two idempotent calls.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setStopTriggered(false);
+    setShowGhost(false);
+  }, [demoMode, reseed]);
+
+  // ─── M5 handlers ────────────────────────────────────────────────────────────
+
+  const handleStopNow = useCallback(() => {
+    if (stopTriggerTimeRef.current !== null) return;
+    stopTriggerTimeRef.current = simTimeRef.current;
+    setStopTriggered(true);
+    // Synchronously set ghost position so it's visible immediately (even if paused).
+    if (showGhostRef.current) {
+      ghostPosRef.current = { x: SUDDEN_STOP_V * simTimeRef.current, y: 0 };
+    }
+  }, []);
+
+  const handleToggleGhost = useCallback(() => {
+    const next = !showGhostRef.current;
+    setShowGhost(next);
+    if (next) {
+      const T = stopTriggerTimeRef.current;
+      // Use current simTime for the extrapolated position (not T_trig, which was the stop point).
+      ghostPosRef.current = T !== null
+        ? { x: SUDDEN_STOP_V * simTimeRef.current, y: 0 }
+        : null;
+    } else {
+      ghostPosRef.current = null;
+    }
+  }, []);
+
+  const handleCChange = useCallback((newC: number) => {
+    configRef.current = { ...configRef.current, c: newC };
+    setC(newC);
+    // No reseed needed — history stays valid; needsSolve cache in VectorFieldCanvas
+    // includes c and will re-solve paused frames after the slider moves.
+  }, []);
+
+  const handleReset = useCallback(() => {
+    // End any active drag (same cleanup as togglePause on drag end).
+    if (isDraggingRef.current) {
+      isDraggingRef.current = false;
+      rawDragPosRef.current = null;
+      dragStateRef.current = stoppedDragState(dragStateRef.current?.pos ?? { x: 0, y: 0 });
+      dragPeakSpeedRef.current = 0;
+    }
+    const db = defaultBoundsRef.current;
+    if (db === null) return;
+    reseed(demoModeRef.current, db);
+    // Sync UI state with the cleared refs set inside reseed().
+    setStopTriggered(false);
+    setShowGhost(false);
+    ghostPosRef.current = null;
+    // isPausedRef is NOT touched — reset preserves current paused/running state.
+  }, [reseed]);
 
   // ─── Simulation tick ────────────────────────────────────────────────────────
 
@@ -204,17 +271,11 @@ export function ChargeRadiationSandbox() {
     function tick(wallTime: number) {
       rafRef.current = requestAnimationFrame(tick);
 
-      // Step 0: initialization guard — no-op until first reseed completes.
       if (!hasSeededRef.current) return;
 
-      // Steps 1-2: advance simulation time.
-      // lastWallTimeRef is always updated, even when paused, so resume is seamless.
-      // dt is capped to 50 ms to prevent spiral-of-death when the tab is hidden.
       const rawDt = Math.min(wallTime - lastWallTimeRef.current, 50) / 1000;
       lastWallTimeRef.current = wallTime;
 
-      // Pause / step-forward: when paused and no step is pending, freeze here.
-      // When a step is pending, advance by one fixed step (≈1/30 s) and stop again.
       const STEP_DT = 1 / 30;
       if (isPausedRef.current && !pendingStepRef.current) return;
       const dt = isPausedRef.current ? STEP_DT : rawDt;
@@ -222,17 +283,14 @@ export function ChargeRadiationSandbox() {
 
       simTimeRef.current += dt;
 
-      // Step 3: sample source state.
       const mode = demoModeRef.current;
 
       // ── Draggable branch: tick owns kinematics; returns early.
-      // pointer handlers write isDraggingRef + rawDragPosRef; tick reads them.
       if (mode === 'draggable') {
         const history = historyRef.current;
         const config = configRef.current;
 
         if (isDraggingRef.current && rawDragPosRef.current !== null) {
-          // Compute vel/accel from tick-dt; zero-motion guard lives inside computeDragState.
           dragStateRef.current = computeDragState(
             rawDragPosRef.current,
             dragStateRef.current,
@@ -242,26 +300,16 @@ export function ChargeRadiationSandbox() {
           const speed = magnitude(dragStateRef.current.vel);
           if (speed > dragPeakSpeedRef.current) dragPeakSpeedRef.current = speed;
         } else if (!isDraggingRef.current && dragStateRef.current) {
-          // Released or pause-ended: freeze immediately.
-          // Consume rawDragPosRef if set — this captures a final pointer position that
-          // arrived between the last RAF tick and the pointerup/pause event.
-          // Clear rawDragPosRef here (not in the event handler) so the next drag start
-          // sees null and waits for its own first pointermove before computing kinematics.
           const finalPos = rawDragPosRef.current ?? dragStateRef.current.pos;
           rawDragPosRef.current = null;
           dragStateRef.current = stoppedDragState(finalPos);
-          // dragPeakSpeedRef is NOT reset here — far observers may still need
-          // the wider history window from earlier fast motion.
         }
 
-        if (!dragStateRef.current) return; // not yet seeded
+        if (!dragStateRef.current) return;
 
         const ds = dragStateRef.current;
         history.recordState({ pos: ds.pos, vel: ds.vel, accel: ds.accel, t: simTimeRef.current });
 
-        // Use retained peak (not current) speed for the history horizon.
-        // Same rationale as maxHistorySpeed in M3: far observers need pre-stop
-        // history at travel time R/(c−V_peak), not R/c.
         const horizonSpeed = Math.min(dragPeakSpeedRef.current, config.c * 0.92);
         history.setMaxHistoryTime(
           maxCornerDist(ds.pos, viewBoundsRef.current) / (config.c - horizonSpeed)
@@ -270,42 +318,54 @@ export function ChargeRadiationSandbox() {
         return;
       }
 
-      const sourceState = sampleSourceState(mode, simTimeRef.current);
+      // ── Compute source state (all non-draggable modes).
+      // sudden_stop handles its own substep recording inside this block.
+      const history = historyRef.current;
+      const config = configRef.current;
+      let sourceState;
 
-      // Step 4: UX auto-reseed check (uniform_velocity only).
-      // Compares against reseedBoundsRef (source-centered snapshot) not viewBounds,
-      // so camera panning never triggers a reseed.
-      // Margin 1.0 world unit: at vel=0.6 and 60 FPS, max per-tick drift ≈ 0.01 units —
-      // one tick cannot overshoot this margin.
-      if (mode === 'uniform_velocity' && reseedBoundsRef.current !== null) {
+      if (mode === 'sudden_stop') {
+        const T_trig = stopTriggerTimeRef.current;
+        const prevSimTime = simTimeRef.current - dt;
+
+        if (T_trig === null) {
+          // Pre-trigger: behave identically to uniform_velocity.
+          sourceState = sampleSourceState('uniform_velocity', simTimeRef.current);
+        } else {
+          // Post-trigger: parameterized braking with shell-sharpness substeps.
+          for (const tSub of brakingSubstepTimes(prevSimTime, simTimeRef.current, T_trig)) {
+            history.recordState(sampleSuddenStopState(tSub, T_trig));
+          }
+          sourceState = sampleSuddenStopState(simTimeRef.current, T_trig);
+          // Update ghost: extrapolated would-have-been position at current simTime.
+          if (showGhostRef.current) {
+            ghostPosRef.current = { x: SUDDEN_STOP_V * simTimeRef.current, y: 0 };
+          }
+        }
+      } else {
+        sourceState = sampleSourceState(mode, simTimeRef.current);
+      }
+
+      // ── Auto-reseed check.
+      // Compares against reseedBoundsRef (source-centered snapshot) — camera panning
+      // never triggers a reseed. Applies to modes where the charge can drift off-screen.
+      // sudden_stop pre-trigger is included because the charge moves as uniform_velocity.
+      const shouldCheckReseed =
+        mode === 'uniform_velocity' ||
+        (mode === 'sudden_stop' && stopTriggerTimeRef.current === null) ||
+        mode === 'oscillating';
+
+      if (shouldCheckReseed && reseedBoundsRef.current !== null) {
         if (!isWithinBounds(sourceState.pos, reseedBoundsRef.current, 1.0)) {
-          // safe: hasSeededRef.current === true implies defaultBoundsRef.current !== null
           reseed(mode, defaultBoundsRef.current!);
           return;
         }
       }
 
-      // Steps 5-7: record state, set velocity-aware history horizon, prune.
-      const history = historyRef.current;
-      const config = configRef.current;
-
-      // For sudden_stop, record exact phase-boundary times and interior substeps
-      // before the main state. This prevents ChargeHistory's linear interpolation
-      // from smearing the acceleration step across an entire frame interval.
-      if (mode === 'sudden_stop') {
-        const prevSimTime = simTimeRef.current - dt;
-        for (const tSub of brakingSubstepTimes(prevSimTime, simTimeRef.current)) {
-          history.recordState(sampleSourceState('sudden_stop', tSub));
-        }
-      }
+      // ── Record state (sudden_stop substeps already recorded above for post-trigger).
       history.recordState(sourceState);
 
-      // Use peak mode speed (not current speed) for the history horizon.
-      // For sudden_stop this keeps outside-shell history after the charge stops:
-      // those observers need the pre-stop moving history at effective travel time
-      // R/(c−V), not R/c. See demoModes.ts: maxHistorySpeed for the M5 caveat.
       const horizonSpeed = maxHistorySpeed(mode);
-      // Precondition: horizonSpeed < config.c (same contract as M1 MAX_BETA_SQ guard).
       history.setMaxHistoryTime(
         maxCornerDist(sourceState.pos, viewBoundsRef.current) / (config.c - horizonSpeed)
       );
@@ -318,13 +378,11 @@ export function ChargeRadiationSandbox() {
 
   // ─── Event wiring ───────────────────────────────────────────────────────────
 
-  // Global pointer events: pan continues when pointer leaves the container.
-  // Also handles drag updates for draggable mode.
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
-      handleGlobalPointerMove(e); // pan
+      handleGlobalPointerMove(e);
       if (isDraggingRef.current && demoModeRef.current === 'draggable') {
-        if (isPausedRef.current) return; // ignore pointer moves while paused
+        if (isPausedRef.current) return;
         const worldPos = getWorldFromClientPoint(e.clientX, e.clientY);
         if (worldPos !== null) rawDragPosRef.current = worldPos;
       }
@@ -333,9 +391,6 @@ export function ChargeRadiationSandbox() {
       handleGlobalPointerUp();
       if (e.button === 0 && isDraggingRef.current) {
         isDraggingRef.current = false;
-        // rawDragPosRef is intentionally NOT cleared here.
-        // The tick's stop branch consumes the final pointer position and clears it,
-        // so that a release between RAF ticks is not lost.
       }
     };
     window.addEventListener('pointermove', onMove);
@@ -346,8 +401,6 @@ export function ChargeRadiationSandbox() {
     };
   }, [handleGlobalPointerMove, handleGlobalPointerUp, getWorldFromClientPoint]);
 
-  // Wheel zoom: added as a non-passive listener so preventDefault() is honored.
-  // zoomRef tracks current zoom in a ref so the listener closure never goes stale.
   const zoomForWheelRef = useRef(zoom);
   useEffect(() => { zoomForWheelRef.current = zoom; }, [zoom]);
 
@@ -361,34 +414,44 @@ export function ChargeRadiationSandbox() {
     };
     container.addEventListener('wheel', handleWheel, { passive: false });
     return () => container.removeEventListener('wheel', handleWheel);
-  }, [zoomAtClientPoint]); // zoomAtClientPoint is stable; zoom read via ref
+  }, [zoomAtClientPoint]);
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
-    // Right-click (button=2) or middle-click (button=1) initiates pan.
     if (e.button === 1 || e.button === 2) {
       e.preventDefault();
       beginPan(e.clientX, e.clientY);
       return;
     }
-    // Left-click (button=0) in draggable mode: hit-test the charge and start drag.
     if (e.button === 0 && demoModeRef.current === 'draggable') {
-      if (isPausedRef.current) return; // drag blocked while paused
+      if (isPausedRef.current) return;
 
       const rect = containerRef.current!.getBoundingClientRect();
       const cx = e.clientX - rect.left;
       const cy = e.clientY - rect.top;
 
-      // Convert charge world position to canvas pixels for the hit test.
       const chargePos = dragStateRef.current?.pos ?? { x: 0, y: 0 };
       const cp = worldToScreen(chargePos, viewBoundsRef.current, rect.width, rect.height);
 
       if (hitTestCharge(cx, cy, cp.x, cp.y)) {
-        e.preventDefault(); // prevent browser drag/selection on successful grab
+        e.preventDefault();
         isDraggingRef.current = true;
         e.currentTarget.setPointerCapture(e.pointerId);
       }
     }
   }, [beginPan]);
+
+  // ─── Cursor readout ─────────────────────────────────────────────────────────
+
+  const readout = useCursorReadout({
+    canvasRef,
+    historyRef,
+    simTimeRef,
+    simEpochRef,
+    chargeRef,
+    configRef,
+    viewBoundsRef,
+    getWorldFromClientPoint,
+  });
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
@@ -410,17 +473,26 @@ export function ChargeRadiationSandbox() {
         fieldLayer={fieldLayer}
         isPanning={isPanning}
         isPausedRef={isPausedRef}
-        wallWorldX={demoMode === 'sudden_stop' ? SUDDEN_STOP_X_STOP : null}
+        ghostPosRef={ghostPosRef}
+        canvasRefProp={canvasRef}
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
       />
       <ControlPanel
         demoMode={demoMode}
         fieldLayer={fieldLayer}
         isPaused={isPaused}
+        c={c}
+        stopTriggered={stopTriggered}
+        showGhost={showGhost}
+        readout={readout}
         onDemoModeChange={setDemoMode}
         onFieldLayerChange={setFieldLayer}
         onPauseToggle={togglePause}
         onStepForward={stepForward}
+        onReset={handleReset}
+        onCChange={handleCChange}
+        onStopNow={handleStopNow}
+        onToggleGhost={handleToggleGhost}
         onResetView={resetCamera}
         onZoomIn={() => zoomAtCenter(zoom * 1.5)}
         onZoomOut={() => zoomAtCenter(zoom / 1.5)}

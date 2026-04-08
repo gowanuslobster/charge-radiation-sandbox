@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   sampleSourceState,
+  sampleSuddenStopState,
   maxHistorySpeed,
   brakingSubstepTimes,
   SUDDEN_STOP_V,
@@ -8,6 +9,8 @@ import {
   SUDDEN_STOP_T_BRAKE,
   SUDDEN_STOP_BRAKE_SUBSTEP_DT,
   SUDDEN_STOP_X_STOP,
+  OSCILLATING_AMPLITUDE,
+  OSCILLATING_OMEGA,
 } from './demoModes';
 import { ChargeHistory } from './chargeHistory';
 import { evaluateLienardWiechertField } from './lienardWiechert';
@@ -293,5 +296,137 @@ describe('sudden_stop physics integration', () => {
     // would-have-been position (beamed field direction), not just similar magnitude.
     expect(Math.abs(actual!.eVel.x - ref!.eVel.x)).toBeLessThan(0.05);
     expect(Math.abs(actual!.eVel.y - ref!.eVel.y)).toBeLessThan(0.05);
+  });
+});
+
+// ─── sampleSuddenStopState (parameterized brakeStartTime) ────────────────────
+
+describe('sampleSuddenStopState: custom brakeStartTime', () => {
+  const CUSTOM_T = 5.0; // different from SUDDEN_STOP_T_STOP = 2.0
+  const TB = SUDDEN_STOP_T_BRAKE;
+  const brakeEnd = CUSTOM_T + TB;
+  const xStop = SUDDEN_STOP_V * CUSTOM_T + SUDDEN_STOP_V * TB / 2;
+
+  it('moving phase (t < CUSTOM_T) matches uniform_velocity', () => {
+    for (const t of [-3, 0, 1, CUSTOM_T - 0.001]) {
+      const s = sampleSuddenStopState(t, CUSTOM_T);
+      expect(s.pos.x).toBeCloseTo(SUDDEN_STOP_V * t, 9);
+      expect(s.vel.x).toBeCloseTo(SUDDEN_STOP_V, 9);
+      expect(s.accel.x).toBe(0);
+    }
+  });
+
+  it('braking phase: accel.x = −V/T_BRAKE', () => {
+    const expectedAccel = -SUDDEN_STOP_V / TB;
+    for (const t of [CUSTOM_T, CUSTOM_T + 0.05, CUSTOM_T + TB - 0.001]) {
+      const s = sampleSuddenStopState(t, CUSTOM_T);
+      expect(s.accel.x).toBeCloseTo(expectedAccel, 9);
+    }
+  });
+
+  it('stopped phase: vel=0, pos=xStop', () => {
+    for (const t of [brakeEnd, brakeEnd + 0.5, brakeEnd + 2]) {
+      const s = sampleSuddenStopState(t, CUSTOM_T);
+      expect(s.vel.x).toBeCloseTo(0, 9);
+      expect(s.pos.x).toBeCloseTo(xStop, 9);
+    }
+  });
+
+  it('sampleSourceState delegates to sampleSuddenStopState(t, T_STOP)', () => {
+    // They must be identical for all t — including the braking window.
+    for (const t of [-1, 0, SUDDEN_STOP_T_STOP, SUDDEN_STOP_T_STOP + 0.1, SUDDEN_STOP_T_STOP + SUDDEN_STOP_T_BRAKE + 1]) {
+      const via_sss = sampleSuddenStopState(t, SUDDEN_STOP_T_STOP);
+      const via_sampleSourceState = sampleSourceState('sudden_stop', t);
+      expect(via_sss.pos.x).toBeCloseTo(via_sampleSourceState.pos.x, 12);
+      expect(via_sss.vel.x).toBeCloseTo(via_sampleSourceState.vel.x, 12);
+      expect(via_sss.accel.x).toBeCloseTo(via_sampleSourceState.accel.x, 12);
+    }
+  });
+
+  it('xStop is consistent with SUDDEN_STOP_X_STOP when brakeStartTime = T_STOP', () => {
+    const s = sampleSuddenStopState(SUDDEN_STOP_T_STOP + SUDDEN_STOP_T_BRAKE + 1, SUDDEN_STOP_T_STOP);
+    expect(s.pos.x).toBeCloseTo(SUDDEN_STOP_X_STOP, 9);
+  });
+});
+
+// ─── sampleSourceState: oscillating ──────────────────────────────────────────
+
+describe('sampleSourceState: oscillating', () => {
+  const A = OSCILLATING_AMPLITUDE;
+  const W = OSCILLATING_OMEGA;
+
+  it('pos.x = A·sin(ω·t), vel.x = A·ω·cos(ω·t), accel.x = −A·ω²·sin(ω·t)', () => {
+    for (const t of [-Math.PI, -1, 0, 0.5, Math.PI / 2, Math.PI]) {
+      const s = sampleSourceState('oscillating', t);
+      expect(s.pos.x).toBeCloseTo(A * Math.sin(W * t), 10);
+      expect(s.vel.x).toBeCloseTo(A * W * Math.cos(W * t), 10);
+      expect(s.accel.x).toBeCloseTo(-A * W ** 2 * Math.sin(W * t), 10);
+    }
+  });
+
+  it('pos.y, vel.y, accel.y are all zero', () => {
+    for (const t of [-1, 0, 1]) {
+      const s = sampleSourceState('oscillating', t);
+      expect(s.pos.y).toBe(0);
+      expect(s.vel.y).toBe(0);
+      expect(s.accel.y).toBe(0);
+    }
+  });
+
+  it('at t=0: pos=0, vel=A·ω (max), accel=0', () => {
+    const s = sampleSourceState('oscillating', 0);
+    expect(s.pos.x).toBeCloseTo(0, 12);
+    expect(s.vel.x).toBeCloseTo(A * W, 12);
+    expect(s.accel.x).toBeCloseTo(0, 12);
+  });
+
+  it('at t=π/(2ω): pos=A (max), vel=0, accel=−A·ω² (max negative)', () => {
+    const t = Math.PI / (2 * W);
+    const s = sampleSourceState('oscillating', t);
+    expect(s.pos.x).toBeCloseTo(A, 10);
+    expect(s.vel.x).toBeCloseTo(0, 10);
+    expect(s.accel.x).toBeCloseTo(-A * W ** 2, 10);
+  });
+});
+
+// ─── maxHistorySpeed: oscillating ────────────────────────────────────────────
+
+describe('maxHistorySpeed: oscillating', () => {
+  it('returns A·ω = 0.5', () => {
+    expect(maxHistorySpeed('oscillating')).toBeCloseTo(OSCILLATING_AMPLITUDE * OSCILLATING_OMEGA, 12);
+  });
+});
+
+// ─── brakingSubstepTimes: custom brakeStartTime ───────────────────────────────
+
+describe('brakingSubstepTimes: custom brakeStartTime', () => {
+  const CUSTOM_T = 7.0;
+  const TB = SUDDEN_STOP_T_BRAKE;
+  const brakeEnd = CUSTOM_T + TB;
+
+  it('returns [] when both times before the custom braking window', () => {
+    expect(brakingSubstepTimes(0, CUSTOM_T - 0.1, CUSTOM_T)).toEqual([]);
+  });
+
+  it('returns [] when both times after the custom braking window', () => {
+    expect(brakingSubstepTimes(brakeEnd + 0.1, brakeEnd + 0.5, CUSTOM_T)).toEqual([]);
+  });
+
+  it('includes CUSTOM_T when frame spans its entry', () => {
+    const result = brakingSubstepTimes(CUSTOM_T - 0.05, CUSTOM_T + 0.05, CUSTOM_T);
+    expect(result).toContain(CUSTOM_T);
+  });
+
+  it('includes brakeEnd when frame spans its entry', () => {
+    const result = brakingSubstepTimes(CUSTOM_T + 0.1, brakeEnd + 0.05, CUSTOM_T);
+    expect(result).toContain(brakeEnd);
+  });
+
+  it('default brakeStartTime = SUDDEN_STOP_T_STOP matches explicit call', () => {
+    const prev = SUDDEN_STOP_T_STOP - 0.1;
+    const curr = SUDDEN_STOP_T_STOP + SUDDEN_STOP_T_BRAKE + 0.1;
+    const defaultResult  = brakingSubstepTimes(prev, curr);
+    const explicitResult = brakingSubstepTimes(prev, curr, SUDDEN_STOP_T_STOP);
+    expect(defaultResult).toEqual(explicitResult);
   });
 });

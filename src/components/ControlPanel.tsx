@@ -8,16 +8,26 @@
 // All styling via Tailwind — no inline CSSProperties.
 
 import type { DemoMode } from '@/physics/demoModes';
+import type { CursorReadout } from './useCursorReadout';
+
 type FieldLayer = 'total' | 'vel' | 'accel';
 
 type Props = {
   demoMode: DemoMode;
   fieldLayer: FieldLayer;
   isPaused: boolean;
+  c: number;
+  stopTriggered: boolean;
+  showGhost: boolean;
+  readout: CursorReadout;
   onDemoModeChange: (mode: DemoMode) => void;
   onFieldLayerChange: (layer: FieldLayer) => void;
   onPauseToggle: () => void;
   onStepForward: () => void;
+  onReset: () => void;
+  onCChange: (c: number) => void;
+  onStopNow: () => void;
+  onToggleGhost: () => void;
   onResetView: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -34,9 +44,10 @@ const TOGGLE_BASE = 'rounded-md px-3 py-2 text-sm font-medium transition-all dur
 const ICON_BASE = 'flex h-7 w-7 items-center justify-center rounded-md text-sm text-white/85 bg-white/[0.12] hover:bg-white/20 transition-colors duration-200';
 
 export function ControlPanel({
-  demoMode, fieldLayer, isPaused,
+  demoMode, fieldLayer, isPaused, c, stopTriggered, showGhost, readout,
   onDemoModeChange, onFieldLayerChange,
-  onPauseToggle, onStepForward,
+  onPauseToggle, onStepForward, onReset,
+  onCChange, onStopNow, onToggleGhost,
   onResetView, onZoomIn, onZoomOut,
   onPanLeft, onPanRight, onPanUp, onPanDown,
 }: Props) {
@@ -65,6 +76,12 @@ export function ControlPanel({
               : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
             Sudden stop
           </button>
+          <button type="button" onClick={() => onDemoModeChange('oscillating')}
+            className={`${TOGGLE_BASE} ${demoMode === 'oscillating'
+              ? 'bg-orange-400 text-black shadow-[0_0_16px_rgba(251,146,60,0.5)]'
+              : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
+            Oscillating
+          </button>
           <button type="button" onClick={() => onDemoModeChange('draggable')}
             className={`${TOGGLE_BASE} ${demoMode === 'draggable'
               ? 'bg-orange-400 text-black shadow-[0_0_16px_rgba(251,146,60,0.5)]'
@@ -88,7 +105,27 @@ export function ControlPanel({
             className="rounded-md px-3 py-2 text-sm font-medium bg-zinc-200/20 text-zinc-200 hover:bg-zinc-200/32 transition-colors duration-200">
             Step →
           </button>
+          <button type="button" onClick={onReset}
+            className="rounded-md px-3 py-2 text-sm font-medium bg-zinc-200/20 text-zinc-200 hover:bg-zinc-200/32 transition-colors duration-200">
+            Reset
+          </button>
         </div>
+      </div>
+
+      {/* Speed of light */}
+      <div>
+        <p className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400">
+          Speed of light — c = {c.toFixed(2)}
+        </p>
+        <input
+          type="range"
+          min={0.65}
+          max={3.0}
+          step={0.05}
+          value={c}
+          onChange={e => onCChange(parseFloat(e.target.value))}
+          className="w-full accent-orange-400"
+        />
       </div>
 
       {/* Field layer */}
@@ -116,6 +153,30 @@ export function ControlPanel({
         </div>
       </div>
 
+      {/* Mode-specific controls: sudden_stop only, pre-trigger */}
+      {demoMode === 'sudden_stop' && !stopTriggered && (
+        <div>
+          <p className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400">Controls</p>
+          <button type="button" onClick={onStopNow}
+            className="rounded-md px-3 py-2 text-sm font-medium bg-red-500/20 text-red-300 hover:bg-red-500/35 transition-colors duration-200">
+            Stop now
+          </button>
+        </div>
+      )}
+
+      {/* Teaching overlays: sudden_stop after trigger */}
+      {demoMode === 'sudden_stop' && stopTriggered && (
+        <div>
+          <p className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400">Overlays</p>
+          <button type="button" onClick={onToggleGhost}
+            className={`${TOGGLE_BASE} ${showGhost
+              ? 'bg-zinc-300 text-black shadow-[0_0_12px_rgba(255,255,255,0.25)]'
+              : 'bg-zinc-200/20 text-zinc-200 hover:bg-zinc-200/32'}`}>
+            Ghost charge
+          </button>
+        </div>
+      )}
+
       {/* Camera */}
       <div>
         <p className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400">Camera</p>
@@ -139,6 +200,18 @@ export function ControlPanel({
           </div>
         </div>
       </div>
+
+      {/* Cursor readout */}
+      {readout !== null && (
+        <div className="border-t border-white/10 pt-2">
+          <p className="mb-1 text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400">Field at cursor</p>
+          <div className="font-mono text-[12px] text-zinc-300 space-y-0.5">
+            <div>|E|&nbsp;&nbsp;<span className="text-white">{readout.eTotal.toFixed(3)}</span></div>
+            <div>Ev&nbsp;&nbsp;<span className="text-cyan-300">{readout.eVel.toFixed(3)}</span></div>
+            <div>Ea&nbsp;&nbsp;<span className="text-amber-300">{readout.eAccel.toFixed(3)}</span></div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

@@ -99,7 +99,7 @@ export function ControlPanel({
             className={`${TOGGLE_BASE} ${isPaused
               ? 'bg-indigo-300 text-black shadow-[0_0_16px_rgba(165,180,252,0.45)]'
               : 'bg-indigo-400/20 text-indigo-200 hover:bg-indigo-400/35'}`}>
-            {isPaused ? 'Resume' : 'Pause'}
+            {isPaused ? 'Run' : 'Pause'}
           </button>
           <button type="button" onClick={onStepForward}
             className="rounded-md px-3 py-2 text-sm font-medium bg-zinc-200/20 text-zinc-200 hover:bg-zinc-200/32 transition-colors duration-200">

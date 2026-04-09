@@ -208,10 +208,13 @@ export function ChargeRadiationSandbox() {
     ghostPosRef.current = null;
     // Resetting derived UI state after a mode-change reseed is a one-way update
     // (mode → reset) with no loop risk. Disable the set-state-in-effect lint rule
-    // for these two idempotent calls.
+    // for these idempotent calls.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setStopTriggered(false);
     setShowGhost(false);
+    isPausedRef.current = true;
+    pendingStepRef.current = false;
+    setIsPaused(true);
   }, [demoMode, reseed]);
 
   // ─── M5 handlers ────────────────────────────────────────────────────────────

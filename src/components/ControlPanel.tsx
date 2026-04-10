@@ -90,6 +90,15 @@ export function ControlPanel({
               : 'Drag the charge to create radiation pulses.'}
           </p>
         )}
+        {demoMode === 'uniform_velocity' && (
+          <p className="mt-1.5 text-[11px] text-zinc-400">A charge moves at constant velocity. Watch for relativistic beaming.</p>
+        )}
+        {demoMode === 'sudden_stop' && (
+          <p className="mt-1.5 text-[11px] text-zinc-400">The charge brakes to a stop. A radiation shell expands outward at c.</p>
+        )}
+        {demoMode === 'oscillating' && (
+          <p className="mt-1.5 text-[11px] text-zinc-400">The charge oscillates sinusoidally. Continuous dipole radiation propagates outward.</p>
+        )}
       </div>
 
       {/* Playback */}

@@ -58,11 +58,11 @@ export function ControlPanel({
       <div>
         <p className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400">Mode</p>
         <div className="flex flex-wrap gap-1.5">
-          <button type="button" onClick={() => onDemoModeChange('stationary')}
-            className={`${TOGGLE_BASE} ${demoMode === 'stationary'
+          <button type="button" onClick={() => onDemoModeChange('draggable')}
+            className={`${TOGGLE_BASE} ${demoMode === 'draggable'
               ? 'bg-orange-400 text-black shadow-[0_0_16px_rgba(251,146,60,0.5)]'
               : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
-            Stationary
+            Charge at Rest
           </button>
           <button type="button" onClick={() => onDemoModeChange('uniform_velocity')}
             className={`${TOGGLE_BASE} ${demoMode === 'uniform_velocity'
@@ -82,13 +82,14 @@ export function ControlPanel({
               : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
             Oscillating
           </button>
-          <button type="button" onClick={() => onDemoModeChange('draggable')}
-            className={`${TOGGLE_BASE} ${demoMode === 'draggable'
-              ? 'bg-orange-400 text-black shadow-[0_0_16px_rgba(251,146,60,0.5)]'
-              : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
-            Draggable
-          </button>
         </div>
+        {demoMode === 'draggable' && (
+          <p className="mt-1.5 text-[11px] text-zinc-400">
+            {isPaused
+              ? 'Click Run, then drag the charge to create radiation pulses.'
+              : 'Drag the charge to create radiation pulses.'}
+          </p>
+        )}
       </div>
 
       {/* Playback */}

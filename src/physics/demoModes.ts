@@ -6,7 +6,7 @@
 
 import type { KinematicState } from './types';
 
-export type DemoMode = 'stationary' | 'uniform_velocity' | 'sudden_stop' | 'oscillating' | 'draggable';
+export type DemoMode = 'uniform_velocity' | 'sudden_stop' | 'oscillating' | 'draggable';
 
 // ─── sudden_stop constants ───────────────────────────────────────────────────
 
@@ -95,12 +95,9 @@ export function sampleSuddenStopState(t: number, brakeStartTime: number): Kinema
  * directly with the user-supplied trigger time.
  */
 export function sampleSourceState(mode: DemoMode, t: number): KinematicState {
-  if (mode === 'stationary') {
-    return { t, pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 }, accel: { x: 0, y: 0 } };
-  }
-
   // draggable: live tick bypasses sampleSourceState entirely and reads from drag refs.
-  // This branch exists only to satisfy exhaustiveness — it is never called during simulation.
+  // This branch exists only to satisfy exhaustiveness and provides the zeroed at-rest
+  // baseline (Coulomb field) used when the simulation is paused or freshly seeded.
   if (mode === 'draggable') {
     return { t, pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 }, accel: { x: 0, y: 0 } };
   }
@@ -142,7 +139,6 @@ export function sampleSourceState(mode: DemoMode, t: number): KinematicState {
  * M5 adds a c slider (SPEC.md:138); demo speeds are defined to stay below the slider min.
  */
 export function maxHistorySpeed(mode: DemoMode): number {
-  if (mode === 'stationary') return 0;
   // draggable: speed is dynamic and tracked via dragPeakSpeedRef in the sandbox.
   // Return 0 here; the tick uses dragPeakSpeedRef directly for the horizon calculation.
   if (mode === 'draggable') return 0;

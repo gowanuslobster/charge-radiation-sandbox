@@ -49,8 +49,10 @@ type FieldLayer = 'total' | 'vel' | 'accel';
 
 export function ChargeRadiationSandbox() {
   const [fieldLayer, setFieldLayer] = useState<FieldLayer>('total');
-  const [demoMode, setDemoMode] = useState<DemoMode>('stationary');
+  const [demoMode, setDemoMode] = useState<DemoMode>('draggable');
   const [isPaused, setIsPaused] = useState(false);
+  const [dragCalloutPos, setDragCalloutPos] = useState<{ x: number; y: number } | null>(null);
+  const dragCalloutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // M5 UI state — drives ControlPanel display; mirrored to refs for tick access.
   const [stopTriggered, setStopTriggered] = useState(false);
@@ -139,6 +141,11 @@ export function ChargeRadiationSandbox() {
     isPausedRef.current = !isPausedRef.current;
     if (isPausedRef.current && isDraggingRef.current) {
       isDraggingRef.current = false;
+    }
+    if (!isPausedRef.current && dragCalloutTimerRef.current !== null) {
+      clearTimeout(dragCalloutTimerRef.current);
+      dragCalloutTimerRef.current = null;
+      setDragCalloutPos(null);
     }
     setIsPaused(isPausedRef.current);
   }, []);
@@ -265,7 +272,14 @@ export function ChargeRadiationSandbox() {
     setStopTriggered(false);
     setShowGhost(false);
     ghostPosRef.current = null;
-    // isPausedRef is NOT touched — reset preserves current paused/running state.
+    isPausedRef.current = true;
+    pendingStepRef.current = false;
+    if (dragCalloutTimerRef.current !== null) {
+      clearTimeout(dragCalloutTimerRef.current);
+      dragCalloutTimerRef.current = null;
+    }
+    setDragCalloutPos(null);
+    setIsPaused(true);
   }, [reseed]);
 
   // ─── Simulation tick ────────────────────────────────────────────────────────
@@ -426,8 +440,6 @@ export function ChargeRadiationSandbox() {
       return;
     }
     if (e.button === 0 && demoModeRef.current === 'draggable') {
-      if (isPausedRef.current) return;
-
       const rect = containerRef.current!.getBoundingClientRect();
       const cx = e.clientX - rect.left;
       const cy = e.clientY - rect.top;
@@ -436,6 +448,16 @@ export function ChargeRadiationSandbox() {
       const cp = worldToScreen(chargePos, viewBoundsRef.current, rect.width, rect.height);
 
       if (hitTestCharge(cx, cy, cp.x, cp.y)) {
+        if (isPausedRef.current) {
+          // Show transient callout anchored to the charge's screen position.
+          if (dragCalloutTimerRef.current !== null) clearTimeout(dragCalloutTimerRef.current);
+          setDragCalloutPos({ x: cp.x, y: cp.y });
+          dragCalloutTimerRef.current = setTimeout(() => {
+            setDragCalloutPos(null);
+            dragCalloutTimerRef.current = null;
+          }, 1200);
+          return;
+        }
         e.preventDefault();
         isDraggingRef.current = true;
         e.currentTarget.setPointerCapture(e.pointerId);
@@ -480,6 +502,14 @@ export function ChargeRadiationSandbox() {
         canvasRefProp={canvasRef}
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
       />
+      {dragCalloutPos !== null && (
+        <div
+          className="pointer-events-none absolute z-30 -translate-x-1/2 rounded-lg bg-black/80 px-3 py-1.5 text-xs text-orange-200 shadow-lg"
+          style={{ left: dragCalloutPos.x, top: dragCalloutPos.y - 40 }}
+        >
+          Click Run to enable dragging.
+        </div>
+      )}
       <ControlPanel
         demoMode={demoMode}
         fieldLayer={fieldLayer}

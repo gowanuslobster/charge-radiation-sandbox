@@ -17,17 +17,6 @@ import { evaluateLienardWiechertField } from './lienardWiechert';
 
 // ─── sampleSourceState ────────────────────────────────────────────────────────
 
-describe('sampleSourceState: stationary', () => {
-  it('pos, vel, accel all zero for t = −5, 0, 5', () => {
-    for (const t of [-5, 0, 5]) {
-      const s = sampleSourceState('stationary', t);
-      expect(s.pos.x).toBe(0); expect(s.pos.y).toBe(0);
-      expect(s.vel.x).toBe(0); expect(s.vel.y).toBe(0);
-      expect(s.accel.x).toBe(0); expect(s.accel.y).toBe(0);
-    }
-  });
-});
-
 describe('sampleSourceState: uniform_velocity', () => {
   it('pos=(0.6t,0), vel=(0.6,0), accel=(0,0) for t = −2, 0, 1', () => {
     for (const t of [-2, 0, 1]) {
@@ -106,8 +95,8 @@ describe('sampleSourceState: sudden_stop', () => {
   });
 });
 
-describe('sampleSourceState: draggable', () => {
-  it('returns zeroed pos/vel/accel for any t (exhaustiveness stub, never called live)', () => {
+describe('sampleSourceState: draggable (charge at rest baseline)', () => {
+  it('returns zeroed pos/vel/accel for any t (at-rest Coulomb baseline; live tick bypasses this)', () => {
     for (const t of [-5, 0, 1, 10]) {
       const s = sampleSourceState('draggable', t);
       expect(s.t).toBe(t);
@@ -121,10 +110,6 @@ describe('sampleSourceState: draggable', () => {
 // ─── maxHistorySpeed ──────────────────────────────────────────────────────────
 
 describe('maxHistorySpeed', () => {
-  it('stationary → 0', () => {
-    expect(maxHistorySpeed('stationary')).toBe(0);
-  });
-
   it('uniform_velocity → SUDDEN_STOP_V', () => {
     expect(maxHistorySpeed('uniform_velocity')).toBe(SUDDEN_STOP_V);
   });
@@ -252,10 +237,10 @@ describe('sudden_stop physics integration', () => {
     expect(magShell).toBeGreaterThan(5 * magOutside);
   });
 
-  it('inside-shell eVel matches stationary Coulomb field at X_STOP', () => {
+  it('inside-shell eVel matches at-rest Coulomb field at X_STOP', () => {
     const history = buildSuddenStopHistory();
 
-    // Reference: stationary charge at X_STOP
+    // Reference: charge at rest at X_STOP (pure Coulomb baseline)
     const refHistory = new ChargeHistory();
     for (let t = -10; t <= tObs + 1e-9; t += 0.005) {
       refHistory.recordState({ t, pos: { x: SUDDEN_STOP_X_STOP, y: 0 }, vel: { x: 0, y: 0 }, accel: { x: 0, y: 0 } });

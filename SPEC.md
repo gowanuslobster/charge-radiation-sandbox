@@ -4,7 +4,7 @@
 
 Charge Radiation Sandbox is a sibling app to `field-sandbox` and `wave-optics-sandbox`, focused on teaching how moving and accelerating point charges produce electromagnetic fields and radiation. The engine uses the exact Lienard-Wiechert (LW) potentials — analytical solutions to Maxwell's equations for point charges in 3D vacuum — rather than a grid-based FDTD solver. This eliminates the dimensionality and statics problems that made FDTD unsuitable for point-charge pedagogy (see `IDEAS.md` for the full rationale and mathematical framework).
 
-The implementation optimizes for pedagogical clarity over full physical generality. The student should come away understanding that fields propagate at finite speed, that a stationary charge produces a Coulomb field, that a moving charge produces a compressed/beamed field, and that only an accelerating charge radiates.
+The implementation optimizes for pedagogical clarity over full physical generality. The student should come away understanding that fields propagate at finite speed, that a charge at rest produces a Coulomb field, that a moving charge produces a compressed/beamed field, and that only an accelerating charge radiates.
 
 ## Core Philosophy
 
@@ -27,7 +27,7 @@ After 10–15 minutes with this tool, a student should understand:
 
 The system is successful when:
 
-- A student can place a stationary charge and see a familiar Coulomb field that matches their intuition from field-sandbox.
+- A student can open the app in Charge at Rest mode and see a familiar Coulomb field that matches their intuition from field-sandbox.
 - A student can watch a charge stop and see a radiation shell expand outward, and can explain why the field outside the shell still "points to where the charge would have been."
 - A student can drag a charge and directly observe that their acceleration of the charge produces radiation pulses.
 - A student can toggle between velocity-field and acceleration-field layers and articulate the difference: one is Coulomb-like and always present, the other is radiation and only appears during acceleration.
@@ -56,11 +56,11 @@ The current official scope does not include:
 
 ## Canonical Demo Modes
 
-### Stationary charge
+### Charge at Rest
 
-A single charge sits at rest. The field is a pure Coulomb field — radial, falling off as 1/R^2, with no radiation component. This is the baseline that should look identical to a single charge in `field-sandbox`.
+A single charge sits at rest. The field is a pure Coulomb field — radial, falling off as 1/R^2, with no radiation component. This is the baseline that should look identical to a single charge in `field-sandbox`. The student can drag the charge freely; radiation pulses appear whenever the charge accelerates.
 
-**What the student learns:** the LW engine recovers electrostatics exactly. The velocity field is Coulomb's law. The acceleration field is zero.
+**What the student learns:** the LW engine recovers electrostatics exactly. The velocity field is Coulomb's law. The acceleration field is zero. Dragging the charge makes this concrete — acceleration produces radiation.
 
 ### Uniform velocity
 
@@ -80,11 +80,7 @@ A single charge oscillates sinusoidally along one axis. Continuous radiation wav
 
 **What the student learns:** periodic acceleration produces periodic radiation (this is how antennas work). The radiation field falls off as 1/R, not 1/R^2, so it dominates at large distances.
 
-### Draggable charge
-
-The student drags a charge freely with the mouse. The history buffer records the trajectory in real time. Radiation pulses appear whenever the charge accelerates (changes direction or speed during the drag).
-
-**What the student learns:** the student directly causes radiation by moving the charge. This is the most interactive and intuitive mode — "I accelerated it, and a wave came out."
+### (Draggable behavior is part of Charge at Rest — see above.)
 
 ## Milestones
 
@@ -95,7 +91,7 @@ Implement the history buffer, retarded-time solver, and LW field evaluator as pu
 **Acceptance criteria:**
 - History buffer records states, prunes old entries, and interpolates correctly via binary search
 - Retarded-time solver converges within the iteration cap for typical scenarios and returns a fallback for degenerate cases
-- Stationary charge produces a Coulomb field: E magnitude proportional to 1/R^2, radially outward, acceleration field identically zero
+- Charge at rest produces a Coulomb field: E magnitude proportional to 1/R^2, radially outward, acceleration field identically zero
 - Uniformly moving charge produces a beamed velocity field with correct relativistic compression
 - `c` is a configurable parameter, not a hardcoded constant
 - Unit tests cover all of the above
@@ -107,7 +103,7 @@ Render the LW field on a sampled grid (e.g., 40x40) as arrows on an HTML Canvas,
 **Acceptance criteria:**
 - Arrows render with the field-sandbox visual style (thin stems, arrowheads, magnitude-proportional length with clamping, color-coded)
 - Dark background consistent with field-sandbox
-- Stationary charge looks correct (radial arrows, decaying outward)
+- Charge at Rest looks correct (radial arrows, decaying outward)
 - Uniformly moving charge shows visible beaming
 - Frame rate stays usable (>30 FPS) for a single charge on a 40x40 grid
 
@@ -205,7 +201,7 @@ Support two or more charges with independent history buffers. Fields superpose l
 
 ### Interactions
 
-- Left-drag to reposition charge (in draggable mode)
+- Left-drag to reposition charge (in Charge at Rest mode)
 - Hover shows cursor readout with local field values
 - All pointer-driven updates RAF-batched
 
@@ -237,9 +233,9 @@ After the physics and interaction model are validated, the renderer can be upgra
 
 ### Key test cases
 
-- **Coulomb recovery:** stationary charge field matches 1/R^2 Coulomb law at sampled points
+- **Coulomb recovery:** charge-at-rest field matches 1/R^2 Coulomb law at sampled points
 - **Beaming:** uniformly moving charge field is stronger ahead than behind, with correct angular dependence
-- **Radiation shell:** after sudden stop, field at points inside the shell matches stationary Coulomb; field at points outside matches extrapolated moving-charge field; field at the shell boundary has a strong acceleration component
+- **Radiation shell:** after sudden stop, field at points inside the shell matches the at-rest Coulomb field; field at points outside matches extrapolated moving-charge field; field at the shell boundary has a strong acceleration component
 - **Retarded-time convergence:** solver converges within iteration cap for typical observation points; returns usable fallback for degenerate cases (R ≈ 0, edge of history buffer)
 - **History buffer:** interpolation accuracy, pruning correctness, graceful clamping when lookup exceeds buffer range
 - **Superposition:** field from two charges equals sum of individual fields at sampled points
@@ -255,7 +251,7 @@ After the physics and interaction model are validated, the renderer can be upgra
 - Default `c = 1` in simulation units.
 - Default grid density is 40x40.
 - Default field display is total E (velocity + acceleration).
-- Default demo mode on app load is stationary charge.
+- Default demo mode on app load is Charge at Rest.
 - All field computation uses the exact LW equations with full relativistic terms. No non-relativistic approximations unless explicitly added and labeled.
 - Coordinate system: physics layer uses Cartesian (+X right, +Y up); rendering layer handles the Canvas flip (+Y down).
 - No claim of self-consistent radiation reaction, charge-charge dynamics, or energy conservation is made in v1.

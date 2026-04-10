@@ -41,6 +41,7 @@ import { type DragState, computeDragState, stoppedDragState } from '@/physics/dr
 import { useSandboxCamera } from './useSandboxCamera';
 import { VectorFieldCanvas } from './VectorFieldCanvas';
 import { ControlPanel } from './ControlPanel';
+import { MovingChargeMiniPanel } from './MovingChargeMiniPanel';
 import { useCursorReadout } from './useCursorReadout';
 import { isWithinBounds, maxCornerDist, worldToScreen, type WorldBounds } from '@/rendering/worldSpace';
 import { hitTestCharge } from '@/rendering/chargeHitTest';
@@ -53,6 +54,14 @@ export function ChargeRadiationSandbox() {
   const [isPaused, setIsPaused] = useState(false);
   const [dragCalloutPos, setDragCalloutPos] = useState<{ x: number; y: number } | null>(null);
   const dragCalloutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Mini panel position for moving_charge mode. Persists across mode switches within session.
+  // Default: horizontally centered under the charge (which starts at screen center),
+  // offset down by the charge marker radius (8px) plus 24px padding.
+  const [miniPanelPos, setMiniPanelPos] = useState(() => ({
+    x: window.innerWidth / 2 - 90,
+    y: window.innerHeight / 2 + 32,
+  }));
 
   // M5 UI state — drives ControlPanel display; mirrored to refs for tick access.
   const [stopTriggered, setStopTriggered] = useState(false);
@@ -113,7 +122,7 @@ export function ChargeRadiationSandbox() {
   // ─── M5 refs ─────────────────────────────────────────────────────────────────
 
   // stopTriggerTimeRef: sim time at which the user triggered the stop.
-  // null = pre-trigger (charge still behaving as uniform_velocity).
+  // null = pre-trigger (charge moving at constant velocity).
   // non-null = post-trigger (sampleSuddenStopState with this brakeStartTime).
   const stopTriggerTimeRef = useRef<number | null>(null);
 
@@ -336,18 +345,18 @@ export function ChargeRadiationSandbox() {
       }
 
       // ── Compute source state (all non-draggable modes).
-      // sudden_stop handles its own substep recording inside this block.
+      // moving_charge handles its own substep recording inside this block (post-trigger).
       const history = historyRef.current;
       const config = configRef.current;
       let sourceState;
 
-      if (mode === 'sudden_stop') {
+      if (mode === 'moving_charge') {
         const T_trig = stopTriggerTimeRef.current;
         const prevSimTime = simTimeRef.current - dt;
 
         if (T_trig === null) {
-          // Pre-trigger: behave identically to uniform_velocity.
-          sourceState = sampleSourceState('uniform_velocity', simTimeRef.current);
+          // Pre-trigger: constant velocity.
+          sourceState = sampleSourceState('moving_charge', simTimeRef.current);
         } else {
           // Post-trigger: parameterized braking with shell-sharpness substeps.
           for (const tSub of brakingSubstepTimes(prevSimTime, simTimeRef.current, T_trig)) {
@@ -366,10 +375,9 @@ export function ChargeRadiationSandbox() {
       // ── Auto-reseed check.
       // Compares against reseedBoundsRef (source-centered snapshot) — camera panning
       // never triggers a reseed. Applies to modes where the charge can drift off-screen.
-      // sudden_stop pre-trigger is included because the charge moves as uniform_velocity.
+      // moving_charge pre-trigger is included because the charge moves at constant velocity.
       const shouldCheckReseed =
-        mode === 'uniform_velocity' ||
-        (mode === 'sudden_stop' && stopTriggerTimeRef.current === null) ||
+        (mode === 'moving_charge' && stopTriggerTimeRef.current === null) ||
         mode === 'oscillating';
 
       if (shouldCheckReseed && reseedBoundsRef.current !== null) {
@@ -516,7 +524,6 @@ export function ChargeRadiationSandbox() {
         isPaused={isPaused}
         c={c}
         stopTriggered={stopTriggered}
-        showGhost={showGhost}
         readout={readout}
         onDemoModeChange={setDemoMode}
         onFieldLayerChange={setFieldLayer}
@@ -524,8 +531,6 @@ export function ChargeRadiationSandbox() {
         onStepForward={stepForward}
         onReset={handleReset}
         onCChange={handleCChange}
-        onStopNow={handleStopNow}
-        onToggleGhost={handleToggleGhost}
         onResetView={resetCamera}
         onZoomIn={() => zoomAtCenter(zoom * 1.5)}
         onZoomOut={() => zoomAtCenter(zoom / 1.5)}
@@ -534,6 +539,16 @@ export function ChargeRadiationSandbox() {
         onPanUp={() => panBy(0, -PAN_STEP_PX)}
         onPanDown={() => panBy(0, PAN_STEP_PX)}
       />
+      {demoMode === 'moving_charge' && (
+        <MovingChargeMiniPanel
+          stopTriggered={stopTriggered}
+          showGhost={showGhost}
+          onStopNow={handleStopNow}
+          onToggleGhost={handleToggleGhost}
+          pos={miniPanelPos}
+          onPosChange={setMiniPanelPos}
+        />
+      )}
     </div>
   );
 }

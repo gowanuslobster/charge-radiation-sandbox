@@ -6,7 +6,7 @@
 
 import type { KinematicState } from './types';
 
-export type DemoMode = 'uniform_velocity' | 'sudden_stop' | 'oscillating' | 'draggable';
+export type DemoMode = 'moving_charge' | 'oscillating' | 'draggable';
 
 // ─── sudden_stop constants ───────────────────────────────────────────────────
 
@@ -102,17 +102,15 @@ export function sampleSourceState(mode: DemoMode, t: number): KinematicState {
     return { t, pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 }, accel: { x: 0, y: 0 } };
   }
 
-  if (mode === 'uniform_velocity') {
+  // moving_charge: pre-stop baseline is constant velocity at SUDDEN_STOP_V.
+  // The stop event is runtime-controlled; post-trigger braking uses sampleSuddenStopState.
+  if (mode === 'moving_charge') {
     return {
       t,
       pos: { x: SUDDEN_STOP_V * t, y: 0 },
       vel: { x: SUDDEN_STOP_V, y: 0 },
       accel: { x: 0, y: 0 },
     };
-  }
-
-  if (mode === 'sudden_stop') {
-    return sampleSuddenStopState(t, SUDDEN_STOP_T_STOP);
   }
 
   // oscillating: x = A·sin(ω·t), sinusoidal motion along x-axis.
@@ -143,7 +141,7 @@ export function maxHistorySpeed(mode: DemoMode): number {
   // Return 0 here; the tick uses dragPeakSpeedRef directly for the horizon calculation.
   if (mode === 'draggable') return 0;
   if (mode === 'oscillating') return OSCILLATING_AMPLITUDE * OSCILLATING_OMEGA; // 0.5
-  return SUDDEN_STOP_V; // uniform_velocity and sudden_stop both peak at SUDDEN_STOP_V
+  return SUDDEN_STOP_V; // moving_charge peaks at SUDDEN_STOP_V (pre- and post-stop history)
 }
 
 // ─── brakingSubstepTimes ─────────────────────────────────────────────────────

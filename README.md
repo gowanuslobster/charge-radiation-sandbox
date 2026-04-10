@@ -18,8 +18,7 @@ After a few minutes of exploration you should be able to see and understand:
 | Mode | What to look for |
 |------|-----------------|
 | Charge at Rest | Pure Coulomb field; radial arrows, 1/R² decay. Drag the charge to create radiation pulses. |
-| Uniform velocity | Beamed field, no radiation shell |
-| Sudden stop (Bremsstrahlung) | Expanding radiation shell at c; distinct inside/outside regions |
+| Moving charge | Constant-velocity beaming; trigger the stop to launch a Bremsstrahlung radiation shell |
 | Oscillating charge | Dipole radiation pattern |
 
 These modes arrive across M2–M5. See `SPEC.md` for the full milestone schedule.
@@ -47,9 +46,9 @@ What is implemented and tested:
 - `src/components/ChargeRadiationSandbox.tsx` — simulation tick, seeding, drag handling, camera wiring, M5 control handlers
 - `src/components/ControlPanel.tsx` — mode selector, playback controls (play/pause/step/reset), c slider, field layer toggles, mode-specific controls, teaching overlays, cursor readout display
 
-**Implemented demo modes:** charge at rest (pure Coulomb field; drag to produce radiation), uniform velocity (relativistic beaming visible), sudden stop (Bremsstrahlung radiation shell; interactive stop trigger), oscillating charge (continuous dipole radiation pattern).
+**Implemented demo modes:** charge at rest (pure Coulomb field; drag to produce radiation), moving charge (relativistic beaming; interactive stop trigger launches Bremsstrahlung shell; ghost overlay), oscillating charge (continuous dipole radiation pattern).
 
-**Implemented controls:** demo mode toggle (4 modes), field-layer toggle (Total E / Velocity E / Acceleration E), play/pause/step/reset, speed-of-light slider (c = 0.65–3.0), interactive Stop now trigger (sudden stop mode), ghost charge overlay toggle, cursor field readout, pan, zoom.
+**Implemented controls:** demo mode toggle (3 modes), field-layer toggle (Total E / Velocity E / Acceleration E), play/pause/step/reset, speed-of-light slider (c = 0.65–3.0), moving-charge mini panel (Stop now trigger, ghost charge overlay toggle), cursor field readout, pan, zoom.
 
 ## Getting started (developers)
 

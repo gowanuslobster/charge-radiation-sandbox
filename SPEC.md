@@ -134,11 +134,11 @@ Extend the existing camera/control-panel system with the remaining controls and 
 **Acceptance criteria:**
 - Floating control panel includes: mode selector, play/pause/step/reset, `c` slider, field layer toggles (total field, velocity only, acceleration only)
 - Cursor readout shows local field values at hover position (RAF-batched)
-- All five canonical demo modes are functional and selectable
+- All three canonical demo modes are functional and selectable
 - `c` slider works: lowering `c` visibly exaggerates causality delays; history buffer adjusts pruning window; graceful clamping if history underruns
-- In `sudden_stop` mode, the student can trigger the stop event interactively with a control (for example, a `Stop now` button) instead of relying only on a fixed scripted stopping point
-- The `sudden_stop` mode keeps its finite braking ramp and shell-thickness physics; the interactive control changes only when the braking phase begins, not the braking duration or the radiation-shell model
-- In `sudden_stop` mode, an optional ghost-charge overlay can be shown/hidden to illustrate the extrapolated would-have-been motion after the real charge stops
+- In `moving_charge` mode, the student can trigger the stop event interactively via a draggable mini panel (`Stop now` button); the charge begins constant-velocity motion and the stop can be triggered at any point
+- The `moving_charge` stop keeps its finite braking ramp and shell-thickness physics; the interactive control changes only when the braking phase begins, not the braking duration or the radiation-shell model
+- In `moving_charge` mode, an optional ghost-charge overlay can be armed before or after the stop; if armed before the stop it appears immediately when the stop is triggered
 - The ghost overlay is pedagogical only: it is a visual aid for the outside-of-shell velocity field, not a second physical source that contributes to the actual LW field solve
 
 ### M6: Paused streamline overlays
@@ -190,7 +190,7 @@ Support two or more charges with independent history buffers. Fields superpose l
   - **Speed of light:** slider for `c` with visible numeric readout
   - **Field layers:** toggles for total field, velocity field, acceleration field
   - **Grid density:** selector (low / medium / high)
-  - **Mode-specific controls:** when relevant, additional controls such as a manual `Stop now` trigger for `sudden_stop`
+  - **Mode-specific controls:** in `moving_charge` mode, a separate draggable mini panel provides a `Stop now` trigger and ghost-charge overlay toggle
   - **Teaching overlays:** toggles for pedagogical overlays such as ghost-charge markers and paused-frame streamline displays
 
 ### Camera

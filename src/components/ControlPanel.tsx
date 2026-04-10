@@ -18,7 +18,6 @@ type Props = {
   isPaused: boolean;
   c: number;
   stopTriggered: boolean;
-  showGhost: boolean;
   readout: CursorReadout;
   onDemoModeChange: (mode: DemoMode) => void;
   onFieldLayerChange: (layer: FieldLayer) => void;
@@ -26,8 +25,6 @@ type Props = {
   onStepForward: () => void;
   onReset: () => void;
   onCChange: (c: number) => void;
-  onStopNow: () => void;
-  onToggleGhost: () => void;
   onResetView: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -44,10 +41,10 @@ const TOGGLE_BASE = 'rounded-md px-3 py-2 text-sm font-medium transition-all dur
 const ICON_BASE = 'flex h-7 w-7 items-center justify-center rounded-md text-sm text-white/85 bg-white/[0.12] hover:bg-white/20 transition-colors duration-200';
 
 export function ControlPanel({
-  demoMode, fieldLayer, isPaused, c, stopTriggered, showGhost, readout,
+  demoMode, fieldLayer, isPaused, c, stopTriggered, readout,
   onDemoModeChange, onFieldLayerChange,
   onPauseToggle, onStepForward, onReset,
-  onCChange, onStopNow, onToggleGhost,
+  onCChange,
   onResetView, onZoomIn, onZoomOut,
   onPanLeft, onPanRight, onPanUp, onPanDown,
 }: Props) {
@@ -64,17 +61,11 @@ export function ControlPanel({
               : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
             Charge at Rest
           </button>
-          <button type="button" onClick={() => onDemoModeChange('uniform_velocity')}
-            className={`${TOGGLE_BASE} ${demoMode === 'uniform_velocity'
+          <button type="button" onClick={() => onDemoModeChange('moving_charge')}
+            className={`${TOGGLE_BASE} ${demoMode === 'moving_charge'
               ? 'bg-orange-400 text-black shadow-[0_0_16px_rgba(251,146,60,0.5)]'
               : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
-            Uniform velocity
-          </button>
-          <button type="button" onClick={() => onDemoModeChange('sudden_stop')}
-            className={`${TOGGLE_BASE} ${demoMode === 'sudden_stop'
-              ? 'bg-orange-400 text-black shadow-[0_0_16px_rgba(251,146,60,0.5)]'
-              : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
-            Sudden stop
+            Moving charge
           </button>
           <button type="button" onClick={() => onDemoModeChange('oscillating')}
             className={`${TOGGLE_BASE} ${demoMode === 'oscillating'
@@ -90,11 +81,12 @@ export function ControlPanel({
               : 'Drag the charge to create radiation pulses.'}
           </p>
         )}
-        {demoMode === 'uniform_velocity' && (
-          <p className="mt-1.5 text-[11px] text-zinc-400">A charge moves at constant velocity. Watch for relativistic beaming.</p>
-        )}
-        {demoMode === 'sudden_stop' && (
-          <p className="mt-1.5 text-[11px] text-zinc-400">The charge brakes to a stop. A radiation shell expands outward at c.</p>
+        {demoMode === 'moving_charge' && (
+          <p className="mt-1.5 text-[11px] text-zinc-400">
+            {stopTriggered
+              ? 'The charge has stopped. The shell separates the old moving field from the new at-rest field.'
+              : 'A charge moves at constant velocity. Click Stop now to launch a radiation shell.'}
+          </p>
         )}
         {demoMode === 'oscillating' && (
           <p className="mt-1.5 text-[11px] text-zinc-400">The charge oscillates sinusoidally. Continuous dipole radiation propagates outward.</p>
@@ -162,30 +154,6 @@ export function ControlPanel({
           </button>
         </div>
       </div>
-
-      {/* Mode-specific controls: sudden_stop only, pre-trigger */}
-      {demoMode === 'sudden_stop' && !stopTriggered && (
-        <div>
-          <p className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400">Controls</p>
-          <button type="button" onClick={onStopNow}
-            className="rounded-md px-3 py-2 text-sm font-medium bg-red-500/20 text-red-300 hover:bg-red-500/35 transition-colors duration-200">
-            Stop now
-          </button>
-        </div>
-      )}
-
-      {/* Teaching overlays: sudden_stop after trigger */}
-      {demoMode === 'sudden_stop' && stopTriggered && (
-        <div>
-          <p className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400">Overlays</p>
-          <button type="button" onClick={onToggleGhost}
-            className={`${TOGGLE_BASE} ${showGhost
-              ? 'bg-zinc-300 text-black shadow-[0_0_12px_rgba(255,255,255,0.25)]'
-              : 'bg-zinc-200/20 text-zinc-200 hover:bg-zinc-200/32'}`}>
-            Ghost charge
-          </button>
-        </div>
-      )}
 
       {/* Camera */}
       <div>

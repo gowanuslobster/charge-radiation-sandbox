@@ -400,3 +400,4 @@ describe('brakingSubstepTimes: custom brakeStartTime', () => {
     expect(defaultResult).toEqual(explicitResult);
   });
 });
+

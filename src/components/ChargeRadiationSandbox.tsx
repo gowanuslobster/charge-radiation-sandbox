@@ -63,7 +63,7 @@ export function ChargeRadiationSandbox() {
     y: window.innerHeight / 2 + 32,
   }));
 
-  // M5 UI state — drives ControlPanel display; mirrored to refs for tick access.
+  // moving_charge UI state.
   const [stopTriggered, setStopTriggered] = useState(false);
   const [showGhost, setShowGhost] = useState(false);
   const [c, setC] = useState(1.0);
@@ -121,9 +121,8 @@ export function ChargeRadiationSandbox() {
 
   // ─── M5 refs ─────────────────────────────────────────────────────────────────
 
-  // stopTriggerTimeRef: sim time at which the user triggered the stop.
-  // null = pre-trigger (charge moving at constant velocity).
-  // non-null = post-trigger (sampleSuddenStopState with this brakeStartTime).
+  // stopTriggerTimeRef: null = pre-trigger (charge at constant velocity);
+  // non-null = sim time when the student clicked Stop now (= brakeStartTime).
   const stopTriggerTimeRef = useRef<number | null>(null);
 
   // showGhostRef: mirrors showGhost state for synchronous read by the tick.
@@ -166,7 +165,7 @@ export function ChargeRadiationSandbox() {
   // ─── Seeding ────────────────────────────────────────────────────────────────
 
   const reseed = useCallback((mode: DemoMode, db: WorldBounds) => {
-    // Clear M5 trigger state unconditionally on every reseed.
+    // Clear moving_charge trigger state unconditionally on every reseed.
     stopTriggerTimeRef.current = null;
     ghostPosRef.current = null;
 
@@ -233,13 +232,12 @@ export function ChargeRadiationSandbox() {
     setIsPaused(true);
   }, [demoMode, reseed]);
 
-  // ─── M5 handlers ────────────────────────────────────────────────────────────
+  // ─── Moving charge handlers ──────────────────────────────────────────────────
 
   const handleStopNow = useCallback(() => {
-    if (stopTriggerTimeRef.current !== null) return;
+    if (stopTriggerTimeRef.current !== null) return; // already stopped — one stop per session
     stopTriggerTimeRef.current = simTimeRef.current;
     setStopTriggered(true);
-    // Synchronously set ghost position so it's visible immediately (even if paused).
     if (showGhostRef.current) {
       ghostPosRef.current = { x: SUDDEN_STOP_V * simTimeRef.current, y: 0 };
     }
@@ -250,7 +248,6 @@ export function ChargeRadiationSandbox() {
     setShowGhost(next);
     if (next) {
       const T = stopTriggerTimeRef.current;
-      // Use current simTime for the extrapolated position (not T_trig, which was the stop point).
       ghostPosRef.current = T !== null
         ? { x: SUDDEN_STOP_V * simTimeRef.current, y: 0 }
         : null;
@@ -345,7 +342,7 @@ export function ChargeRadiationSandbox() {
       }
 
       // ── Compute source state (all non-draggable modes).
-      // moving_charge handles its own substep recording inside this block (post-trigger).
+      // moving_charge records substeps for every transition ramp overlapping this frame.
       const history = historyRef.current;
       const config = configRef.current;
       let sourceState;
@@ -355,15 +352,12 @@ export function ChargeRadiationSandbox() {
         const prevSimTime = simTimeRef.current - dt;
 
         if (T_trig === null) {
-          // Pre-trigger: constant velocity.
           sourceState = sampleSourceState('moving_charge', simTimeRef.current);
         } else {
-          // Post-trigger: parameterized braking with shell-sharpness substeps.
           for (const tSub of brakingSubstepTimes(prevSimTime, simTimeRef.current, T_trig)) {
             history.recordState(sampleSuddenStopState(tSub, T_trig));
           }
           sourceState = sampleSuddenStopState(simTimeRef.current, T_trig);
-          // Update ghost: extrapolated would-have-been position at current simTime.
           if (showGhostRef.current) {
             ghostPosRef.current = { x: SUDDEN_STOP_V * simTimeRef.current, y: 0 };
           }

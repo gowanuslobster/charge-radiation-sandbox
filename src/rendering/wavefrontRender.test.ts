@@ -2,6 +2,8 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import {
   buildHeatmapImageData,
   extractContourSegments,
+  chainContourSegments,
+  smoothScalars,
   getDefaultContourLevels,
   createRenderWorkspace,
 } from './wavefrontRender';
@@ -190,52 +192,200 @@ describe('extractContourSegments', () => {
 // ─── getDefaultContourLevels ──────────────────────────────────────────────────
 
 describe('getDefaultContourLevels', () => {
-  it('signed mode: returns two levels, one positive and one negative', () => {
+  it('signed mode: returns exactly [0] — the zero-crossing phase boundary', () => {
     const scalars = new Float32Array([0.5, -0.3, 0.8, -0.1]);
     const levels = getDefaultContourLevels('signed', scalars);
-    expect(levels.length).toBe(2);
-    const [pos, neg] = levels;
-    expect(pos).toBeGreaterThan(0);
-    expect(neg).toBeLessThan(0);
-    expect(pos).toBeCloseTo(-neg, 9); // symmetric
+    expect(levels.length).toBe(1);
+    expect(levels[0]).toBe(0);
   });
 
-  it('envelope mode: returns exactly one non-negative level', () => {
+  it('signed mode: always [0] regardless of field magnitude', () => {
+    const scalars = new Float32Array([100, -100, 50, -50]);
+    expect(getDefaultContourLevels('signed', scalars)).toEqual([0]);
+  });
+
+  it('envelope mode: returns exactly one positive level', () => {
     const scalars = new Float32Array([0.5, 0.3, 0.8, 0.1]);
     const levels = getDefaultContourLevels('envelope', scalars);
     expect(levels.length).toBe(1);
     expect(levels[0]).toBeGreaterThan(0);
   });
 
-  it('all-zero input: levels are at or near MIN_CONTRAST_PEAK floor (not zero or NaN)', () => {
-    const scalars = new Float32Array(16).fill(0);
-    const signedLevels   = getDefaultContourLevels('signed',   scalars);
-    const envelopeLevels = getDefaultContourLevels('envelope', scalars);
-
-    for (const level of [...signedLevels, ...envelopeLevels]) {
-      expect(Number.isFinite(level)).toBe(true);
-      expect(Math.abs(level)).toBeGreaterThan(0);
-    }
-  });
-
-  it('empty scalar buffer: returns finite non-NaN values', () => {
-    const scalars = new Float32Array(0);
-    const signedLevels   = getDefaultContourLevels('signed',   scalars);
-    const envelopeLevels = getDefaultContourLevels('envelope', scalars);
-
-    for (const level of [...signedLevels, ...envelopeLevels]) {
-      expect(Number.isFinite(level)).toBe(true);
-    }
-    expect(signedLevels.length).toBe(2);
-    expect(envelopeLevels.length).toBe(1);
-  });
-
-  it('larger field: threshold is strictly between 0 and peak', () => {
+  it('envelope mode: level is 20% of contrastPeak, which is strictly between 0 and raw peak', () => {
     const scalars = new Float32Array(100);
-    for (let k = 0; k < 100; k++) scalars[k] = Math.sin(k * 0.3);
-    const peak = Math.max(...Array.from(scalars).map(Math.abs));
-    const [threshold] = getDefaultContourLevels('envelope', scalars.map(Math.abs) as Float32Array);
+    for (let k = 0; k < 100; k++) scalars[k] = Math.abs(Math.sin(k * 0.3));
+    const rawPeak = Math.max(...Array.from(scalars));
+    const [threshold] = getDefaultContourLevels('envelope', scalars);
     expect(threshold).toBeGreaterThan(0);
-    expect(threshold).toBeLessThan(peak);
+    expect(threshold).toBeLessThan(rawPeak);
+  });
+
+  it('envelope all-zero input: returns a finite floor value, not zero or NaN', () => {
+    const scalars = new Float32Array(16).fill(0);
+    const [level] = getDefaultContourLevels('envelope', scalars);
+    expect(Number.isFinite(level)).toBe(true);
+    expect(level).toBeGreaterThan(0);
+  });
+
+  it('envelope empty buffer: returns a finite positive value', () => {
+    const [level] = getDefaultContourLevels('envelope', new Float32Array(0));
+    expect(Number.isFinite(level)).toBe(true);
+    expect(level).toBeGreaterThan(0);
+  });
+});
+
+// ─── chainContourSegments ─────────────────────────────────────────────────────
+
+describe('chainContourSegments', () => {
+  it('empty input → empty array', () => {
+    expect(chainContourSegments([])).toEqual([]);
+  });
+
+  it('single segment → one chain of 4 coords', () => {
+    const segs = [{ x1: 0, y1: 0, x2: 1, y2: 0 }];
+    const chains = chainContourSegments(segs);
+    expect(chains.length).toBe(1);
+    expect(chains[0].length).toBe(4);
+  });
+
+  it('two connected segments → one chain of 6 coords', () => {
+    // seg A: (0,0)→(1,0), seg B: (1,0)→(2,0) — share endpoint (1,0)
+    const segs = [
+      { x1: 0, y1: 0, x2: 1, y2: 0 },
+      { x1: 1, y1: 0, x2: 2, y2: 0 },
+    ];
+    const chains = chainContourSegments(segs);
+    expect(chains.length).toBe(1);
+    expect(chains[0].length).toBe(6); // 3 unique vertices × 2 coords
+  });
+
+  it('two disconnected segments → two chains', () => {
+    const segs = [
+      { x1: 0, y1: 0, x2: 1, y2: 0 },
+      { x1: 3, y1: 3, x2: 4, y2: 3 },
+    ];
+    const chains = chainContourSegments(segs);
+    expect(chains.length).toBe(2);
+  });
+
+  it('closed triangle → one chain with first point repeated at end', () => {
+    // Three segments forming a triangle: A→B, B→C, C→A
+    const segs = [
+      { x1: 0, y1: 0, x2: 1, y2: 0 },
+      { x1: 1, y1: 0, x2: 0.5, y2: 1 },
+      { x1: 0.5, y1: 1, x2: 0, y2: 0 },
+    ];
+    const chains = chainContourSegments(segs);
+    expect(chains.length).toBe(1);
+    const c = chains[0];
+    // Must have 8 coords (4 vertices: A, B, C, A repeated).
+    expect(c.length).toBe(8);
+    // First and last point must match.
+    expect(c[0]).toBeCloseTo(c[c.length - 2], 9);
+    expect(c[1]).toBeCloseTo(c[c.length - 1], 9);
+  });
+
+  it('all coords in chains are within the range of input segment endpoints', () => {
+    // Use a real step-field contour to verify coordinate bounds.
+    const gridW = 6, gridH = 4;
+    const scalars = new Float32Array(gridW * gridH);
+    for (let j = 0; j < gridH; j++) {
+      for (let i = 0; i < gridW; i++) {
+        scalars[j * gridW + i] = i < 3 ? 2.0 : 0.0;
+      }
+    }
+    const segs = extractContourSegments(scalars, gridW, gridH, 1.0);
+    const chains = chainContourSegments(segs);
+    expect(chains.length).toBeGreaterThan(0);
+    for (const c of chains) {
+      for (let k = 0; k < c.length; k += 2) {
+        expect(c[k]).toBeGreaterThanOrEqual(0);
+        expect(c[k]).toBeLessThanOrEqual(gridW - 1);
+        expect(c[k + 1]).toBeGreaterThanOrEqual(0);
+        expect(c[k + 1]).toBeLessThanOrEqual(gridH - 1);
+      }
+    }
+  });
+
+  it('total vertex count across all chains ≤ 2 × segment count (no extra vertices)', () => {
+    const gridW = 8, gridH = 6;
+    const scalars = new Float32Array(gridW * gridH);
+    for (let j = 0; j < gridH; j++) {
+      for (let i = 0; i < gridW; i++) {
+        scalars[j * gridW + i] = (i / (gridW - 1)) * 2 - 1; // -1 to +1
+      }
+    }
+    const segs = extractContourSegments(scalars, gridW, gridH, 0.0);
+    const chains = chainContourSegments(segs);
+    const totalVertices = chains.reduce((s, c) => s + c.length / 2, 0);
+    // Each segment contributes 2 endpoints; chaining merges shared ones,
+    // so total vertices ≤ 2 × segment count (equality for fully disconnected).
+    expect(totalVertices).toBeLessThanOrEqual(segs.length * 2);
+  });
+});
+
+// ─── smoothScalars ────────────────────────────────────────────────────────────
+
+describe('smoothScalars', () => {
+  it('uniform field → output equals input', () => {
+    const gridW = 4, gridH = 3;
+    const src = new Float32Array(gridW * gridH).fill(5.0);
+    const out = new Float32Array(gridW * gridH);
+    smoothScalars(src, out, gridW, gridH);
+    for (let k = 0; k < src.length; k++) {
+      expect(out[k]).toBeCloseTo(5.0, 9);
+    }
+  });
+
+  it('single peak → peak reduced, neighbors increased', () => {
+    const gridW = 3, gridH = 3;
+    const src = new Float32Array(gridW * gridH); // all zero
+    src[4] = 9.0; // center cell
+    const out = new Float32Array(gridW * gridH);
+    smoothScalars(src, out, gridW, gridH);
+    // Center should be averaged with 4 neighbors (all 0): 9/5 = 1.8
+    // Output is Float32, so precision is ~7 significant digits, not arbitrary.
+    expect(out[4]).toBeCloseTo(9 / 5, 5);
+    // Cardinal neighbors (top/bottom/left/right of center) get some of the peak.
+    expect(out[1]).toBeGreaterThan(0); // top
+    expect(out[7]).toBeGreaterThan(0); // bottom
+    expect(out[3]).toBeGreaterThan(0); // left
+    expect(out[5]).toBeGreaterThan(0); // right
+    // Corner cells remain 0 (not adjacent to center).
+    expect(out[0]).toBe(0);
+    expect(out[2]).toBe(0);
+    expect(out[6]).toBe(0);
+    expect(out[8]).toBe(0);
+  });
+
+  it('boundary cells use only available neighbors (no out-of-bounds bleed)', () => {
+    // 1×3 grid: only left-right neighbors exist, no vertical neighbors.
+    const src = new Float32Array([1, 2, 3]);
+    const out = new Float32Array(3);
+    smoothScalars(src, out, 3, 1);
+    // Left boundary: avg(1, 2) = 1.5
+    expect(out[0]).toBeCloseTo(1.5, 9);
+    // Center: avg(1, 2, 3) = 2.0
+    expect(out[1]).toBeCloseTo(2.0, 9);
+    // Right boundary: avg(2, 3) = 2.5
+    expect(out[2]).toBeCloseTo(2.5, 9);
+  });
+
+  it('output buffer is distinct from input (no in-place aliasing)', () => {
+    const src = new Float32Array([0, 1, 0, 1, 0]);
+    const out = new Float32Array(5);
+    smoothScalars(src, out, 5, 1);
+    // src must be unchanged
+    expect(Array.from(src)).toEqual([0, 1, 0, 1, 0]);
+    // out must differ from src
+    expect(Array.from(out)).not.toEqual(Array.from(src));
+  });
+
+  it('preserves sign structure — negative values remain negative', () => {
+    // Alternating signs: smoothing should not flip signs for interior cells with same-sign neighbors.
+    const src = new Float32Array([-1, -1, -1, -1, -1]);
+    const out = new Float32Array(5);
+    smoothScalars(src, out, 5, 1);
+    for (const v of out) expect(v).toBeLessThan(0);
   });
 });

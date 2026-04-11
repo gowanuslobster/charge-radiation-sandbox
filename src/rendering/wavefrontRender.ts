@@ -36,6 +36,28 @@ const ENVELOPE_K_RMS  = 2.6;
 const WARM_R = 255, WARM_G = 140, WARM_B = 30;
 const COOL_R =  80, COOL_G = 100, COOL_B = 255;
 
+// ── Shared normalization ──────────────────────────────────────────────────────
+
+/**
+ * Compute the dynamic-range ceiling used by both the heatmap and contour logic.
+ * Keeping this in one place ensures contour levels are expressed in the same
+ * normalized units as the heatmap display, so a given iso-value corresponds to
+ * a predictable visible brightness.
+ */
+function computeContrastPeak(scalars: Float32Array, mode: HeatmapMode): number {
+  let peak = 0;
+  let sumSq = 0;
+  for (let k = 0; k < scalars.length; k++) {
+    const abs = Math.abs(scalars[k]);
+    if (abs > peak) peak = abs;
+    sumSq += abs * abs;
+  }
+  const rms = Math.sqrt(sumSq / Math.max(scalars.length, 1));
+  const kPeak = mode === 'signed' ? SIGNED_K_PEAK : ENVELOPE_K_PEAK;
+  const kRms  = mode === 'signed' ? SIGNED_K_RMS  : ENVELOPE_K_RMS;
+  return Math.max(MIN_CONTRAST_PEAK, peak * kPeak, rms * kRms);
+}
+
 // ── buildHeatmapImageData ─────────────────────────────────────────────────────
 
 /**
@@ -65,20 +87,9 @@ export function buildHeatmapImageData(
   }
   const data = workspace.imageData.data;
 
-  // Compute stats.
-  let peak = 0;
-  let sumSq = 0;
-  for (let k = 0; k < n; k++) {
-    const abs = Math.abs(scalars[k]);
-    if (abs > peak) peak = abs;
-    sumSq += abs * abs;
-  }
-  const rms = Math.sqrt(sumSq / n);
-
-  // Dynamic-range ceiling.
-  const kPeak = mode === 'signed' ? SIGNED_K_PEAK  : ENVELOPE_K_PEAK;
-  const kRms  = mode === 'signed' ? SIGNED_K_RMS   : ENVELOPE_K_RMS;
-  const contrastPeak = Math.max(MIN_CONTRAST_PEAK, peak * kPeak, rms * kRms);
+  // Dynamic-range ceiling — shared with getDefaultContourLevels so contours
+  // are expressed in the same normalized units as the heatmap display.
+  const contrastPeak = computeContrastPeak(scalars, mode);
 
   for (let k = 0; k < n; k++) {
     const base = k * 4;
@@ -249,41 +260,154 @@ export function extractContourSegments(
   return segments;
 }
 
+// ── chainContourSegments ──────────────────────────────────────────────────────
+
+/**
+ * Chain an unordered array of marching-squares segments into continuous polylines.
+ * Returns flat [x0, y0, x1, y1, ...] coordinate arrays (one per polyline).
+ * Closed loops have their first point repeated at the end.
+ *
+ * Endpoint matching uses quantized integer keys to avoid string allocation.
+ * QUANTIZE_FACTOR must be large enough that distinct edge points round to different
+ * keys, but small enough that the same edge point from two adjacent cells rounds to
+ * the same key. At grid resolution (coords in [0, ~96] × [0, ~54]), a factor of 1000
+ * gives sub-cell precision and is robust to future changes in lerp ordering.
+ * QUANTIZE_STRIDE must exceed gridW * QUANTIZE_FACTOR (96 × 1000 = 96000 < 200000).
+ */
+const QUANTIZE_FACTOR = 1000;
+const QUANTIZE_STRIDE = 200000;
+
+export function chainContourSegments(segments: ContourSegment[]): number[][] {
+  const n = segments.length;
+  if (n === 0) return [];
+
+  const qk = (x: number, y: number): number =>
+    Math.round(y * QUANTIZE_FACTOR) * QUANTIZE_STRIDE + Math.round(x * QUANTIZE_FACTOR);
+
+  // Map: quantized endpoint key → up to two (segIndex, endIndex) entries.
+  // Each grid edge point is shared by at most two segments; using arrays avoids the
+  // silent-overwrite problem that single-entry maps have at junction vertices.
+  type Entry = [number, 0 | 1];
+  const map = new Map<number, Entry[]>();
+  const addToMap = (key: number, entry: Entry) => {
+    const existing = map.get(key);
+    if (existing) existing.push(entry);
+    else map.set(key, [entry]);
+  };
+  for (let i = 0; i < n; i++) {
+    const s = segments[i];
+    addToMap(qk(s.x1, s.y1), [i, 0]);
+    addToMap(qk(s.x2, s.y2), [i, 1]);
+  }
+
+  // Find a neighbor at `key` that is not `excludeSeg` and not yet visited.
+  const findNeighbor = (key: number, excludeSeg: number): Entry | undefined =>
+    map.get(key)?.find(([si]) => si !== excludeSeg && !visited[si]);
+
+  const visited = new Uint8Array(n);
+  const chains: number[][] = [];
+
+  for (let start = 0; start < n; start++) {
+    if (visited[start]) continue;
+
+    // Walk backward to find the true head of this chain.
+    // Stops at a dead-end or when a closed loop is detected (would cycle back to start).
+    let headSeg = start;
+    let headEnd: 0 | 1 = 0;
+    for (;;) {
+      const s = segments[headSeg];
+      const tailKey = headEnd === 0 ? qk(s.x1, s.y1) : qk(s.x2, s.y2);
+      const nb = findNeighbor(tailKey, headSeg);
+      if (!nb || nb[0] === start) break; // dead-end or closed loop
+      headSeg = nb[0];
+      headEnd = nb[1]; // enter the predecessor from the shared endpoint's side
+    }
+
+    // Walk forward, collecting flat [x, y, x, y, ...] coordinates.
+    // `end` = which endpoint of the current segment we entered from.
+    const pts: number[] = [];
+    let cur = headSeg;
+    let end: 0 | 1 = headEnd;
+
+    const pushEntry = (seg: number, e: 0 | 1) => {
+      const s = segments[seg];
+      pts.push(e === 0 ? s.x1 : s.x2, e === 0 ? s.y1 : s.y2);
+    };
+    const pushExit = (seg: number, e: 0 | 1) => {
+      const s = segments[seg];
+      pts.push(e === 0 ? s.x2 : s.x1, e === 0 ? s.y2 : s.y1);
+    };
+
+    pushEntry(cur, end);
+    for (;;) {
+      if (visited[cur]) break;
+      visited[cur] = 1;
+      pushExit(cur, end);
+
+      const s = segments[cur];
+      const nextKey = end === 0 ? qk(s.x2, s.y2) : qk(s.x1, s.y1);
+      const nb = findNeighbor(nextKey, cur);
+      if (!nb) break;
+      cur = nb[0];
+      end = nb[1]; // enter next segment from the shared endpoint's side
+    }
+
+    if (pts.length >= 4) chains.push(pts);
+  }
+
+  return chains;
+}
+
+// ── smoothScalars ─────────────────────────────────────────────────────────────
+
+/**
+ * Apply one pass of a 5-point averaging stencil (center + 4 cardinal neighbors)
+ * to a scalar grid, writing results into `out` (must be same length as `src`).
+ * Boundary cells use only the available neighbors (no wrap, no ghost cells).
+ *
+ * IMPORTANT: Call this on the SIGNED scalar buffer before any abs() conversion.
+ * Smoothing after abs() destroys sign-cancellation structure at phase boundaries
+ * and can thicken or distort features in a physically misleading way.
+ */
+export function smoothScalars(
+  src: Float32Array,
+  out: Float32Array,
+  gridW: number,
+  gridH: number,
+): void {
+  for (let j = 0; j < gridH; j++) {
+    for (let i = 0; i < gridW; i++) {
+      const idx = j * gridW + i;
+      let sum = src[idx];
+      let count = 1;
+      if (i > 0)         { sum += src[idx - 1];      count++; }
+      if (i < gridW - 1) { sum += src[idx + 1];      count++; }
+      if (j > 0)         { sum += src[idx - gridW];  count++; }
+      if (j < gridH - 1) { sum += src[idx + gridW];  count++; }
+      out[idx] = sum / count;
+    }
+  }
+}
+
 // ── getDefaultContourLevels ───────────────────────────────────────────────────
 
 /**
- * Return recommended iso-values for the given mode and scalar buffer.
- *   - 'signed':   [+threshold, -threshold] based on RMS — two levels for two stroke colors.
- *   - 'envelope': [threshold] — one positive level.
+ * Return the iso-value(s) for contour extraction, expressed in raw scalar units.
  *
- * All-zero input returns a floor value rather than NaN or zero.
+ *   - 'signed'  (oscillating): [0] — the zero crossing, which is the phase boundary
+ *     between positive and negative radiation lobes. Physically meaningful and stable.
+ *
+ *   - 'envelope' (moving_charge / transients): [0.20 × contrastPeak] — 20% of the
+ *     heatmap's display range, so the contour corresponds to a predictable brightness
+ *     in the heatmap. Traces the visible edge of the radiation pulse.
+ *
+ * Uses the same contrastPeak computation as buildHeatmapImageData so levels stay
+ * synchronized with what the student sees in the color display.
  */
 export function getDefaultContourLevels(
   mode: HeatmapMode,
   scalars: Float32Array,
 ): number[] {
-  const n = scalars.length;
-  if (n === 0) {
-    const floor = MIN_CONTRAST_PEAK;
-    return mode === 'signed' ? [floor, -floor] : [floor];
-  }
-
-  let peak = 0;
-  let sumSq = 0;
-  for (let k = 0; k < n; k++) {
-    const abs = Math.abs(scalars[k]);
-    if (abs > peak) peak = abs;
-    sumSq += abs * abs;
-  }
-  const rms = Math.sqrt(sumSq / n);
-
-  // Use the same contrast-peak calculation as the heatmap for alignment.
-  const kPeak = mode === 'signed' ? SIGNED_K_PEAK  : ENVELOPE_K_PEAK;
-  const kRms  = mode === 'signed' ? SIGNED_K_RMS   : ENVELOPE_K_RMS;
-  const contrastPeak = Math.max(MIN_CONTRAST_PEAK, peak * kPeak, rms * kRms);
-
-  // Threshold at ~35% of the contrast peak — visible but not right at the noise floor.
-  const threshold = contrastPeak * 0.35;
-
-  return mode === 'signed' ? [threshold, -threshold] : [threshold];
+  if (mode === 'signed') return [0];
+  return [0.20 * computeContrastPeak(scalars, mode)];
 }

@@ -21,6 +21,8 @@ import {
   buildHeatmapImageData,
   drawHeatmap,
   extractContourSegments,
+  chainContourSegments,
+  smoothScalars,
   getDefaultContourLevels,
   type WavefrontRenderWorkspace,
 } from '@/rendering/wavefrontRender';
@@ -39,11 +41,77 @@ type Props = {
   style?: CSSProperties;
 };
 
-// Stroke colors for signed-mode contour lines.
-const CONTOUR_WARM = 'rgba(255, 140, 30, 0.85)';
-const CONTOUR_COOL = 'rgba(80, 100, 255, 0.85)';
+// Contour stroke colors.
+// Phase boundary (signed / oscillating): neutral so it reads as a zero-crossing,
+// not as belonging to either the warm or cool lobe.
+const CONTOUR_PHASE    = 'rgba(220, 220, 220, 0.85)';
+// Pulse boundary (envelope / moving_charge): warm to match the heatmap palette.
 const CONTOUR_ENVELOPE = 'rgba(255, 140, 30, 0.85)';
 const CONTOUR_LINE_WIDTH = 1.5;
+
+/**
+ * Draw chained polylines using midpoint quadratic Bézier smoothing.
+ * Each polyline is a flat [x0, y0, x1, y1, ...] array in fractional grid coords.
+ * Control point = joint vertex; curve passes through midpoints between joints.
+ * This rounds corners cosmetically without altering the path topology.
+ * Closed loops (first point == last point) get a smooth closePath.
+ */
+function strokeChains(
+  ctx: CanvasRenderingContext2D,
+  chains: number[][],
+  toScreenX: (x: number) => number,
+  toScreenY: (y: number) => number,
+): void {
+  ctx.beginPath();
+  for (const pts of chains) {
+    const nv = pts.length >> 1; // number of vertices
+    if (nv < 2) continue;
+
+    const sx = (k: number) => toScreenX(pts[k * 2]);
+    const sy = (k: number) => toScreenY(pts[k * 2 + 1]);
+
+    const closed =
+      pts[0] === pts[(nv - 1) * 2] &&
+      pts[1] === pts[(nv - 1) * 2 + 1];
+    const count = closed ? nv - 1 : nv; // skip duplicated closing vertex
+    if (count < 2) continue;
+
+    if (count === 2) {
+      // Degenerate single-segment chain — straight line.
+      ctx.moveTo(sx(0), sy(0));
+      ctx.lineTo(sx(1), sy(1));
+      continue;
+    }
+
+    // Start at midpoint of first edge.
+    ctx.moveTo((sx(0) + sx(1)) / 2, (sy(0) + sy(1)) / 2);
+
+    for (let i = 1; i < count - 1; i++) {
+      ctx.quadraticCurveTo(
+        sx(i), sy(i),
+        (sx(i) + sx(i + 1)) / 2,
+        (sy(i) + sy(i + 1)) / 2,
+      );
+    }
+
+    if (closed) {
+      // Smooth close: control = last interior vertex, end = midpoint back to start.
+      ctx.quadraticCurveTo(
+        sx(count - 1), sy(count - 1),
+        (sx(count - 1) + sx(0)) / 2,
+        (sy(count - 1) + sy(0)) / 2,
+      );
+      ctx.closePath();
+    } else {
+      // Open end: final quadratic degenerates to a line to the last vertex.
+      ctx.quadraticCurveTo(
+        sx(count - 1), sy(count - 1),
+        sx(count - 1), sy(count - 1),
+      );
+    }
+  }
+  ctx.stroke();
+}
 
 export function WavefrontOverlayCanvas({
   historyRef,
@@ -83,8 +151,12 @@ export function WavefrontOverlayCanvas({
 
     // Last-rendered scalar buffer — reused when paused so we don't re-solve every frame.
     let cachedScalars: Float32Array | null = null;
+    // Reused buffer for the 5-point smoothed signed scalars. Resized only when grid changes.
+    let smoothedScalarsBuffer: Float32Array = new Float32Array(0);
     // Reused buffer for abs-mapped scalars (envelope mode). Resized only when grid changes.
     let absScalarsBuffer: Float32Array = new Float32Array(0);
+    // Chain cache: iso-value (number) → chained polylines. Cleared on every re-solve.
+    const cachedChains: Map<number, number[][]> = new Map();
     let lastSolvedSimTime = NaN;
     let lastSolvedEpoch = -1;
     let lastSolvedMinX = NaN;
@@ -164,6 +236,7 @@ export function WavefrontOverlayCanvas({
           simEpoch: currentEpoch,
         });
         cachedScalars = scalars;
+        cachedChains.clear(); // invalidate chain cache whenever scalar data changes
         lastSolvedSimTime = currentSimTime;
         lastSolvedEpoch   = currentEpoch;
         lastSolvedMinX    = currentBounds.minX;
@@ -179,18 +252,27 @@ export function WavefrontOverlayCanvas({
 
       const mode = demoModeRef.current === 'oscillating' ? 'signed' : 'envelope';
 
-      // For envelope mode, fill the reused abs buffer in place — no per-frame allocation.
+      // ── Scalar smoothing (signed, before abs) ────────────────────────────────
+      // One 5-point stencil pass on the signed buffer improves contour geometry.
+      // Must run before abs() so sign-cancellation structure at phase boundaries
+      // is preserved.
+      if (smoothedScalarsBuffer.length !== scalars.length) {
+        smoothedScalarsBuffer = new Float32Array(scalars.length);
+      }
+      smoothScalars(scalars, smoothedScalarsBuffer, gridW, gridH);
+
+      // ── Display buffer (abs for envelope, signed-smooth for signed) ──────────
       let displayScalars: Float32Array;
       if (mode === 'envelope') {
-        if (absScalarsBuffer.length !== scalars.length) {
-          absScalarsBuffer = new Float32Array(scalars.length);
+        if (absScalarsBuffer.length !== smoothedScalarsBuffer.length) {
+          absScalarsBuffer = new Float32Array(smoothedScalarsBuffer.length);
         }
-        for (let k = 0; k < scalars.length; k++) {
-          absScalarsBuffer[k] = Math.abs(scalars[k]);
+        for (let k = 0; k < smoothedScalarsBuffer.length; k++) {
+          absScalarsBuffer[k] = Math.abs(smoothedScalarsBuffer[k]);
         }
         displayScalars = absScalarsBuffer;
       } else {
-        displayScalars = scalars;
+        displayScalars = smoothedScalarsBuffer;
       }
 
       if (wantHeatmap) {
@@ -202,48 +284,29 @@ export function WavefrontOverlayCanvas({
         const levels = getDefaultContourLevels(mode, displayScalars);
 
         // Map fractional grid coords to canvas pixel coords.
-        // Grid cell (i=0, j=0) is at canvas (0, 0) in the top-left;
-        // cell (i=gridW-1, j=gridH-1) is at (cssW, cssH).
         const toScreenX = (gx: number) => (gx / Math.max(gridW - 1, 1)) * cssW;
         const toScreenY = (gy: number) => (gy / Math.max(gridH - 1, 1)) * cssH;
+
+        // Lazily chain segments for each iso-value; cached until next re-solve.
+        const getChains = (isoValue: number): number[][] => {
+          let chains = cachedChains.get(isoValue);
+          if (!chains) {
+            chains = chainContourSegments(
+              extractContourSegments(displayScalars, gridW, gridH, isoValue),
+            );
+            cachedChains.set(isoValue, chains);
+          }
+          return chains;
+        };
 
         ctx.save();
         ctx.lineWidth = CONTOUR_LINE_WIDTH;
         ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
 
-        if (mode === 'signed') {
-          // Two levels: positive (warm) and negative (cool).
-          const [posThreshold, negThreshold] = levels;
-
-          const posSegs = extractContourSegments(displayScalars, gridW, gridH, posThreshold);
-          ctx.strokeStyle = CONTOUR_WARM;
-          ctx.beginPath();
-          for (const s of posSegs) {
-            ctx.moveTo(toScreenX(s.x1), toScreenY(s.y1));
-            ctx.lineTo(toScreenX(s.x2), toScreenY(s.y2));
-          }
-          ctx.stroke();
-
-          const negSegs = extractContourSegments(displayScalars, gridW, gridH, negThreshold);
-          ctx.strokeStyle = CONTOUR_COOL;
-          ctx.beginPath();
-          for (const s of negSegs) {
-            ctx.moveTo(toScreenX(s.x1), toScreenY(s.y1));
-            ctx.lineTo(toScreenX(s.x2), toScreenY(s.y2));
-          }
-          ctx.stroke();
-        } else {
-          // One level for envelope mode.
-          const [threshold] = levels;
-          const segs = extractContourSegments(displayScalars, gridW, gridH, threshold);
-          ctx.strokeStyle = CONTOUR_ENVELOPE;
-          ctx.beginPath();
-          for (const s of segs) {
-            ctx.moveTo(toScreenX(s.x1), toScreenY(s.y1));
-            ctx.lineTo(toScreenX(s.x2), toScreenY(s.y2));
-          }
-          ctx.stroke();
-        }
+        const [threshold] = levels;
+        ctx.strokeStyle = mode === 'signed' ? CONTOUR_PHASE : CONTOUR_ENVELOPE;
+        strokeChains(ctx, getChains(threshold), toScreenX, toScreenY);
 
         ctx.restore();
       }

@@ -40,6 +40,7 @@ import {
 import { type DragState, computeDragState, stoppedDragState } from '@/physics/dragKinematics';
 import { useSandboxCamera } from './useSandboxCamera';
 import { VectorFieldCanvas } from './VectorFieldCanvas';
+import { WavefrontOverlayCanvas } from './WavefrontOverlayCanvas';
 import { ControlPanel } from './ControlPanel';
 import { MovingChargeMiniPanel } from './MovingChargeMiniPanel';
 import { useCursorReadout } from './useCursorReadout';
@@ -67,6 +68,10 @@ export function ChargeRadiationSandbox() {
   const [stopTriggered, setStopTriggered] = useState(false);
   const [showGhost, setShowGhost] = useState(false);
   const [c, setC] = useState(1.0);
+
+  // M6 overlay state.
+  const [showRadiationHeatmap, setShowRadiationHeatmap] = useState(false);
+  const [showWavefrontContours, setShowWavefrontContours] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const {
@@ -227,6 +232,8 @@ export function ChargeRadiationSandbox() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setStopTriggered(false);
     setShowGhost(false);
+    setShowRadiationHeatmap(false);
+    setShowWavefrontContours(false);
     isPausedRef.current = true;
     pendingStepRef.current = false;
     setIsPaused(true);
@@ -277,6 +284,8 @@ export function ChargeRadiationSandbox() {
     // Sync UI state with the cleared refs set inside reseed().
     setStopTriggered(false);
     setShowGhost(false);
+    setShowRadiationHeatmap(false);
+    setShowWavefrontContours(false);
     ghostPosRef.current = null;
     isPausedRef.current = true;
     pendingStepRef.current = false;
@@ -490,6 +499,21 @@ export function ChargeRadiationSandbox() {
       onPointerDown={handlePointerDown}
       onContextMenu={e => e.preventDefault()}
     >
+      {(demoMode === 'moving_charge' || demoMode === 'oscillating') && (
+        <WavefrontOverlayCanvas
+          historyRef={historyRef}
+          simulationTimeRef={simTimeRef}
+          chargeRef={chargeRef}
+          configRef={configRef}
+          simEpochRef={simEpochRef}
+          bounds={viewBounds}
+          demoMode={demoMode}
+          showHeatmap={showRadiationHeatmap}
+          showContours={showWavefrontContours}
+          isPausedRef={isPausedRef}
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 10 }}
+        />
+      )}
       <VectorFieldCanvas
         historyRef={historyRef}
         simulationTimeRef={simTimeRef}
@@ -502,7 +526,7 @@ export function ChargeRadiationSandbox() {
         isPausedRef={isPausedRef}
         ghostPosRef={ghostPosRef}
         canvasRefProp={canvasRef}
-        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', zIndex: 15 }}
       />
       {dragCalloutPos !== null && (
         <div
@@ -519,6 +543,8 @@ export function ChargeRadiationSandbox() {
         c={c}
         stopTriggered={stopTriggered}
         readout={readout}
+        showRadiationHeatmap={showRadiationHeatmap}
+        showWavefrontContours={showWavefrontContours}
         onDemoModeChange={setDemoMode}
         onFieldLayerChange={setFieldLayer}
         onPauseToggle={togglePause}
@@ -532,6 +558,8 @@ export function ChargeRadiationSandbox() {
         onPanRight={() => panBy(PAN_STEP_PX, 0)}
         onPanUp={() => panBy(0, -PAN_STEP_PX)}
         onPanDown={() => panBy(0, PAN_STEP_PX)}
+        onRadiationHeatmapToggle={() => setShowRadiationHeatmap(v => !v)}
+        onWavefrontContoursToggle={() => setShowWavefrontContours(v => !v)}
       />
       {demoMode === 'moving_charge' && (
         <MovingChargeMiniPanel

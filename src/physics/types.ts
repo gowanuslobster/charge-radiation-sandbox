@@ -66,12 +66,31 @@ export type RetardedSolveResult = {
  *   eVel   — velocity (Coulomb-like) field, decays as 1/R². Always present.
  *   eAccel — acceleration (radiation) field, decays as 1/R. Nonzero only during acceleration.
  *   eTotal — superposition: eVel + eAccel.
- *   bZ     — out-of-plane magnetic field (scalar z-component): cross2D(nHat, eTotal) / c.
- *            In this 2D model, B has only a z-component because E and nHat are in-plane.
+ *   bZ     — total out-of-plane magnetic field (scalar z-component).
+ *            Identity: bZ = bZVel + bZAccel = cross2D(nHat, eTotal) / c.
+ *   bZVel  — magnetic field from the velocity term: cross2D(nHat, eVel) / c.
+ *            Nonzero for a moving charge even with no acceleration.
+ *   bZAccel — magnetic field from the acceleration (radiation) term: cross2D(nHat, eAccel) / c.
+ *            Identically zero for a stationary or uniformly moving charge. Nonzero only
+ *            during acceleration. This is the radiative magnetic component.
  */
 export type LWFieldResult = {
-  eVel: Vec2;   // velocity field (1/R² decay)
-  eAccel: Vec2; // acceleration/radiation field (1/R decay)
-  eTotal: Vec2; // eVel + eAccel
-  bZ: number;   // out-of-plane B field scalar
+  eVel: Vec2;    // velocity field (1/R² decay)
+  eAccel: Vec2;  // acceleration/radiation field (1/R decay)
+  eTotal: Vec2;  // eVel + eAccel
+  bZ: number;    // total out-of-plane B field scalar: cross2D(nHat, eTotal) / c
+  bZVel: number;   // magnetic velocity term: cross2D(nHat, eVel) / c
+  bZAccel: number; // magnetic radiation term: cross2D(nHat, eAccel) / c
+};
+
+/**
+ * Axis-aligned bounds for physics-layer consumers (e.g. the wavefront sampler).
+ * Identical shape to WorldBounds in the rendering layer but defined here to keep
+ * physics free of rendering imports.
+ */
+export type SamplerBounds = {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
 };

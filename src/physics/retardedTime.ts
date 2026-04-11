@@ -25,6 +25,14 @@ export type SolveRetardedParams = {
    * Scaling by 1/c makes this invariant to the simulation's speed-of-light setting.
    */
   tolerance?: number;
+  /**
+   * Warm-start seed: the solved tRet from the previous frame for the same observation point.
+   * When provided, replaces the default newest-position bootstrap as the initial iterate.
+   * For smoothly evolving charge motion, this dramatically reduces iteration count because
+   * the previous solution is very close to the current one. Callers that don't have a cached
+   * value (first frame, after invalidation) should omit this field or pass undefined.
+   */
+  cachedTRet?: number;
 };
 
 /**
@@ -61,9 +69,12 @@ export function solveRetardedState(params: SolveRetardedParams): RetardedSolveRe
   const newestState = history.newest()!;
   const oldestState = history.oldest()!;
 
-  // Initial guess: use distance from the newest known position as a fast bootstrap.
-  // This is accurate when the charge hasn't moved much since the newest recorded state.
-  let tGuess = observationTime - distance(observationPos, newestState.pos) / c;
+  // Initial guess: use the warm-start seed if provided (previous-frame solution for this cell),
+  // otherwise fall back to the newest-position bootstrap.
+  // The warm-start is much more accurate for smoothly-evolving charge motion.
+  let tGuess = params.cachedTRet !== undefined
+    ? params.cachedTRet
+    : observationTime - distance(observationPos, newestState.pos) / c;
 
   let converged = false;
   let iterations = 0;

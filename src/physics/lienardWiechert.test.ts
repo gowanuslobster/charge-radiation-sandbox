@@ -423,4 +423,74 @@ describe('evaluateLienardWiechertField', () => {
       expect(bZ).toBeCloseTo(0, 8);
     });
   });
+
+  describe('bZ decomposition: bZVel and bZAccel', () => {
+    it('stationary charge: bZVel = 0, bZAccel = 0, bZ = 0', () => {
+      const history = buildHistory(20, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 });
+      const result = evaluateLienardWiechertField({
+        observationPos: { x: 1, y: 1 },
+        observationTime: 10,
+        history,
+        charge: 1,
+        config: DEFAULT_CONFIG,
+      });
+      expect(result).not.toBeNull();
+      expect(result!.bZVel).toBeCloseTo(0, 8);
+      expect(result!.bZAccel).toBeCloseTo(0, 8);
+      expect(result!.bZ).toBeCloseTo(0, 8);
+    });
+
+    it('uniformly moving charge: bZAccel ≈ 0, bZVel nonzero, bZ ≈ bZVel', () => {
+      // Observer off-axis from velocity direction, so bZVel should be nonzero.
+      const history = buildHistory(20, { x: 0, y: 0 }, { x: 0.3, y: 0 }, { x: 0, y: 0 });
+      const result = evaluateLienardWiechertField({
+        observationPos: { x: 0, y: 1 },
+        observationTime: 10,
+        history,
+        charge: 1,
+        config: DEFAULT_CONFIG,
+      });
+      expect(result).not.toBeNull();
+      const { bZ, bZVel, bZAccel } = result!;
+      expect(bZAccel).toBeCloseTo(0, 8);
+      expect(Math.abs(bZVel)).toBeGreaterThan(1e-6);
+      expect(bZ).toBeCloseTo(bZVel, 8);
+    });
+
+    it('accelerating charge: bZAccel is nonzero', () => {
+      // Charge accelerating in +x, observer on +y axis.
+      const history = buildHistory(20, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0.5, y: 0 });
+      const result = evaluateLienardWiechertField({
+        observationPos: { x: 0, y: 1 },
+        observationTime: 10,
+        history,
+        charge: 1,
+        config: DEFAULT_CONFIG,
+      });
+      expect(result).not.toBeNull();
+      expect(Math.abs(result!.bZAccel)).toBeGreaterThan(1e-6);
+    });
+
+    it('identity bZ = bZVel + bZAccel holds for stationary, uniform, and accelerating cases', () => {
+      const cases: Array<{ vel: Vec2; accel: Vec2 }> = [
+        { vel: { x: 0, y: 0 },   accel: { x: 0, y: 0 } },    // stationary
+        { vel: { x: 0.3, y: 0 }, accel: { x: 0, y: 0 } },    // uniform motion
+        { vel: { x: 0, y: 0 },   accel: { x: 0.5, y: 0 } },  // accelerating
+        { vel: { x: 0.3, y: 0 }, accel: { x: 0.5, y: 0 } },  // both
+      ];
+      for (const { vel, accel } of cases) {
+        const history = buildHistory(20, { x: 0, y: 0 }, vel, accel);
+        const result = evaluateLienardWiechertField({
+          observationPos: { x: 1, y: 1 },
+          observationTime: 10,
+          history,
+          charge: 1,
+          config: DEFAULT_CONFIG,
+        });
+        expect(result).not.toBeNull();
+        const { bZ, bZVel, bZAccel } = result!;
+        expect(bZ).toBeCloseTo(bZVel + bZAccel, 10);
+      }
+    });
+  });
 });

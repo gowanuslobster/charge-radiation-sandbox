@@ -19,6 +19,8 @@ type Props = {
   c: number;
   stopTriggered: boolean;
   readout: CursorReadout;
+  showRadiationHeatmap: boolean;
+  showWavefrontContours: boolean;
   onDemoModeChange: (mode: DemoMode) => void;
   onFieldLayerChange: (layer: FieldLayer) => void;
   onPauseToggle: () => void;
@@ -32,6 +34,8 @@ type Props = {
   onPanRight: () => void;
   onPanUp: () => void;
   onPanDown: () => void;
+  onRadiationHeatmapToggle: () => void;
+  onWavefrontContoursToggle: () => void;
 };
 
 // Shared base classes for all mode/field toggle buttons.
@@ -42,11 +46,13 @@ const ICON_BASE = 'flex h-7 w-7 items-center justify-center rounded-md text-sm t
 
 export function ControlPanel({
   demoMode, fieldLayer, isPaused, c, stopTriggered, readout,
+  showRadiationHeatmap, showWavefrontContours,
   onDemoModeChange, onFieldLayerChange,
   onPauseToggle, onStepForward, onReset,
   onCChange,
   onResetView, onZoomIn, onZoomOut,
   onPanLeft, onPanRight, onPanUp, onPanDown,
+  onRadiationHeatmapToggle, onWavefrontContoursToggle,
 }: Props) {
   return (
     <div className="absolute left-4 top-4 z-20 flex flex-col gap-3 rounded-2xl border border-orange-400/20 bg-black/65 p-4 text-sm text-zinc-200 backdrop-blur-md select-none pointer-events-auto">
@@ -154,6 +160,27 @@ export function ControlPanel({
           </button>
         </div>
       </div>
+
+      {/* Teaching Overlays — mode-gated */}
+      {(demoMode === 'moving_charge' || demoMode === 'oscillating') && (
+        <div>
+          <p className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400">Overlays</p>
+          <div className="flex flex-wrap gap-1.5">
+            <button type="button" onClick={onRadiationHeatmapToggle}
+              className={`${TOGGLE_BASE} ${showRadiationHeatmap
+                ? 'bg-amber-400/90 text-black shadow-[0_0_12px_rgba(251,191,36,0.4)]'
+                : 'bg-amber-400/15 text-amber-200 hover:bg-amber-400/28'}`}>
+              Radiation heatmap
+            </button>
+            <button type="button" onClick={onWavefrontContoursToggle}
+              className={`${TOGGLE_BASE} ${showWavefrontContours
+                ? 'bg-violet-400/90 text-black shadow-[0_0_12px_rgba(192,132,250,0.4)]'
+                : 'bg-violet-400/15 text-violet-200 hover:bg-violet-400/28'}`}>
+              Wavefront contours
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Camera */}
       <div>

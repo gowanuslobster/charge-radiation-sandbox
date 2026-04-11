@@ -173,3 +173,75 @@ When building this new repository, you have two rendering paths.
 
 **Recommendation for the new repo:** Start with Path A (TypeScript). Get a single draggable charge generating a $40 \\times 40$ vector grid of radiation. Once you verify the math and the "feel" are correct, you can swap the rendering engine to WebGL without changing the UI architecture.
 
+## 5\. Magnetic Field Decomposition and Wavefront Overlay (M6)
+
+### A. Decomposing the Magnetic Field
+
+The existing implementation exposes `bZ` (the total out-of-plane magnetic field) computed as:
+
+$$B_z = \frac{1}{c} [\hat{n} \times \vec{E}]_z = \frac{\text{cross2D}(\hat{n},\, \vec{E}_{total})}{c}$$
+
+Because $\vec{E}_{total} = \vec{E}_{vel} + \vec{E}_{accel}$ and the cross-product is linear, the magnetic field decomposes in exact parallel with the electric field:
+
+$$B_z^{vel} = \frac{\text{cross2D}(\hat{n},\, \vec{E}_{vel})}{c}$$
+$$B_z^{accel} = \frac{\text{cross2D}(\hat{n},\, \vec{E}_{accel})}{c}$$
+$$B_z = B_z^{vel} + B_z^{accel}$$
+
+This decomposition requires no new physics. It is a direct consequence of the linearity already present in the LW equations. The `LWFieldResult` type should be extended with `bZVel` and `bZAccel`; the existing `bZ` field remains unchanged for backward compatibility.
+
+Physical interpretation:
+
+- `bZVel` is the magnetic field associated with uniform or quasi-static motion. It is non-zero for a moving charge even when that charge is not accelerating.
+- `bZAccel` is the magnetic field associated specifically with acceleration — the radiative magnetic component. It is identically zero for a stationary or uniformly moving charge.
+- For the purposes of the wavefront overlay, `bZAccel` is the correct signal to display because it isolates the radiation structure. Using total `bZ` would mix in the non-radiative motion term and reduce the pedagogical clarity of the overlay.
+
+### B. Warm-Start tRet Cache for the Scalar Sampler
+
+The wavefront overlay samples `bZAccel` on a coarse scalar grid (approximately 96×54 to 128×72 cells) each frame. Each cell requires a retarded-time solve, which is the dominant per-sample cost.
+
+**Core insight:** the retarded time at a fixed spatial sample point changes smoothly from frame to frame because the charge position evolves smoothly. The previous frame's solved `tRet` is therefore a much better initial guess than the solver's default bootstrap (which starts from the most recent history entry). Using it as the warm-start seed cuts average iteration count and reduces history-buffer binary-search churn.
+
+**Implementation contract:**
+
+Each scalar sample cell stores a `cachedTRet: number` alongside its position. On each frame, the retarded-time solver is seeded with that cached value instead of the default guess. After convergence, `cachedTRet` is updated with the new solved value.
+
+The cache must be treated as invalid (reset to the default bootstrap) whenever any of the following change:
+
+- camera bounds (sample lattice positions change in world space)
+- scalar-grid resolution (different cell count or aspect ratio)
+- speed of light `c` (changes the retarded-time relationship directly)
+- simulation reseed or mode switch (history buffer is rebuilt from scratch)
+- simulation epoch counter (used internally to signal any discontinuous history rebuild)
+
+While paused, if none of the above have changed, the cache remains valid and the solver can reuse the same `tRet` values without re-solving — the sampled field is stable.
+
+**Expected performance benefit:** for smooth wavefront motion (both `oscillating` and `moving_charge`), warm-starting is expected to require 1–2 iterations per cell on average vs. 4–6 from a cold start. At 96×54 ≈ 5000 cells this is a meaningful reduction in per-frame work and makes the feature viable in the CPU Path A architecture without requiring WebGL.
+
+### C. Dynamic Range Compression for the Heatmap
+
+The acceleration field $\vec{E}_{accel}$ (and therefore `bZAccel`) decays as $1/R$. A linear mapping from raw `bZAccel` to heatmap color or opacity will cause the near-source region to dominate the display while distant wavefronts fade below the visible threshold.
+
+The rendering contract requires display-only dynamic-range compression:
+
+- the sampled scalar retains its physically derived value (`bZAccel` in world units)
+- the display step computes a contrast mapping based on per-frame field statistics (e.g., peak absolute value and RMS over the sampled grid)
+- the color transfer is non-linear, following the same general strategy used in `wave-optics-sandbox` for signed and envelope heatmaps
+
+This should be treated as a visualization rule, not a physics rewrite. The scalar field remains physically meaningful; only the pixel color mapping is shaped for legibility.
+
+For `oscillating` mode the heatmap should use a signed color treatment (positive and negative `bZAccel` map to opposite hue directions) to make alternating phase fronts visible. For `moving_charge` mode the heatmap should use a single-polarity envelope treatment (`|bZAccel|`) to emphasize shell strength and extent without sign noise.
+
+Radius-weighted remapping (e.g., multiplying by $R$ before the color transfer) may be explored in future iterations, but it is not the default v1 contract because it changes the visual meaning of contour levels and is harder to interpret pedagogically.
+
+### D. Contour Extraction
+
+Contours should be derived from the same sampled scalar buffer used for the heatmap — not from a separate physics solve. This ensures:
+
+- heatmap and contours are always spatially aligned
+- turning contours on adds only a rendering step, not a new field evaluation pass
+- the two layers remain visually consistent under zoom, pan, and `c` changes
+
+Contour extraction can be implemented as a lightweight marching-squares pass over the sampled buffer. The contour iso-values should be chosen to highlight the structure of interest: for `oscillating`, signed zero-crossings and amplitude peaks; for `moving_charge`, the envelope band that marks the radiation shell.
+
+The full design rationale, UI model, supported modes, and acceptance criteria for M6 are documented in `IDEAS-wavefronts.md`.
+

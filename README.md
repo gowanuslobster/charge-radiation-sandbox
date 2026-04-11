@@ -25,7 +25,7 @@ These modes arrive across M2–M5. See `SPEC.md` for the full milestone schedule
 
 ## Current status
 
-**M5 complete — speed of light slider, interactive sudden stop, ghost overlay, oscillating mode, cursor readout.** The app renders an interactive electromagnetic field visualizer with four demo modes. Pan with right-drag or middle-drag, zoom with the scroll wheel. In Charge at Rest mode, left-drag the charge to produce radiation pulses directly.
+**M5 complete — speed of light slider, interactive sudden stop, ghost overlay, oscillating mode, cursor readout.** The app renders an interactive electromagnetic field visualizer with three demo modes. Pan with right-drag or middle-drag, zoom with the scroll wheel. In Charge at Rest mode, left-drag the charge to produce radiation pulses directly.
 
 What is implemented and tested:
 

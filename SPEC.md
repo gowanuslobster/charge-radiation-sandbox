@@ -58,29 +58,21 @@ The current official scope does not include:
 
 ### Charge at Rest
 
-A single charge sits at rest. The field is a pure Coulomb field — radial, falling off as 1/R^2, with no radiation component. This is the baseline that should look identical to a single charge in `field-sandbox`. The student can drag the charge freely; radiation pulses appear whenever the charge accelerates.
+A single charge sits at rest. The field is a pure Coulomb field — radial, falling off as 1/R^2, with no radiation component. The student can drag the charge freely; radiation pulses appear whenever the charge accelerates.
 
 **What the student learns:** the LW engine recovers electrostatics exactly. The velocity field is Coulomb's law. The acceleration field is zero. Dragging the charge makes this concrete — acceleration produces radiation.
 
-### Uniform velocity
+### Moving charge
 
-A single charge moves at constant velocity (configurable via a preset or slider). The field is compressed in the forward direction and expanded behind — relativistic beaming. There is still no radiation.
+A charge moves at constant velocity until the student clicks "Stop now," at which point it brakes to a halt over a short finite ramp. While moving, the field shows relativistic beaming — compressed in the forward direction, expanded behind. When the charge stops, a thin radiation shell expands outward from the stopping point at speed `c`. Inside the shell the field is pure Coulomb from the stationary charge; outside the shell the field still points toward where the charge would have been had it kept moving. An optional ghost-charge overlay marks that extrapolated position to make the causal boundary legible.
 
-**What the student learns:** a moving charge does not radiate. The field is distorted but still falls off as 1/R^2. The beaming becomes dramatic as the speed approaches `c`.
-
-### Sudden stop (Bremsstrahlung shell)
-
-A charge moves at constant velocity and then abruptly stops at a marked position. A thin radiation shell expands outward from the stopping point at speed `c`. Inside the shell, the field is pure Coulomb (from the now-stationary charge). Outside the shell, the field still points to where the charge *would have been* if it had kept moving.
-
-**What the student learns:** acceleration (including deceleration) is what produces radiation. The radiation shell is a direct, visible consequence of retarded time — the outside world hasn't "heard" yet that the charge stopped.
+**What the student learns:** a uniformly moving charge does not radiate — only acceleration does. The radiation shell is a direct visible consequence of retarded time. The outside world hasn't "heard" yet that the charge stopped.
 
 ### Oscillating charge
 
 A single charge oscillates sinusoidally along one axis. Continuous radiation waves propagate outward. The radiation pattern shows the characteristic dipole angular dependence — strongest perpendicular to the motion, zero along the axis of motion.
 
 **What the student learns:** periodic acceleration produces periodic radiation (this is how antennas work). The radiation field falls off as 1/R, not 1/R^2, so it dominates at large distances.
-
-### (Draggable behavior is part of Charge at Rest — see above.)
 
 ## Milestones
 
@@ -141,19 +133,43 @@ Extend the existing camera/control-panel system with the remaining controls and 
 - In `moving_charge` mode, an optional ghost-charge overlay can be armed before or after the stop; if armed before the stop it appears immediately when the stop is triggered
 - The ghost overlay is pedagogical only: it is a visual aid for the outside-of-shell velocity field, not a second physical source that contributes to the actual LW field solve
 
-### M6: Paused streamline overlays
+### M6: Sampled wavefront overlay
+
+Add an optional radiation visualization layer derived from the acceleration magnetic field,
+available in `moving_charge` and `oscillating` modes only.
+
+**Implementation steps (in order):**
+1. Extend `LWFieldResult` with `bZVel` and `bZAccel` (identity: `bZ = bZVel + bZAccel`).
+2. Build a coarse scalar sampler (~96×54 to 128×72, aspect-ratio aware) that evaluates `bZAccel` per cell with per-cell retarded-time warm-starting.
+3. Build a heatmap layer from the sampled buffer with display-only dynamic-range compression.
+4. Build a contour layer derived from the same sampled buffer.
+5. Wire two independent teaching-overlay toggles: `Radiation heatmap` and `Wavefront contours`.
+
+**Acceptance criteria:**
+- `LWFieldResult` exposes `bZVel`, `bZAccel`, and `bZ`; the identity `bZ = bZVel + bZAccel` holds numerically; existing `bZ` callers are unaffected
+- In `oscillating`, the signed heatmap shows alternating outward radiation fronts with legible wavelength spacing
+- In `moving_charge`, the envelope heatmap shows a clear outward bremsstrahlung shell / pulse band
+- Heatmap contrast remains readable across the visible domain without a saturated near-source blob; a display-only dynamic-range compression step (not a physics change) is applied
+- Contours derive from the same sampled scalar buffer as the heatmap; heatmap and contours stay spatially aligned when both are enabled
+- The scalar sampler uses temporal warm-starting for tRet solves when the sample lattice is unchanged; cache is invalidated on bounds change, `c` change, mode switch, or reseed
+- Changing `c` during playback changes propagation spacing / shell motion consistently with the rest of the sandbox
+- Both toggles default to off; turning the overlay off removes the extra sampling pass
+- Performance remains usable (>25 FPS) for the two supported single-charge modes on the default grid
+- Physics tests cover the magnetic decomposition and the decomposition identity
+
+### M7: Paused streamline overlays
 
 Add optional field-line / streamline overlays for single-charge scenes when the simulation is paused or stepped to a fixed frame.
 
 **Acceptance criteria:**
 - When playback is paused, the student can toggle a streamline overlay that traces the instantaneous electric field of the current single-charge frame
 - The streamline overlay is computed on demand for the paused frame and reused until the frame or relevant settings change; it is not continuously recomputed during normal playback
-- In `sudden_stop` mode, the paused streamline overlay makes the shell kink / before-after structure visually legible
-- In `sudden_stop` mode, when the ghost-charge overlay is enabled, the student can optionally show/hide a second streamline overlay for the ghost's extrapolated velocity-field pattern
+- In `moving_charge` mode, the paused streamline overlay makes the shell kink / before-after structure visually legible
+- In `moving_charge` mode, when the ghost-charge overlay is enabled, the student can optionally show/hide a second streamline overlay for the ghost's extrapolated velocity-field pattern
 - Streamline overlays are labeled and documented as an instantaneous visualization aid for a time-dependent field, not as material lines that physically move with the charge
 - Performance remains acceptable because streamline tracing is restricted to paused / stepped frames and initially scoped to single-charge scenes
 
-### M7: Multiple charges
+### M8: Multiple charges
 
 Support two or more charges with independent history buffers. Fields superpose linearly.
 
@@ -171,7 +187,7 @@ Support two or more charges with independent history buffers. Fields superpose l
 - Charge rendered as a filled circle with a sign indicator (+/−) at its current position
 - Optional teaching markers/overlays may be shown to clarify causality, including:
   - a retarded-position marker
-  - an extrapolated ghost-charge marker in `sudden_stop` mode showing the would-have-been continued motion outside the radiation shell
+  - an extrapolated ghost-charge marker in `moving_charge` mode showing the would-have-been continued motion outside the radiation shell
 
 ### Vector field layer
 
@@ -191,7 +207,7 @@ Support two or more charges with independent history buffers. Fields superpose l
   - **Field layers:** toggles for total field, velocity field, acceleration field
   - **Grid density:** selector (low / medium / high)
   - **Mode-specific controls:** in `moving_charge` mode, a separate draggable mini panel provides a `Stop now` trigger and ghost-charge overlay toggle
-  - **Teaching overlays:** toggles for pedagogical overlays such as ghost-charge markers and paused-frame streamline displays
+  - **Teaching overlays:** toggles for pedagogical overlays — ghost-charge markers, radiation heatmap (M6), wavefront contours (M6), and paused-frame streamline displays (M7)
 
 ### Camera
 
@@ -260,5 +276,6 @@ After the physics and interaction model are validated, the renderer can be upgra
 
 - `SPEC.md` (this file) defines the project intent, scope, milestones, and success criteria. It is authoritative for "what to build" and "when it's done."
 - `IDEAS.md` is the physics and mathematics reference. It documents the LW framework, the FDTD failure analysis, and implementation skeletons. It is authoritative for "how the physics works."
+- `IDEAS-wavefronts.md` is the design rationale and extended specification for the M6 sampled wavefront overlay. It documents the `bZVel`/`bZAccel` decomposition, the warm-start tRet cache design, rendering architecture, and pedagogical positioning for that feature.
 - `AGENTS.md` governs implementation style, engineering conventions, and agent behavior. It is authoritative for "how to write the code."
 - If there is a conflict between documents, SPEC.md defines intent.

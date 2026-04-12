@@ -25,7 +25,7 @@ These modes arrive across M2–M5. See `SPEC.md` for the full milestone schedule
 
 ## Current status
 
-**M5 complete — speed of light slider, interactive sudden stop, ghost overlay, oscillating mode, cursor readout.** The app renders an interactive electromagnetic field visualizer with three demo modes. Pan with right-drag or middle-drag, zoom with the scroll wheel. In Charge at Rest mode, left-drag the charge to produce radiation pulses directly.
+**M6 complete — speed of light slider, interactive sudden stop, ghost overlay, oscillating mode, cursor readout, radiation heatmap, and wavefront contours.** The app renders an interactive electromagnetic field visualizer with three demo modes plus optional teaching overlays for radiation structure. Pan with right-drag or middle-drag, zoom with the scroll wheel. In Charge at Rest mode, left-drag the charge to produce radiation pulses directly.
 
 What is implemented and tested:
 
@@ -36,19 +36,24 @@ What is implemented and tested:
 - `src/physics/lienardWiechert.ts` — exact LW field evaluator: velocity term (1/R²) + acceleration term (1/R) + B field
 - `src/physics/demoModes.ts` — analytical kinematics for each demo mode; `sampleSuddenStopState` for interactive braking; substep helper for shell sharpness
 - `src/physics/dragKinematics.ts` — tick-owned drag kinematics: EMA smoothing, zero-motion guard, speed cap
+- `src/physics/wavefrontSampler.ts` — coarse scalar sampler for `bZAccel` with per-cell retarded-time warm-starting
 - `src/rendering/worldSpace.ts` — world↔canvas coordinate transforms, view-bounds helpers, history-horizon geometry
 - `src/rendering/arrows.ts` — field magnitude → visual weight mapping, orange→hot-yellow palette, arrow geometry
 - `src/rendering/chargeMarker.ts` — shared visual radius constant for the charge marker
 - `src/rendering/chargeHitTest.ts` — hit-test helper for drag start
+- `src/rendering/wavefrontRender.ts` — scalar-space wavefront rendering helpers: smoothing, bilinear upscaling, heatmap image generation, contour extraction
 - `src/components/useSandboxCamera.ts` — pan/zoom hook with RAF-batched state updates and zoom-about-cursor
 - `src/components/useCursorReadout.ts` — canvas-scoped hover listeners, RAF-batched LW field evaluation at cursor position
 - `src/components/VectorFieldCanvas.tsx` — 40×40 arrow grid, ghost charge overlay, continuous RAF loop, DPR-aware canvas
-- `src/components/ChargeRadiationSandbox.tsx` — simulation tick, seeding, drag handling, camera wiring, M5 control handlers
+- `src/components/WavefrontOverlayCanvas.tsx` — radiation heatmap + contour overlay canvas with cached scalar-space rendering pipeline
+- `src/components/ChargeRadiationSandbox.tsx` — simulation tick, seeding, drag handling, camera wiring, control handlers
 - `src/components/ControlPanel.tsx` — mode selector, playback controls (play/pause/step/reset), c slider, field layer toggles, mode-specific controls, teaching overlays, cursor readout display
 
 **Implemented demo modes:** charge at rest (pure Coulomb field; drag to produce radiation), moving charge (relativistic beaming; interactive stop trigger launches Bremsstrahlung shell; ghost overlay), oscillating charge (continuous dipole radiation pattern).
 
-**Implemented controls:** demo mode toggle (3 modes), field-layer toggle (Total E / Velocity E / Acceleration E), play/pause/step/reset, speed-of-light slider (c = 0.65–3.0), moving-charge mini panel (Stop now trigger, ghost charge overlay toggle), cursor field readout, pan, zoom.
+**Implemented teaching overlays:** radiation heatmap and wavefront contours in `moving_charge` and `oscillating`, both driven by the sampled acceleration magnetic field (`bZAccel`); signed warm/cool phase display in oscillating mode and envelope display in moving-charge mode.
+
+**Implemented controls:** demo mode toggle (3 modes), field-layer toggle (Total E / Velocity E / Acceleration E), play/pause/step/reset, speed-of-light slider (c = 0.65–3.0), moving-charge mini panel (Stop now trigger, ghost charge overlay toggle), radiation heatmap toggle, wavefront contours toggle, cursor field readout (|E|, Ev, Ea, Bz), pan, zoom.
 
 ## Getting started (developers)
 

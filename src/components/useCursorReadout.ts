@@ -18,7 +18,7 @@ import type { SimConfig, Vec2 } from '@/physics/types';
 import type { WorldBounds } from '@/rendering/worldSpace';
 import { evaluateLienardWiechertField } from '@/physics/lienardWiechert';
 
-export type CursorReadout = { eTotal: number; eVel: number; eAccel: number } | null;
+export type CursorReadout = { eTotal: number; eVel: number; eAccel: number; bZ: number } | null;
 
 interface UseCursorReadoutOptions {
   canvasRef:               RefObject<HTMLCanvasElement | null>;
@@ -135,6 +135,7 @@ export function useCursorReadout({
           eTotal: Math.sqrt(result.eTotal.x ** 2 + result.eTotal.y ** 2),
           eVel:   Math.sqrt(result.eVel.x   ** 2 + result.eVel.y   ** 2),
           eAccel: Math.sqrt(result.eAccel.x  ** 2 + result.eAccel.y  ** 2),
+          bZ:     result.bZ,
         });
       } else {
         setReadout(null);

@@ -214,6 +214,7 @@ export function ControlPanel({
             <div>|E|&nbsp;&nbsp;<span className="text-white">{readout.eTotal.toFixed(3)}</span></div>
             <div>Ev&nbsp;&nbsp;<span className="text-cyan-300">{readout.eVel.toFixed(3)}</span></div>
             <div>Ea&nbsp;&nbsp;<span className="text-amber-300">{readout.eAccel.toFixed(3)}</span></div>
+            <div>Bz&nbsp;&nbsp;<span className="text-violet-300">{readout.bZ.toFixed(3)}</span></div>
           </div>
         </div>
       )}

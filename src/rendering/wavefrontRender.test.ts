@@ -4,6 +4,7 @@ import {
   extractContourSegments,
   chainContourSegments,
   smoothScalars,
+  bilinearUpsample,
   getDefaultContourLevels,
   createRenderWorkspace,
 } from './wavefrontRender';
@@ -337,38 +338,37 @@ describe('smoothScalars', () => {
     }
   });
 
-  it('single peak → peak reduced, neighbors increased', () => {
+  it('single peak → peak reduced; spreads to cardinal AND diagonal neighbors (isotropic kernel)', () => {
     const gridW = 3, gridH = 3;
     const src = new Float32Array(gridW * gridH); // all zero
-    src[4] = 9.0; // center cell
+    src[4] = 9.0; // center cell (i=1, j=1)
     const out = new Float32Array(gridW * gridH);
     smoothScalars(src, out, gridW, gridH);
-    // Center should be averaged with 4 neighbors (all 0): 9/5 = 1.8
-    // Output is Float32, so precision is ~7 significant digits, not arbitrary.
-    expect(out[4]).toBeCloseTo(9 / 5, 5);
-    // Cardinal neighbors (top/bottom/left/right of center) get some of the peak.
+    // Center: weight 4 out of 16 → 9 × 4/16 = 2.25
+    expect(out[4]).toBeCloseTo(9 * 4 / 16, 5);
+    // Cardinals: positive (weight-2 contribution from center)
     expect(out[1]).toBeGreaterThan(0); // top
     expect(out[7]).toBeGreaterThan(0); // bottom
     expect(out[3]).toBeGreaterThan(0); // left
     expect(out[5]).toBeGreaterThan(0); // right
-    // Corner cells remain 0 (not adjacent to center).
-    expect(out[0]).toBe(0);
-    expect(out[2]).toBe(0);
-    expect(out[6]).toBe(0);
-    expect(out[8]).toBe(0);
+    // Diagonals: also positive — isotropic improvement over old 5-point stencil
+    expect(out[0]).toBeGreaterThan(0); // top-left
+    expect(out[2]).toBeGreaterThan(0); // top-right
+    expect(out[6]).toBeGreaterThan(0); // bottom-left
+    expect(out[8]).toBeGreaterThan(0); // bottom-right
   });
 
   it('boundary cells use only available neighbors (no out-of-bounds bleed)', () => {
-    // 1×3 grid: only left-right neighbors exist, no vertical neighbors.
+    // 3×1 grid: no vertical neighbors, no diagonals.
     const src = new Float32Array([1, 2, 3]);
     const out = new Float32Array(3);
     smoothScalars(src, out, 3, 1);
-    // Left boundary: avg(1, 2) = 1.5
-    expect(out[0]).toBeCloseTo(1.5, 9);
-    // Center: avg(1, 2, 3) = 2.0
-    expect(out[1]).toBeCloseTo(2.0, 9);
-    // Right boundary: avg(2, 3) = 2.5
-    expect(out[2]).toBeCloseTo(2.5, 9);
+    // Left boundary: (1×4 + 2×2) / (4+2) = 8/6
+    expect(out[0]).toBeCloseTo(8 / 6, 5);
+    // Center: (2×4 + 1×2 + 3×2) / (4+2+2) = 16/8 = 2.0
+    expect(out[1]).toBeCloseTo(2.0, 5);
+    // Right boundary: (3×4 + 2×2) / (4+2) = 16/6
+    expect(out[2]).toBeCloseTo(16 / 6, 5);
   });
 
   it('output buffer is distinct from input (no in-place aliasing)', () => {
@@ -387,5 +387,58 @@ describe('smoothScalars', () => {
     const out = new Float32Array(5);
     smoothScalars(src, out, 5, 1);
     for (const v of out) expect(v).toBeLessThan(0);
+  });
+});
+
+// ─── bilinearUpsample ─────────────────────────────────────────────────────────
+
+describe('bilinearUpsample', () => {
+  it('scale=1 → exact copy of source', () => {
+    const src = Float32Array.from([1, 2, 3, 4]);
+    const dst = new Float32Array(4);
+    bilinearUpsample(src, 2, 2, dst, 2, 2); // dstW=(2-1)*1+1=2
+    expect(dst[0]).toBeCloseTo(1, 5);
+    expect(dst[1]).toBeCloseTo(2, 5);
+    expect(dst[2]).toBeCloseTo(3, 5);
+    expect(dst[3]).toBeCloseTo(4, 5);
+  });
+
+  it('2×1 source, scale=3 → linear interpolation with exact endpoints', () => {
+    // dstW = (2−1)×3+1 = 4
+    const src = Float32Array.from([0, 1]);
+    const dst = new Float32Array(4);
+    bilinearUpsample(src, 2, 1, dst, 4, 1);
+    expect(dst[0]).toBeCloseTo(0,     5);
+    expect(dst[1]).toBeCloseTo(1 / 3, 5);
+    expect(dst[2]).toBeCloseTo(2 / 3, 5);
+    expect(dst[3]).toBeCloseTo(1,     5);
+  });
+
+  it('2×2 source, scale=3 → corner pixels reproduce exact source values', () => {
+    // dstW = dstH = 4; src corners map exactly to dst corners
+    const src = Float32Array.from([0, 1, 2, 3]); // TL, TR, BL, BR
+    const dst = new Float32Array(16);
+    bilinearUpsample(src, 2, 2, dst, 4, 4);
+    expect(dst[0]).toBeCloseTo(0, 4);   // top-left
+    expect(dst[3]).toBeCloseTo(1, 4);   // top-right
+    expect(dst[12]).toBeCloseTo(2, 4);  // bottom-left
+    expect(dst[15]).toBeCloseTo(3, 4);  // bottom-right
+  });
+
+  it('signed values interpolate through zero correctly', () => {
+    // Zero crossing between the two source samples
+    const src = Float32Array.from([-1, 1]);
+    const dst = new Float32Array(4); // dstW=4 for scale=3
+    bilinearUpsample(src, 2, 1, dst, 4, 1);
+    // dst[1] negative, dst[2] positive — sign change falls between them
+    expect(dst[1]).toBeLessThan(0);
+    expect(dst[2]).toBeGreaterThan(0);
+  });
+
+  it('uniform source → all dest values equal source', () => {
+    const src = new Float32Array(4).fill(7.5);
+    const dst = new Float32Array(16); // 4×4 from 2×2, scale=3
+    bilinearUpsample(src, 2, 2, dst, 4, 4);
+    for (const v of dst) expect(v).toBeCloseTo(7.5, 5);
   });
 });

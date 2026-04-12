@@ -1,12 +1,19 @@
-// wavefrontRender.ts — heatmap and contour rendering for the M6 wavefront overlay.
+// wavefrontRender.ts — scalar-space rendering pipeline for the M6 wavefront overlay.
 //
-// Takes a signed bZAccel scalar grid (from wavefrontSampler) and produces:
-//   - A coarse ImageData heatmap, upscaled to canvas resolution via drawImage.
-//   - Contour line segments from marching squares.
+// Takes a signed bZAccel coarse grid (from wavefrontSampler) and exposes the
+// primitives needed for the scalar-space pipeline:
+//   1. smoothScalars    — 3×3 isotropic weighted kernel on the signed coarse field.
+//   2. bilinearUpsample — align-corners upscale to a finer render lattice (scalar space).
+//   3. buildHeatmapImageData — color-map the upscaled display buffer to RGBA ImageData.
+//   4. drawHeatmap      — blit the already-refined ImageData to the canvas.
+//   5. extractContourSegments / chainContourSegments — marching squares on the same
+//      upscaled display buffer, giving heatmap/contour alignment.
+//   6. computeContrastPeak — exported so the caller can compute once and share across
+//      buildHeatmapImageData and getDefaultContourLevels.
 //
 // The caller (WavefrontOverlayCanvas) owns the mode decision:
-//   - 'signed':   pass bZAccel as-is; warm/cool dual-hue color map.
-//   - 'envelope': pass abs(bZAccel); warm single-hue color map.
+//   - 'signed':   pass signed bZAccel; warm/cool dual-hue color map.
+//   - 'envelope': pass abs(upscaled bZAccel); warm single-hue color map.
 //
 // No physics imports. No React imports. Pure rendering utilities.
 
@@ -44,7 +51,7 @@ const COOL_R =  80, COOL_G = 100, COOL_B = 255;
  * normalized units as the heatmap display, so a given iso-value corresponds to
  * a predictable visible brightness.
  */
-function computeContrastPeak(scalars: Float32Array, mode: HeatmapMode): number {
+export function computeContrastPeak(scalars: Float32Array, mode: HeatmapMode): number {
   let peak = 0;
   let sumSq = 0;
   for (let k = 0; k < scalars.length; k++) {
@@ -74,6 +81,7 @@ export function buildHeatmapImageData(
   gridH: number,
   mode: HeatmapMode,
   workspace: WavefrontRenderWorkspace,
+  contrastPeak?: number,
 ): ImageData {
   const n = gridW * gridH;
 
@@ -89,11 +97,11 @@ export function buildHeatmapImageData(
 
   // Dynamic-range ceiling — shared with getDefaultContourLevels so contours
   // are expressed in the same normalized units as the heatmap display.
-  const contrastPeak = computeContrastPeak(scalars, mode);
+  const peak = contrastPeak ?? computeContrastPeak(scalars, mode);
 
   for (let k = 0; k < n; k++) {
     const base = k * 4;
-    const normalized = Math.max(-1, Math.min(1, scalars[k] / contrastPeak));
+    const normalized = Math.max(-1, Math.min(1, scalars[k] / peak));
 
     if (mode === 'signed') {
       // Transfer: tanh compression, hue from sign, strength from magnitude.
@@ -136,8 +144,10 @@ export function buildHeatmapImageData(
 // ── drawHeatmap ───────────────────────────────────────────────────────────────
 
 /**
- * Upscale the coarse ImageData to full canvas resolution via an offscreen canvas
- * and drawImage (browser bilinear interpolation).
+ * Blit the already-refined render-lattice ImageData to the canvas.
+ * The main interpolation now occurs in scalar space (bilinearUpsample) before
+ * color mapping, so the browser's drawImage step only covers any residual
+ * canvas-pixel rounding — it no longer drives fidelity.
  *
  * The workspace offscreen canvas is created / replaced only when gridW or gridH changes.
  */
@@ -275,7 +285,9 @@ export function extractContourSegments(
  * QUANTIZE_STRIDE must exceed gridW * QUANTIZE_FACTOR (96 × 1000 = 96000 < 200000).
  */
 const QUANTIZE_FACTOR = 1000;
-const QUANTIZE_STRIDE = 200000;
+// Must exceed renderW × QUANTIZE_FACTOR. Verify the actual bound against
+// rendered dimensions during implementation once render dims are known at runtime.
+const QUANTIZE_STRIDE = 1_000_000;
 
 export function chainContourSegments(segments: ContourSegment[]): number[][] {
   const n = segments.length;
@@ -361,9 +373,12 @@ export function chainContourSegments(segments: ContourSegment[]): number[][] {
 // ── smoothScalars ─────────────────────────────────────────────────────────────
 
 /**
- * Apply one pass of a 5-point averaging stencil (center + 4 cardinal neighbors)
- * to a scalar grid, writing results into `out` (must be same length as `src`).
- * Boundary cells use only the available neighbors (no wrap, no ghost cells).
+ * Apply one pass of a 3×3 isotropic weighted stencil to a scalar grid.
+ * Weights: center = 4, cardinal neighbors = 2, diagonal neighbors = 1.
+ * Boundary cells use only existing neighbors, normalized by the actual weight sum.
+ *
+ * The isotropic kernel avoids the "+" impulse response of the old 5-point cardinal
+ * stencil, which can imprint axis-aligned artifacts on circular wavefronts.
  *
  * IMPORTANT: Call this on the SIGNED scalar buffer before any abs() conversion.
  * Smoothing after abs() destroys sign-cancellation structure at phase boundaries
@@ -378,13 +393,60 @@ export function smoothScalars(
   for (let j = 0; j < gridH; j++) {
     for (let i = 0; i < gridW; i++) {
       const idx = j * gridW + i;
-      let sum = src[idx];
-      let count = 1;
-      if (i > 0)         { sum += src[idx - 1];      count++; }
-      if (i < gridW - 1) { sum += src[idx + 1];      count++; }
-      if (j > 0)         { sum += src[idx - gridW];  count++; }
-      if (j < gridH - 1) { sum += src[idx + gridW];  count++; }
-      out[idx] = sum / count;
+      // 3×3 isotropic weighted stencil: center = 4, cardinals = 2, diagonals = 1.
+      // Only include neighbors that exist; normalize by the actual weight sum.
+      let sum    = src[idx] * 4;
+      let weight = 4;
+
+      const hasL = i > 0, hasR = i < gridW - 1;
+      const hasT = j > 0, hasB = j < gridH - 1;
+
+      if (hasL) { sum += src[idx - 1]          * 2; weight += 2; }
+      if (hasR) { sum += src[idx + 1]          * 2; weight += 2; }
+      if (hasT) { sum += src[idx - gridW]      * 2; weight += 2; }
+      if (hasB) { sum += src[idx + gridW]      * 2; weight += 2; }
+
+      if (hasT && hasL) { sum += src[idx - gridW - 1]; weight += 1; }
+      if (hasT && hasR) { sum += src[idx - gridW + 1]; weight += 1; }
+      if (hasB && hasL) { sum += src[idx + gridW - 1]; weight += 1; }
+      if (hasB && hasR) { sum += src[idx + gridW + 1]; weight += 1; }
+
+      out[idx] = sum / weight;
+    }
+  }
+}
+
+// ── bilinearUpsample ──────────────────────────────────────────────────────────
+
+/**
+ * Bilinearly upsample a srcW × srcH scalar field into dst (dstW × dstH).
+ * Uses align-corners convention: pixel 0 → source 0, pixel dstW−1 → source srcW−1.
+ * Expected: dstW = (srcW − 1) × scale + 1, dstH = (srcH − 1) × scale + 1.
+ * Works correctly for scale = 1 (exact copy).
+ */
+export function bilinearUpsample(
+  src: Float32Array,
+  srcW: number,
+  srcH: number,
+  dst: Float32Array,
+  dstW: number,
+  dstH: number,
+): void {
+  const scaleX = dstW > 1 ? (srcW - 1) / (dstW - 1) : 0;
+  const scaleY = dstH > 1 ? (srcH - 1) / (dstH - 1) : 0;
+  for (let py = 0; py < dstH; py++) {
+    const sy = Math.max(0, Math.min(srcH - 1, py * scaleY));
+    const y0 = Math.floor(sy);
+    const y1 = Math.min(srcH - 1, y0 + 1);
+    const ty = sy - y0;
+    for (let px = 0; px < dstW; px++) {
+      const sx = Math.max(0, Math.min(srcW - 1, px * scaleX));
+      const x0 = Math.floor(sx);
+      const x1 = Math.min(srcW - 1, x0 + 1);
+      const tx = sx - x0;
+      const top = src[y0 * srcW + x0] * (1 - tx) + src[y0 * srcW + x1] * tx;
+      const bot = src[y1 * srcW + x0] * (1 - tx) + src[y1 * srcW + x1] * tx;
+      dst[py * dstW + px] = top * (1 - ty) + bot * ty;
     }
   }
 }
@@ -407,7 +469,9 @@ export function smoothScalars(
 export function getDefaultContourLevels(
   mode: HeatmapMode,
   scalars: Float32Array,
+  contrastPeak?: number,
 ): number[] {
   if (mode === 'signed') return [0];
-  return [0.20 * computeContrastPeak(scalars, mode)];
+  const peak = contrastPeak ?? computeContrastPeak(scalars, mode);
+  return [0.20 * peak];
 }

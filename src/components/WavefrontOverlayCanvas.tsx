@@ -27,6 +27,8 @@ import {
   extractContourSegments,
   chainContourSegments,
   smoothScalars,
+  bilinearUpsample,
+  computeContrastPeak,
   getDefaultContourLevels,
   type WavefrontRenderWorkspace,
 } from '@/rendering/wavefrontRender';
@@ -36,6 +38,16 @@ import {
 // proportional to the physical wavelength/shell-width regardless of zoom.
 const TARGET_WORLD_CELL_FACTOR = 0.20;
 const MAX_GRID_CELLS = 16384;
+
+// Render-lattice upscale: each coarse grid interval becomes RENDER_SCALE render
+// intervals. renderW = (gridW − 1) × RENDER_SCALE + 1 (align-corners).
+const RENDER_SCALE     = 3;
+const MAX_RENDER_CELLS = 200_000; // fallback reduces scale to 2, then 1, if exceeded
+
+// Smoothing passes per mode. 1 is the correct starting point for both.
+// Increase SMOOTH_PASSES_ENVELOPE to 2 only if manual visual review warrants it.
+const SMOOTH_PASSES_SIGNED   = 1;
+const SMOOTH_PASSES_ENVELOPE = 1;
 
 type Props = {
   historyRef: RefObject<ChargeHistory>;
@@ -60,11 +72,10 @@ const CONTOUR_ENVELOPE = 'rgba(255, 140, 30, 0.85)';
 const CONTOUR_LINE_WIDTH = 1.5;
 
 /**
- * Draw chained polylines using midpoint quadratic Bézier smoothing.
- * Each polyline is a flat [x0, y0, x1, y1, ...] array in fractional grid coords.
- * Control point = joint vertex; curve passes through midpoints between joints.
- * This rounds corners cosmetically without altering the path topology.
- * Closed loops (first point == last point) get a smooth closePath.
+ * Draw chained polylines as plain line segments.
+ * Each chain is a flat [x0, y0, x1, y1, ...] array in fractional render-lattice coords.
+ * At 3× upscale the lattice is fine enough that Bézier smoothing is unnecessary
+ * and would only pull contour lines away from the underlying iso-surface.
  */
 function strokeChains(
   ctx: CanvasRenderingContext2D,
@@ -74,51 +85,16 @@ function strokeChains(
 ): void {
   ctx.beginPath();
   for (const pts of chains) {
-    const nv = pts.length >> 1; // number of vertices
+    const nv = pts.length >> 1;
     if (nv < 2) continue;
-
-    const sx = (k: number) => toScreenX(pts[k * 2]);
-    const sy = (k: number) => toScreenY(pts[k * 2 + 1]);
-
+    ctx.moveTo(toScreenX(pts[0]), toScreenY(pts[1]));
+    for (let i = 1; i < nv; i++) {
+      ctx.lineTo(toScreenX(pts[i * 2]), toScreenY(pts[i * 2 + 1]));
+    }
     const closed =
       pts[0] === pts[(nv - 1) * 2] &&
       pts[1] === pts[(nv - 1) * 2 + 1];
-    const count = closed ? nv - 1 : nv; // skip duplicated closing vertex
-    if (count < 2) continue;
-
-    if (count === 2) {
-      // Degenerate single-segment chain — straight line.
-      ctx.moveTo(sx(0), sy(0));
-      ctx.lineTo(sx(1), sy(1));
-      continue;
-    }
-
-    // Start at midpoint of first edge.
-    ctx.moveTo((sx(0) + sx(1)) / 2, (sy(0) + sy(1)) / 2);
-
-    for (let i = 1; i < count - 1; i++) {
-      ctx.quadraticCurveTo(
-        sx(i), sy(i),
-        (sx(i) + sx(i + 1)) / 2,
-        (sy(i) + sy(i + 1)) / 2,
-      );
-    }
-
-    if (closed) {
-      // Smooth close: control = last interior vertex, end = midpoint back to start.
-      ctx.quadraticCurveTo(
-        sx(count - 1), sy(count - 1),
-        (sx(count - 1) + sx(0)) / 2,
-        (sy(count - 1) + sy(0)) / 2,
-      );
-      ctx.closePath();
-    } else {
-      // Open end: final quadratic degenerates to a line to the last vertex.
-      ctx.quadraticCurveTo(
-        sx(count - 1), sy(count - 1),
-        sx(count - 1), sy(count - 1),
-      );
-    }
+    if (closed) ctx.closePath();
   }
   ctx.stroke();
 }
@@ -161,11 +137,21 @@ export function WavefrontOverlayCanvas({
 
     // Last-rendered scalar buffer — reused when paused so we don't re-solve every frame.
     let cachedScalars: Float32Array | null = null;
-    // Reused buffer for the 5-point smoothed signed scalars. Resized only when grid changes.
+    // Reused buffer for the smoothed signed scalars (coarse grid). Resized when grid changes.
     let smoothedScalarsBuffer: Float32Array = new Float32Array(0);
-    // Reused buffer for abs-mapped scalars (envelope mode). Resized only when grid changes.
-    let absScalarsBuffer: Float32Array = new Float32Array(0);
-    // Chain cache: iso-value (number) → chained polylines. Cleared on every re-solve.
+    // Ping-pong buffer for multi-pass smoothing (unused until passes > 1).
+    let smoothPingBuffer: Float32Array = new Float32Array(0);
+    // Bilinearly upscaled signed field (renderW × renderH).
+    let upscaledSignedBuffer: Float32Array = new Float32Array(0);
+    // Abs-mapped upscaled field for envelope mode.
+    let upscaledDisplayBuffer: Float32Array = new Float32Array(0);
+    // Derived-render cache — reused across frames when physics, mode, and render dims are unchanged.
+    let cachedHeatmapImageData: ImageData | null = null;
+    let cachedContrastPeak = 0;
+    let lastRenderedMode = '';
+    let lastRenderW = -1;
+    let lastRenderH = -1;
+    // Chain cache: iso-value (number) → chained polylines. Cleared on every re-render.
     const cachedChains: Map<number, number[][]> = new Map();
     let lastSolvedSimTime = NaN;
     let lastSolvedEpoch = -1;
@@ -220,6 +206,18 @@ export function WavefrontOverlayCanvas({
       const gridW = Math.max(4, Math.round(rawGridW * gridScale));
       const gridH = Math.max(4, Math.round(rawGridH * gridScale));
 
+      // Render-lattice dimensions using align-corners formula.
+      // Falls back to smaller scale if the render budget is exceeded.
+      const renderDim = (n: number, s: number) => (n - 1) * s + 1;
+      let renderScale = RENDER_SCALE;
+      if (renderDim(gridW, renderScale) * renderDim(gridH, renderScale) > MAX_RENDER_CELLS) renderScale = 2;
+      if (renderDim(gridW, renderScale) * renderDim(gridH, renderScale) > MAX_RENDER_CELLS) renderScale = 1;
+      const renderW = renderDim(gridW, renderScale);
+      const renderH = renderDim(gridH, renderScale);
+
+      // Mode must be determined before needsRender so the lazy-rebuild check works.
+      const mode = demoModeRef.current === 'oscillating' ? 'signed' : 'envelope';
+
       const currentSimTime = simulationTimeRef.current;
       const currentEpoch   = simEpochRef.current;
       const paused = isPausedRef.current;
@@ -256,7 +254,6 @@ export function WavefrontOverlayCanvas({
           simEpoch: currentEpoch,
         });
         cachedScalars = scalars;
-        cachedChains.clear(); // invalidate chain cache whenever scalar data changes
         lastSolvedSimTime = currentSimTime;
         lastSolvedEpoch   = currentEpoch;
         lastSolvedMinX    = currentBounds.minX;
@@ -270,49 +267,89 @@ export function WavefrontOverlayCanvas({
         scalars = cachedScalars!;
       }
 
-      const mode = demoModeRef.current === 'oscillating' ? 'signed' : 'envelope';
-
-      // ── Scalar smoothing (signed, before abs) ────────────────────────────────
-      // One 5-point stencil pass on the signed buffer improves contour geometry.
-      // Must run before abs() so sign-cancellation structure at phase boundaries
-      // is preserved.
-      if (smoothedScalarsBuffer.length !== scalars.length) {
-        smoothedScalarsBuffer = new Float32Array(scalars.length);
+      // Resize coarse-grid buffers when dimensions change.
+      if (smoothedScalarsBuffer.length !== gridW * gridH) {
+        smoothedScalarsBuffer = new Float32Array(gridW * gridH);
+        smoothPingBuffer      = new Float32Array(gridW * gridH);
       }
-      smoothScalars(scalars, smoothedScalarsBuffer, gridW, gridH);
-
-      // ── Display buffer (abs for envelope, signed-smooth for signed) ──────────
-      let displayScalars: Float32Array;
-      if (mode === 'envelope') {
-        if (absScalarsBuffer.length !== smoothedScalarsBuffer.length) {
-          absScalarsBuffer = new Float32Array(smoothedScalarsBuffer.length);
-        }
-        for (let k = 0; k < smoothedScalarsBuffer.length; k++) {
-          absScalarsBuffer[k] = Math.abs(smoothedScalarsBuffer[k]);
-        }
-        displayScalars = absScalarsBuffer;
-      } else {
-        displayScalars = smoothedScalarsBuffer;
+      // Resize render-lattice buffers when dimensions change.
+      const renderN = renderW * renderH;
+      if (upscaledSignedBuffer.length !== renderN) {
+        upscaledSignedBuffer  = new Float32Array(renderN);
+        upscaledDisplayBuffer = new Float32Array(renderN);
       }
 
-      if (wantHeatmap) {
-        const imageData = buildHeatmapImageData(displayScalars, gridW, gridH, mode, renderWorkspace);
-        drawHeatmap(ctx, imageData, gridW, gridH, cssW, cssH, renderWorkspace, 0.6);
+      // needsRender is true whenever the underlying coarse field changed, the mode
+      // changed, the render-lattice dimensions changed, or a derived render artifact
+      // is missing and must be lazily rebuilt after an overlay toggle while paused.
+      const needsRender =
+        needsSolve ||
+        mode !== lastRenderedMode ||
+        renderW !== lastRenderW ||
+        renderH !== lastRenderH ||
+        cachedHeatmapImageData === null ||
+        (wantContours && cachedChains.size === 0);
+
+      if (needsRender) {
+        // ── Stage 1: smooth the signed coarse field ────────────────────────────
+        const passes = mode === 'signed' ? SMOOTH_PASSES_SIGNED : SMOOTH_PASSES_ENVELOPE;
+        smoothScalars(scalars, smoothedScalarsBuffer, gridW, gridH);
+        let smoothedSigned: Float32Array = smoothedScalarsBuffer;
+        for (let p = 1; p < passes; p++) {
+          const dst = smoothedSigned === smoothedScalarsBuffer ? smoothPingBuffer : smoothedScalarsBuffer;
+          smoothScalars(smoothedSigned, dst, gridW, gridH);
+          smoothedSigned = dst;
+        }
+
+        // ── Stage 2: bilinear upsample into render lattice (signed) ───────────
+        bilinearUpsample(smoothedSigned, gridW, gridH, upscaledSignedBuffer, renderW, renderH);
+
+        // ── Stage 3: mode-specific display buffer (abs only AFTER upscaling) ──
+        // abs() after scalar-space upscaling ensures zero crossings interpolate
+        // toward zero rather than blending between warm and cool colors.
+        if (mode === 'envelope') {
+          for (let k = 0; k < renderN; k++) {
+            upscaledDisplayBuffer[k] = Math.abs(upscaledSignedBuffer[k]);
+          }
+        }
+
+        // Persistent buffer alias — valid even on future cache-hit frames.
+        const displayBuffer = mode === 'envelope' ? upscaledDisplayBuffer : upscaledSignedBuffer;
+
+        // ── Stage 4: compute shared contrast peak once ─────────────────────────
+        cachedContrastPeak = computeContrastPeak(displayBuffer, mode);
+
+        // ── Stage 5: build heatmap ImageData (cached; drawn every frame) ───────
+        cachedHeatmapImageData = buildHeatmapImageData(
+          displayBuffer, renderW, renderH, mode, renderWorkspace, cachedContrastPeak,
+        );
+
+        cachedChains.clear();
+        lastRenderedMode = mode;
+        lastRenderW      = renderW;
+        lastRenderH      = renderH;
+      }
+
+      // Persistent buffer alias — correct on cache-hit frames too.
+      const displayBuffer = mode === 'envelope' ? upscaledDisplayBuffer : upscaledSignedBuffer;
+
+      if (wantHeatmap && cachedHeatmapImageData) {
+        drawHeatmap(ctx, cachedHeatmapImageData, renderW, renderH, cssW, cssH, renderWorkspace, 0.6);
       }
 
       if (wantContours) {
-        const levels = getDefaultContourLevels(mode, displayScalars);
+        const levels = getDefaultContourLevels(mode, displayBuffer, cachedContrastPeak);
 
-        // Map fractional grid coords to canvas pixel coords.
-        const toScreenX = (gx: number) => (gx / Math.max(gridW - 1, 1)) * cssW;
-        const toScreenY = (gy: number) => (gy / Math.max(gridH - 1, 1)) * cssH;
+        // Map fractional render-lattice coords to canvas pixel coords.
+        const toScreenX = (rx: number) => (rx / Math.max(renderW - 1, 1)) * cssW;
+        const toScreenY = (ry: number) => (ry / Math.max(renderH - 1, 1)) * cssH;
 
-        // Lazily chain segments for each iso-value; cached until next re-solve.
+        // Lazily chain segments for each iso-value; cached until next needsRender.
         const getChains = (isoValue: number): number[][] => {
           let chains = cachedChains.get(isoValue);
           if (!chains) {
             chains = chainContourSegments(
-              extractContourSegments(displayScalars, gridW, gridH, isoValue),
+              extractContourSegments(displayBuffer, renderW, renderH, isoValue),
             );
             cachedChains.set(isoValue, chains);
           }

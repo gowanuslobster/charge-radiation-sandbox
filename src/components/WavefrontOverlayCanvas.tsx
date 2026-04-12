@@ -5,6 +5,10 @@
 // wavefrontSampler; pixel rendering via wavefrontRender. Always returns signed
 // bZAccel from the sampler — mode-specific shaping (abs for envelope) happens here.
 //
+// Grid sizing: world-space driven — one sample per TARGET_WORLD_CELL_FACTOR * c
+// world units. Cap at MAX_GRID_CELLS total, scale both axes proportionally.
+// This keeps sampling fidelity stable across zoom levels.
+//
 // Stacking: position:absolute inset:0, zIndex:10 (below VectorFieldCanvas at z-15).
 
 import { useEffect, useRef, type CSSProperties, type RefObject, type MutableRefObject } from 'react';
@@ -26,6 +30,12 @@ import {
   getDefaultContourLevels,
   type WavefrontRenderWorkspace,
 } from '@/rendering/wavefrontRender';
+
+// World-space grid sizing constants.
+// One sample every (TARGET_WORLD_CELL_FACTOR * c) world units keeps fidelity
+// proportional to the physical wavelength/shell-width regardless of zoom.
+const TARGET_WORLD_CELL_FACTOR = 0.20;
+const MAX_GRID_CELLS = 16384;
 
 type Props = {
   historyRef: RefObject<ChargeHistory>;
@@ -195,11 +205,21 @@ export function WavefrontOverlayCanvas({
       const wantContours = showContoursRef.current;
       if (!wantHeatmap && !wantContours) return;
 
-      // Grid dimensions: ~10px per cell, clamped to avoid excessive solves.
-      const gridW = Math.max(1, Math.min(96, Math.round(cssW / 10)));
-      const gridH = Math.max(1, Math.min(54, Math.round(cssH / 10)));
-
       const currentBounds  = boundsRef.current;
+
+      // Grid dimensions: world-space driven so fidelity is stable across zoom levels.
+      // Target one sample per (TARGET_WORLD_CELL_FACTOR * c) world units.
+      // If the resulting total exceeds MAX_GRID_CELLS, scale both axes down proportionally.
+      const spanX = currentBounds.maxX - currentBounds.minX;
+      const spanY = currentBounds.maxY - currentBounds.minY;
+      const targetCellSize = TARGET_WORLD_CELL_FACTOR * configRef.current.c;
+      const rawGridW = Math.ceil(spanX / targetCellSize) + 1;
+      const rawGridH = Math.ceil(spanY / targetCellSize) + 1;
+      const rawTotal = rawGridW * rawGridH;
+      const gridScale = rawTotal > MAX_GRID_CELLS ? Math.sqrt(MAX_GRID_CELLS / rawTotal) : 1;
+      const gridW = Math.max(4, Math.round(rawGridW * gridScale));
+      const gridH = Math.max(4, Math.round(rawGridH * gridScale));
+
       const currentSimTime = simulationTimeRef.current;
       const currentEpoch   = simEpochRef.current;
       const paused = isPausedRef.current;

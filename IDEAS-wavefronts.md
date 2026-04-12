@@ -185,42 +185,38 @@ It should not change the underlying physics engine and should not introduce any 
 
 Use a coarse scalar grid distinct from the arrow grid.
 
-Recommended initial range:
-
-- approximately `96x54` to `128x72`
-- aspect-ratio aware
-- single-charge scenes only
+Grid sizing is world-space driven: one sample per `TARGET_WORLD_CELL_FACTOR × c` world units in each axis (aspect-ratio aware), capped at `MAX_GRID_CELLS` total with both dimensions scaled down proportionally if the cap is exceeded. This keeps sampling fidelity proportional to the physical wavelength/shell-width regardless of zoom level, rather than using a fixed pixel count.
 
 At each scalar sample point:
 
 1. evaluate the LW field
-2. read `bZAccel`
-3. transform it into the mode-specific scalar
-4. store it in a sampled scalar buffer
+2. read `bZAccel` (always signed)
+3. store the signed value in the sampled scalar buffer
 
-Mode-specific scalar choice:
-
-- `oscillating`: signed scalar = `bZAccel`
-- `moving_charge`: envelope scalar = `abs(bZAccel)`
+The sampler always stores the signed `bZAccel`. The mode-specific display transformation (abs() for envelope) is applied later in the rendering pipeline, after smoothing and upsampling, so the sign structure is preserved for the smoothing step.
 
 ### Heatmap Layer
 
-The heatmap should be built from the sampled scalar buffer using an offscreen `ImageData` pipeline, similar in spirit to the approach used in `wave-optics-sandbox`, but adapted to LW sampling.
+The heatmap is built from a *render lattice* derived from the coarse sampled buffer through a scalar-space pipeline:
+
+1. **Smooth** the signed coarse field with a 3×3 isotropic weighted stencil (center=4, cardinals=2, diagonals=1, normalized at boundaries). The isotropic kernel avoids the axis-aligned artifacts of a simple 5-point cardinal average.
+2. **Bilinear upsample** the smoothed signed field to a finer render lattice using align-corners interpolation (`renderW = (gridW − 1) × scale + 1`). This upsampling occurs in scalar space, before color mapping, so that zero crossings interpolate toward zero rather than blending between warm and cool colors.
+3. **Apply abs()** only after upsampling (envelope mode only). Keeping abs() after scalar-space interpolation preserves the sign-cancellation structure at phase boundaries.
+4. **Color-map** the resulting display buffer.
 
 Rendering expectations:
 
-- smooth visual interpolation between scalar samples
 - stable contrast mapping
 - visually consistent palette with the sandbox family
 - low enough resolution to keep sampling affordable
 
-For `oscillating`, the heatmap should support a signed color treatment that makes alternating phase visible.
+For `oscillating`, the heatmap uses a signed color treatment (warm = positive lobe, cool = negative lobe) that makes alternating phase visible.
 
-For `moving_charge`, the heatmap should use a single-polarity envelope treatment that emphasizes shell strength and extent.
+For `moving_charge`, the heatmap uses a single-polarity envelope treatment that emphasizes shell strength and extent.
 
 The heatmap must not map raw `bZAccel` linearly to opacity or color. The acceleration field decays as `1/R`, so a linear mapping will produce a near-source region that dominates the display while distant wavefronts fade out too quickly to remain legible.
 
-The rendering contract should therefore require display-only dynamic-range compression:
+The rendering contract therefore requires display-only dynamic-range compression:
 
 - the sampled scalar remains physically derived from `bZAccel`
 - the heatmap renderer applies a contrast/exposure step based on field statistics such as peak and RMS
@@ -232,13 +228,13 @@ Radius-weighted display heuristics such as multiplying by `R` may be explored la
 
 ### Contour Layer
 
-Contours should be derived from the exact same sampled scalar buffer used for the heatmap.
+Contours should be derived from the exact same upscaled display buffer used for the heatmap — post-smooth, post-upsample, post-abs.
 
-Contours are a rendering transformation of the sampled field, not a separate physics solve.
+Contours are a rendering transformation of the display field, not a separate physics solve.
 
 This is important so that:
 
-- heatmap and contours stay perfectly aligned
+- heatmap and contours stay perfectly aligned (both operate on the same scalar values at the same render-lattice resolution)
 - turning contours on adds minimal extra physics cost
 - the two layers remain visually consistent
 

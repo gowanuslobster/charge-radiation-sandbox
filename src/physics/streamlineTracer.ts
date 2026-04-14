@@ -184,9 +184,14 @@ function traceSingleLine(
  * @param charge         Signed charge value (sign determines direction).
  * @param config         Simulation config (c, softening).
  * @param bounds         World-space view bounds (used to define padded clip region).
- * @param opts           Optional overrides for trace parameters.
- * @param velocityOnly   Trace only the velocity (Coulomb-like) E-field component.
- *                       Pass true for ghost-charge streamlines.
+ * @param opts             Optional overrides for trace parameters.
+ * @param velocityOnly     Trace only the velocity (Coulomb-like) E-field component.
+ *                         Pass true for ghost-charge streamlines.
+ * @param customSeedAngles If provided, override the uniform angular seed placement
+ *                         with these specific angles (radians). Length need not match
+ *                         seedCount — all entries are used. Useful for geometric
+ *                         seed-matching between real and ghost field lines so that
+ *                         corresponding flux tubes align across the radiation shell.
  */
 export function buildStreamlines(
   chargePos: Vec2,
@@ -197,6 +202,7 @@ export function buildStreamlines(
   bounds: TraceBounds,
   opts?: Partial<StreamlineOptions>,
   velocityOnly = false,
+  customSeedAngles?: number[],
 ): Vec2[][] {
   const options: StreamlineOptions = { ...DEFAULT_STREAMLINE_OPTIONS, ...opts };
 
@@ -215,8 +221,10 @@ export function buildStreamlines(
   // Positive charge: trace in field direction (+1). Negative: reverse (−1).
   const dirSign = charge >= 0 ? 1 : -1;
 
-  for (let i = 0; i < options.seedCount; i++) {
-    const angle = (i / options.seedCount) * Math.PI * 2;
+  const seedAngles: number[] = customSeedAngles
+    ?? Array.from({ length: options.seedCount }, (_, i) => (i / options.seedCount) * Math.PI * 2);
+
+  for (const angle of seedAngles) {
     const seed: Vec2 = {
       x: chargePos.x + options.seedOffsetRadius * Math.cos(angle),
       y: chargePos.y + options.seedOffsetRadius * Math.sin(angle),

@@ -27,7 +27,7 @@ import {
   type CSSProperties,
   type RefObject,
 } from 'react';
-import { buildStreamlines, buildGhostHistory } from '@/physics/streamlineTracer';
+import { buildStreamlines, buildGhostHistory, DEFAULT_STREAMLINE_OPTIONS } from '@/physics/streamlineTracer';
 import type { ChargeHistory } from '@/physics/chargeHistory';
 import {
   getWorldToScreenTransform,
@@ -56,13 +56,17 @@ type Props = {
 };
 
 // Visual constants — matched to field-sandbox FieldLinesCanvas static_arrows mode.
-const LINE_ALPHA = 0.65;
+const LINE_ALPHA       = 0.65;
+const GHOST_LINE_ALPHA = 0.35; // dimmer than main lines to read as secondary/hypothetical
 const LINE_WIDTH = 1.2;
 const SHADOW_BLUR = 8;
 const LINE_COLOR_MAIN  = `rgba(198, 229, 255, ${LINE_ALPHA})`;
-const LINE_COLOR_GHOST = `rgba(255, 200, 130, ${LINE_ALPHA})`;
+const LINE_COLOR_GHOST = `rgba(255, 200, 130, ${GHOST_LINE_ALPHA})`;
 const SHADOW_COLOR_MAIN  = 'rgba(112, 214, 255, 0.35)';
-const SHADOW_COLOR_GHOST = 'rgba(255, 160,  60, 0.28)';
+const SHADOW_COLOR_GHOST = 'rgba(255, 160,  60, 0.18)';
+// Dash pattern for ghost lines: subtle short dashes so they read as
+// "extrapolated / hypothetical" rather than physically present field lines.
+const GHOST_DASH: number[] = [4, 5];
 
 /**
  * Place direction tick-marks along a screen-space polyline.
@@ -118,12 +122,16 @@ function drawDirectionTicks(
   }
 }
 
-/** Project world-space points to screen and draw the polyline + direction ticks. */
+/**
+ * Project world-space points to screen and draw the polyline + direction ticks.
+ * Pass a non-empty `dash` array to draw a dashed line (e.g. ghost streamlines).
+ */
 function drawStreamline(
   ctx: CanvasRenderingContext2D,
   line: Vec2[],
   transform: ReturnType<typeof getWorldToScreenTransform>,
   color: string,
+  dash: number[] = [],
 ): void {
   if (line.length < 2) return;
 
@@ -132,12 +140,14 @@ function drawStreamline(
 
   ctx.strokeStyle = color;
   ctx.lineWidth = LINE_WIDTH;
+  ctx.setLineDash(dash);
   ctx.beginPath();
   ctx.moveTo(screenPoints[0].x, screenPoints[0].y);
   for (let i = 1; i < screenPoints.length; i++) {
     ctx.lineTo(screenPoints[i].x, screenPoints[i].y);
   }
   ctx.stroke();
+  ctx.setLineDash([]); // restore solid for tick-marks
 
   drawDirectionTicks(ctx, screenPoints);
 }
@@ -283,6 +293,24 @@ export function StreamlineCanvas({
           const safeGap     = Math.max(config.c - ghostSpeed, config.c * 0.05);
           const histWindow  = maxCornerDist(ghostPos, currentBounds) / safeGap;
           const ghostHistory = buildGhostHistory(ghostPos, gVel, simTime, histWindow);
+
+          // Geometric seed-angle matching: for each real seed angle α, the ghost
+          // seed angle is atan2(c·sinα − vy, c·cosα − vx).
+          //
+          // Derivation: flux is conserved across the radiation shell (Gauss's Law).
+          // A ray at angle α from the stopped charge, extended to the shell, intersects
+          // the same flux tube as the ghost field line that points toward the ghost's
+          // present position at the same physical point. The angular aberration is
+          // exactly the velocity-aberration of the direction (c·cosα, c·sinα) relative
+          // to the ghost's motion (vx, vy). This result is exact for all speeds,
+          // including near-c where field lines bend strongly (relativistic beaming).
+          const seedCount = DEFAULT_STREAMLINE_OPTIONS.seedCount;
+          const c = config.c;
+          const realAngles   = Array.from({ length: seedCount }, (_, i) => (i / seedCount) * Math.PI * 2);
+          const ghostAngles  = realAngles.map(α =>
+            Math.atan2(c * Math.sin(α) - gVel.y, c * Math.cos(α) - gVel.x)
+          );
+
           tracedGhostLines = buildStreamlines(
             ghostPos,
             simTime,
@@ -292,6 +320,7 @@ export function StreamlineCanvas({
             currentBounds,
             undefined,
             true, // velocityOnly — ghost represents constant-velocity, no radiation term
+            ghostAngles,
           );
         } else {
           tracedGhostLines = [];
@@ -330,7 +359,7 @@ export function StreamlineCanvas({
         ctx.shadowColor = SHADOW_COLOR_GHOST;
         ctx.shadowBlur  = SHADOW_BLUR;
         for (const line of tracedGhostLines) {
-          drawStreamline(ctx, line, transform, LINE_COLOR_GHOST);
+          drawStreamline(ctx, line, transform, LINE_COLOR_GHOST, GHOST_DASH);
         }
         ctx.shadowBlur = 0;
       }

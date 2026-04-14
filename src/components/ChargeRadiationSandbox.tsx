@@ -43,6 +43,9 @@ import { VectorFieldCanvas } from './VectorFieldCanvas';
 import { WavefrontOverlayCanvas } from './WavefrontOverlayCanvas';
 import { ControlPanel } from './ControlPanel';
 import { MovingChargeMiniPanel } from './MovingChargeMiniPanel';
+// ── M9: paused streamline canvas ──────────────────────────────
+import { StreamlineCanvas } from './StreamlineCanvas';
+// ── end M9 ────────────────────────────────────────────────────
 import { useCursorReadout } from './useCursorReadout';
 import { isWithinBounds, maxCornerDist, worldToScreen, type WorldBounds } from '@/rendering/worldSpace';
 import { hitTestCharge } from '@/rendering/chargeHitTest';
@@ -72,6 +75,13 @@ export function ChargeRadiationSandbox() {
   // M6 overlay state.
   const [showRadiationHeatmap, setShowRadiationHeatmap] = useState(false);
   const [showWavefrontContours, setShowWavefrontContours] = useState(false);
+
+  // ── M9: paused streamline canvas ──────────────────────────────
+  // Both toggles default to off. showGhostStreamlines is only meaningful
+  // when showGhost is also on (ghost pos is non-null) in moving_charge mode.
+  const [showStreamlines, setShowStreamlines] = useState(false);
+  const [showGhostStreamlines, setShowGhostStreamlines] = useState(false);
+  // ── end M9 ────────────────────────────────────────────────────
 
   const containerRef = useRef<HTMLDivElement>(null);
   const {
@@ -234,6 +244,10 @@ export function ChargeRadiationSandbox() {
     setShowGhost(false);
     setShowRadiationHeatmap(false);
     setShowWavefrontContours(false);
+    // ── M9: paused streamline canvas ──────────────────────────────
+    setShowStreamlines(false);
+    setShowGhostStreamlines(false);
+    // ── end M9 ────────────────────────────────────────────────────
     isPausedRef.current = true;
     pendingStepRef.current = false;
     setIsPaused(true);
@@ -286,6 +300,10 @@ export function ChargeRadiationSandbox() {
     setShowGhost(false);
     setShowRadiationHeatmap(false);
     setShowWavefrontContours(false);
+    // ── M9: paused streamline canvas ──────────────────────────────
+    setShowStreamlines(false);
+    setShowGhostStreamlines(false);
+    // ── end M9 ────────────────────────────────────────────────────
     ghostPosRef.current = null;
     isPausedRef.current = true;
     pendingStepRef.current = false;
@@ -499,6 +517,22 @@ export function ChargeRadiationSandbox() {
       onPointerDown={handlePointerDown}
       onContextMenu={e => e.preventDefault()}
     >
+      {/* ── M9: paused streamline canvas ────────────────────────── */}
+      <StreamlineCanvas
+        historyRef={historyRef}
+        simulationTimeRef={simTimeRef}
+        chargeRef={chargeRef}
+        configRef={configRef}
+        simEpochRef={simEpochRef}
+        isPausedRef={isPausedRef}
+        bounds={viewBounds}
+        showStreamlines={showStreamlines}
+        showGhostStreamlines={showGhostStreamlines}
+        ghostPosRef={ghostPosRef}
+        ghostVel={demoMode === 'moving_charge' ? { x: SUDDEN_STOP_V, y: 0 } : undefined}
+        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 17 }}
+      />
+      {/* ── end M9 ──────────────────────────────────────────────── */}
       {(demoMode === 'moving_charge' || demoMode === 'oscillating') && (
         <WavefrontOverlayCanvas
           historyRef={historyRef}
@@ -560,13 +594,17 @@ export function ChargeRadiationSandbox() {
         onPanDown={() => panBy(0, PAN_STEP_PX)}
         onRadiationHeatmapToggle={() => setShowRadiationHeatmap(v => !v)}
         onWavefrontContoursToggle={() => setShowWavefrontContours(v => !v)}
+        showStreamlines={showStreamlines}
+        onStreamlinesToggle={() => setShowStreamlines(v => !v)}
       />
       {demoMode === 'moving_charge' && (
         <MovingChargeMiniPanel
           stopTriggered={stopTriggered}
           showGhost={showGhost}
+          showGhostStreamlines={showGhostStreamlines}
           onStopNow={handleStopNow}
           onToggleGhost={handleToggleGhost}
+          onToggleGhostStreamlines={() => setShowGhostStreamlines(v => !v)}
           pos={miniPanelPos}
           onPosChange={setMiniPanelPos}
         />

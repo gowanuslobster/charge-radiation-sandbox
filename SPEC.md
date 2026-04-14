@@ -47,12 +47,13 @@ The current official scope includes:
 
 The current official scope does not include:
 
-- WebGL fragment shader rendering (Path B)
 - self-consistent charge dynamics (charges responding to each other's fields)
 - radiation reaction or energy loss
-- magnetic field visualization layers
 - Poynting vector or energy flow visualization
 - time-averaged field displays
+
+M1–M6 are complete. The remaining work is M7–M10 as defined in the Milestones
+section.
 
 ## Canonical Demo Modes
 
@@ -76,7 +77,7 @@ A single charge oscillates sinusoidally along one axis. Continuous radiation wav
 
 ## Milestones
 
-### M1: Physics core
+### M1: Physics core — complete
 
 Implement the history buffer, retarded-time solver, and LW field evaluator as pure TypeScript under `src/physics/` with no React dependencies.
 
@@ -88,7 +89,7 @@ Implement the history buffer, retarded-time solver, and LW field evaluator as pu
 - `c` is a configurable parameter, not a hardcoded constant
 - Unit tests cover all of the above
 
-### M2: Canvas 2D vector grid
+### M2: Canvas 2D vector grid — complete
 
 Render the LW field on a sampled grid (e.g., 40x40) as arrows on an HTML Canvas, driven by a `requestAnimationFrame` loop reading from the physics core.
 
@@ -99,7 +100,7 @@ Render the LW field on a sampled grid (e.g., 40x40) as arrows on an HTML Canvas,
 - Uniformly moving charge shows visible beaming
 - Frame rate stays usable (>30 FPS) for a single charge on a 40x40 grid
 
-### M3: Radiation shell (sudden stop)
+### M3: Radiation shell (sudden stop) — complete
 
 Implement a demo mode where a charge moves at constant velocity and stops. The expanding radiation shell should be clearly visible in the vector field.
 
@@ -109,7 +110,7 @@ Implement a demo mode where a charge moves at constant velocity and stops. The e
 - Outside the shell: velocity field still pointing toward the extrapolated position
 - The transition is visually crisp — a student can see the "before" and "after" regions clearly
 
-### M4: Interactive dragging
+### M4: Interactive dragging — complete
 
 Implement charge dragging with real-time history recording and field updates.
 
@@ -119,7 +120,7 @@ Implement charge dragging with real-time history recording and field updates.
 - Radiation pulses are visible during and after drag acceleration events
 - The field updates in real time at usable frame rate
 
-### M5: Expand controls and sudden-stop teaching overlays
+### M5: Expand controls and sudden-stop teaching overlays — complete
 
 Extend the existing camera/control-panel system with the remaining controls and overlays, especially the configurable speed of light, cursor readout, and richer sudden-stop interaction.
 
@@ -133,7 +134,7 @@ Extend the existing camera/control-panel system with the remaining controls and 
 - In `moving_charge` mode, an optional ghost-charge overlay can be armed before or after the stop; if armed before the stop it appears immediately when the stop is triggered
 - The ghost overlay is pedagogical only: it is a visual aid for the outside-of-shell velocity field, not a second physical source that contributes to the actual LW field solve
 
-### M6: Sampled wavefront overlay
+### M6: Sampled wavefront overlay — complete
 
 Add an optional radiation visualization layer derived from the acceleration magnetic field,
 available in `moving_charge` and `oscillating` modes only.
@@ -157,7 +158,86 @@ available in `moving_charge` and `oscillating` modes only.
 - Performance remains usable (>25 FPS) for the two supported single-charge modes on the default grid
 - Physics tests cover the magnetic decomposition and the decomposition identity
 
-### M7: Paused streamline overlays
+### M7: WebGL heatmap and oscillating contour
+
+Replace the CPU `WavefrontOverlayCanvas` with a WebGL fragment-shader renderer
+that evaluates the LW field per-pixel. This milestone covers the radiation
+heatmap for `moving_charge` and `oscillating` modes and the zero-crossing
+contour for `oscillating`. The `draggable` mode heatmap and the `moving_charge`
+envelope contour are deferred to M8. See `IDEAS-webGL.md` for the full design
+rationale, data model, and solver specification.
+
+**Implementation notes:**
+- `WavefrontOverlayCanvas` is replaced by a new `WavefrontWebGLCanvas` component
+  using `canvas.getContext('webgl2')` at the same z-index
+- `ChargeHistory` is uploaded each frame as a single-row `RGBA32F` texture;
+  timestamps are stored offset-relative to `t_current` to preserve float32
+  precision; the packing layout is 2 texels per state (see `IDEAS-webGL.md` §4)
+- The fragment shader uses a bracketed Newton retarded-time solver (robust
+  convergence within the valid history bracket); inner loop is a fixed-count
+  binary search over the history texture
+- The `useEffect` RAF loop must return a cleanup function that calls
+  `cancelAnimationFrame` to prevent zombie loops under React Strict Mode
+- The c-slider policy must prevent the causal horizon from exceeding the history
+  buffer for visible pixels; the specific implementation (conservative global
+  minimum or dynamic per-mode bound) is determined during M7 development using
+  the constraint formula in `IDEAS-webGL.md` §5
+- If `WebGL2` or `RGBA32F` texture support is unavailable, the CPU
+  `WavefrontOverlayCanvas` path activates as a lower-fidelity fallback with an
+  inline student-friendly banner
+
+**Acceptance criteria:**
+- `WavefrontWebGLCanvas` renders the signed `bZAccel` heatmap in `oscillating`
+  mode and the envelope `abs(bZAccel)` heatmap in `moving_charge` mode at full
+  screen resolution
+- The `oscillating` zero-crossing contour is shader-native and spatially aligned
+  with the continuous heatmap field (no marching-squares offset artifact)
+- No contour is drawn in `moving_charge` (deferred to M8)
+- `draggable` mode has no heatmap overlay in M7; M6 did not add one, and a
+  `draggable` shader path remains a future consideration (see `IDEAS-webGL.md` §3)
+- GPU and CPU probe-point field values agree within
+  `abs(gpu − cpu) ≤ 0.02 × referencePeak` (scene-scale reference peak, excluding
+  the softening radius) at a probe set covering: one point inside the radiation
+  shell, one near the shell peak, one in the far field, one near a zero crossing
+  in `oscillating`, one off-axis, and one at extreme zoom-out distance; validated
+  in both `oscillating` and `moving_charge` modes at `c = 1.0` and at a low-`c`
+  value within the supported slider range
+- No coarse-grid dropout islands in the `moving_charge` shell at far zoom
+- `oscillating` heatmap shows continuous phase structure without staircase bands
+- Heatmap and contour remain stable under zoom and pan
+- ≥30 FPS on a clearly documented reference configuration (viewport size, mode,
+  `c` value, and GPU class recorded in the sign-off note)
+- A repeatable probe-validation artifact exists (script or browser diagnostic)
+  that samples CPU and GPU values at the standard probe set and reports deltas
+- If WebGL2 / RGBA32F is unavailable, the CPU fallback activates with an inline
+  banner and all other app functionality remains intact
+- Existing tests (M1–M6) continue to pass
+
+### M8: Shader-native envelope contour for `moving_charge`
+
+Add the envelope threshold contour to the `moving_charge` heatmap. This
+requires resolving the normalization-coupling problem: the contour threshold is
+currently derived from the CPU grid's global field maximum, which is not
+available in a single-pass GPU render. The design decision — two-pass GPU
+reduction, lightweight CPU probe pass, or fixed physical threshold — is made as
+part of this milestone's planning. See `IDEAS-webGL.md` §8 for the three options.
+
+Optionally extend the GPU heatmap to `draggable` mode (envelope colormap) as
+part of this milestone if the normalization design makes it straightforward.
+
+**Acceptance criteria:**
+- An envelope threshold contour is rendered in `moving_charge` mode, derived
+  from the same GPU field as the heatmap (not from the coarse CPU sample grid)
+- The contour is spatially aligned with the GPU heatmap under zoom and pan
+- The normalization approach (two-pass GPU reduction, lightweight CPU probe pass,
+  or fixed physical threshold) is chosen during M8 planning and consistently
+  implemented; the chosen approach does not regress to the coarse CPU sample grid
+  used in M6 (see `IDEAS-webGL.md` §8 for the three options)
+- Visual quality is at least as good as the M6 CPU contour for the standard
+  sudden-stop scenario
+- Existing tests (M1–M7) continue to pass
+
+### M9: Paused streamline overlays
 
 Add optional field-line / streamline overlays for single-charge scenes when the simulation is paused or stepped to a fixed frame.
 
@@ -169,7 +249,7 @@ Add optional field-line / streamline overlays for single-charge scenes when the 
 - Streamline overlays are labeled and documented as an instantaneous visualization aid for a time-dependent field, not as material lines that physically move with the charge
 - Performance remains acceptable because streamline tracing is restricted to paused / stepped frames and initially scoped to single-charge scenes
 
-### M8: Multiple charges
+### M10: Multiple charges
 
 Support two or more charges with independent history buffers. Fields superpose linearly.
 
@@ -207,7 +287,7 @@ Support two or more charges with independent history buffers. Fields superpose l
   - **Field layers:** toggles for total field, velocity field, acceleration field
   - **Grid density:** selector (low / medium / high)
   - **Mode-specific controls:** in `moving_charge` mode, a separate draggable mini panel provides a `Stop now` trigger and ghost-charge overlay toggle
-  - **Teaching overlays:** toggles for pedagogical overlays — ghost-charge markers, radiation heatmap (M6), wavefront contours (M6), and paused-frame streamline displays (M7)
+  - **Teaching overlays:** toggles for pedagogical overlays — ghost-charge markers, radiation heatmap (M6), wavefront contours (M6), and paused-frame streamline displays (M9)
 
 ### Camera
 
@@ -227,17 +307,25 @@ Support two or more charges with independent history buffers. Fields superpose l
 
 The v1 renderer iterates over a grid of observation points, solves the retarded time for each, evaluates the LW field, and draws arrows on a 2D Canvas. This is CPU-bound but straightforward to implement and debug.
 
-### Future: WebGL (Path B)
+### Next: WebGL (Path B, M7–M8)
 
-After the physics and interaction model are validated, the renderer can be upgraded to a WebGL fragment shader that evaluates the LW equations per pixel. The charge history buffer would be uploaded as a data texture or uniform array. This path enables pixel-perfect continuous heatmaps at 60+ FPS. The UI architecture should not need to change — only the rendering layer swaps.
+The WebGL renderer transition is the next active work. The design is specified
+in full in `IDEAS-webGL.md`. M7 delivers a fragment-shader heatmap for
+`moving_charge` and `oscillating` modes plus a shader-native zero-crossing
+contour for `oscillating`. M8 adds the envelope contour for `moving_charge` and
+resolves the normalization coupling.
+
+The CPU arrow renderer (Path A) is retained alongside the WebGL heatmap through
+these milestones. The CPU physics implementation remains the validation oracle
+for all GPU field values.
 
 ## Deferred Work and Future Directions
 
-- **WebGL rendering (Path B):** plausible after the Canvas 2D path validates the physics and interaction model. Do not pursue prematurely.
+- **WebGL rendering (Path B):** now in active scope. M7 delivers the heatmap and oscillating contour; M8 adds the `moving_charge` envelope contour. See `IDEAS-webGL.md` for the full design.
 - **Self-consistent dynamics:** charges responding to each other's fields via Lorentz force integration. Architecturally possible but physically subtle (radiation reaction, Abraham-Lorentz force). Treat as a separate deliberate expansion.
-- **Magnetic field visualization:** B is computed for free from the LW equations, but adding a visual layer for it (arrows, heatmap) is deferred until the E-field visualization is stable.
+- **Magnetic field visualization:** B is computed for free from the LW equations. The M6 radiation heatmap uses `bZAccel` as a measure of radiation intensity. A dedicated B-field vector arrow layer remains deferred.
 - **Poynting vector / energy flow:** plausible later as a derived overlay. Requires both E and B, which are already computed.
-- **Continuous live field-line tracing:** continuously recomputed field lines during normal playback remain deferred because time-dependent LW fields would require expensive re-tracing every frame. Paused-frame streamline overlays are covered by M6 instead.
+- **Continuous live field-line tracing:** continuously recomputed field lines during normal playback remain deferred because time-dependent LW fields would require expensive re-tracing every frame. Paused-frame streamline overlays are covered by M9 instead.
 - **Potential visualization:** scalar potential heatmap is less natural for the LW framework than for electrostatics. Deferred.
 - **Sound or haptic feedback:** not in scope.
 
@@ -277,5 +365,6 @@ After the physics and interaction model are validated, the renderer can be upgra
 - `SPEC.md` (this file) defines the project intent, scope, milestones, and success criteria. It is authoritative for "what to build" and "when it's done."
 - `IDEAS.md` is the physics and mathematics reference. It documents the LW framework, the FDTD failure analysis, and implementation skeletons. It is authoritative for "how the physics works."
 - `IDEAS-wavefronts.md` is the design rationale and extended specification for the M6 sampled wavefront overlay. It documents the `bZVel`/`bZAccel` decomposition, the warm-start tRet cache design, rendering architecture, and pedagogical positioning for that feature.
+- `IDEAS-webGL.md` is the design specification for the WebGL renderer transition (M7–M8). It documents the data model, texture packing layout, solver design, c-slider policy, canvas architecture, fallback behavior, and acceptance criteria for the GPU rendering path.
 - `AGENTS.md` governs implementation style, engineering conventions, and agent behavior. It is authoritative for "how to write the code."
 - If there is a conflict between documents, SPEC.md defines intent.

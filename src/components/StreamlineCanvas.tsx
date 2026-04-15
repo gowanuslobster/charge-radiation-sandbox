@@ -207,6 +207,8 @@ export function StreamlineCanvas({
     let lastGhostY  = NaN;
     let lastSpanX   = 0;
     let lastSpanY   = 0;
+    let lastC       = NaN;
+    let lastCharge  = NaN;
 
     // DPR-aware canvas sizing.
     const ro = new ResizeObserver(() => {
@@ -249,6 +251,8 @@ export function StreamlineCanvas({
       const currentBounds = boundsRef.current;
       const spanX = currentBounds.maxX - currentBounds.minX;
       const spanY = currentBounds.maxY - currentBounds.minY;
+      const config  = configRef.current;
+      const charge  = chargeRef.current;
 
       // Retrace when the physics snapshot or visibility changes.
       // Also retrace on significant zoom-out (>30% span increase) so lines
@@ -266,12 +270,12 @@ export function StreamlineCanvas({
         showGSL !== lastShowGSL ||
         gx !== lastGhostX       ||
         gy !== lastGhostY       ||
-        spanExpandedLarge;
+        spanExpandedLarge       ||
+        config.c !== lastC      ||
+        charge   !== lastCharge;
 
       if (needsRetrace) {
         const history = historyRef.current;
-        const charge  = chargeRef.current;
-        const config  = configRef.current;
 
         let realLinesForGhost: Vec2[][] = [];
         const newest = history.isEmpty() ? null : history.newest()!;
@@ -350,6 +354,8 @@ export function StreamlineCanvas({
         lastGhostY  = gy;
         lastSpanX   = spanX;
         lastSpanY   = spanY;
+        lastC       = config.c;
+        lastCharge  = charge;
       }
 
       // Draw to the DPR-scaled canvas.

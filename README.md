@@ -2,94 +2,179 @@
 
 An interactive visualizer for electromagnetic fields produced by moving point charges, using exact Liénard-Wiechert potentials. Watch causality in action: fields depend on where the charge *was* when it emitted the signal, not where it is now.
 
-## What you will be able to learn
+---
+
+## What you will learn
 
 After a few minutes of exploration you should be able to see and understand:
 
-- **Retarded time and causality** — field changes propagate outward at speed c; slow c down to make the delay visible
-- **Velocity field** — Coulomb-like, always present, decays as 1/R²
-- **Acceleration field (radiation)** — only appears during acceleration, decays as 1/R, and can outrun the Coulomb field at large distances
-- **Radiation shell** — stop a moving charge suddenly and watch a shell of radiation expand outward at c
+- **Retarded time and causality** — field changes propagate outward at speed c; lower c to make the delay visible
+- **Velocity field** — Coulomb-like, always present, decays as 1/R²; points toward where the charge appears headed
+- **Acceleration field (radiation)** — only appears during acceleration, decays as 1/R; dominates at large distances
+- **Radiation shell** — stop a moving charge suddenly and watch a shell of radiation expand outward at c, separating the "old" field from the "new"
 - **Relativistic beaming** — a fast-moving charge concentrates its field in the forward direction
-- **Superposition** — multiple charges produce fields that add linearly
+- **Dipole radiation** — continuous sinusoidal acceleration produces expanding wave trains, just like an antenna
 
-## Planned demo modes
+---
 
-| Mode | What to look for |
-|------|-----------------|
-| Charge at Rest | Pure Coulomb field; radial arrows, 1/R² decay. Drag the charge to create radiation pulses. |
-| Moving charge | Constant-velocity beaming; trigger the stop to launch a Bremsstrahlung radiation shell |
-| Oscillating charge | Dipole radiation pattern |
+## How to use the app
 
-These modes arrive across M2–M5. See `SPEC.md` for the full milestone schedule.
+### Starting up
 
-## Current status
+When you open the app you will see a **start panel** with three mode cards. Click any card to begin — the simulation seeds immediately and the panel clears. You can return to this screen at any time with the **Reset** button.
 
-**M6 complete — speed of light slider, interactive sudden stop, ghost overlay, oscillating mode, cursor readout, radiation heatmap, and wavefront contours.** The app renders an interactive electromagnetic field visualizer with three demo modes plus optional teaching overlays for radiation structure. Pan with right-drag or middle-drag, zoom with the scroll wheel. In Charge at Rest mode, left-drag the charge to produce radiation pulses directly.
+### The control panel
 
-What is implemented and tested:
+A floating panel in the upper-left corner gives you all controls:
 
-- `src/physics/types.ts` — core types: `Vec2`, `KinematicState`, `SimConfig`, `RetardedSolveResult`, `LWFieldResult`
-- `src/physics/vec2.ts` — 2D vector math helpers
-- `src/physics/chargeHistory.ts` — per-charge kinematic history buffer with binary-search interpolation and pruning
-- `src/physics/retardedTime.ts` — retarded-time root-finder (fixed-point iteration, max 15 steps, graceful fallback)
-- `src/physics/lienardWiechert.ts` — exact LW field evaluator: velocity term (1/R²) + acceleration term (1/R) + B field
-- `src/physics/demoModes.ts` — analytical kinematics for each demo mode; `sampleSuddenStopState` for interactive braking; substep helper for shell sharpness
-- `src/physics/dragKinematics.ts` — tick-owned drag kinematics: EMA smoothing, zero-motion guard, speed cap
-- `src/physics/wavefrontSampler.ts` — coarse scalar sampler for `bZAccel` with per-cell retarded-time warm-starting
-- `src/rendering/worldSpace.ts` — world↔canvas coordinate transforms, view-bounds helpers, history-horizon geometry
-- `src/rendering/arrows.ts` — field magnitude → visual weight mapping, orange→hot-yellow palette, arrow geometry
-- `src/rendering/chargeMarker.ts` — shared visual radius constant for the charge marker
-- `src/rendering/chargeHitTest.ts` — hit-test helper for drag start
-- `src/rendering/wavefrontRender.ts` — scalar-space wavefront rendering helpers: smoothing, bilinear upscaling, heatmap image generation, contour extraction
-- `src/components/useSandboxCamera.ts` — pan/zoom hook with RAF-batched state updates and zoom-about-cursor
-- `src/components/useCursorReadout.ts` — canvas-scoped hover listeners, RAF-batched LW field evaluation at cursor position
-- `src/components/VectorFieldCanvas.tsx` — 40×40 arrow grid, ghost charge overlay, continuous RAF loop, DPR-aware canvas
-- `src/components/WavefrontOverlayCanvas.tsx` — radiation heatmap + contour overlay canvas with cached scalar-space rendering pipeline
-- `src/components/ChargeRadiationSandbox.tsx` — simulation tick, seeding, drag handling, camera wiring, control handlers
-- `src/components/ControlPanel.tsx` — mode selector, playback controls (play/pause/step/reset), c slider, field layer toggles, mode-specific controls, teaching overlays, cursor readout display
+| Section | What it does |
+|---------|-------------|
+| **Mode** | Switch between the three demo modes (see below). Switching reseeds the simulation cleanly. |
+| **Playback** | **Run / Pause** — toggle real-time playback. **Step →** — advance one frame at a time while paused. **Reset** — clear the simulation and return to the start screen. |
+| **Speed of light** | Drag the slider to change c (max 3.0). The lower bound is mode-dependent: 0.62 in Oscillating, 0.72 in Moving charge (the GPU history buffer must cover the causal horizon), and 0.65 in Charge at rest. Lowering c slows all field propagation, making retarded-time effects dramatically visible. |
+| **Field** | Toggle which component of E you see: **Total E** (default), **Velocity E** (Coulomb-like term), or **Accel E** (radiation term only). |
+| **Overlays** | See the Overlays section below. |
+| **Camera** | Reset view, zoom ±, and pan arrows. You can also scroll-to-zoom and right/middle-drag to pan directly on the canvas. |
+| **Field at cursor** | When your cursor is over the canvas, shows the instantaneous field components at that point: \|E\|, Ev, Ea, Bz. |
 
-**Implemented demo modes:** charge at rest (pure Coulomb field; drag to produce radiation), moving charge (relativistic beaming; interactive stop trigger launches Bremsstrahlung shell; ghost overlay), oscillating charge (continuous dipole radiation pattern).
+### Camera controls
 
-**Implemented teaching overlays:** radiation heatmap and wavefront contours in `moving_charge` and `oscillating`, both driven by the sampled acceleration magnetic field (`bZAccel`); signed warm/cool phase display in oscillating mode and envelope display in moving-charge mode.
+| Action | How |
+|--------|-----|
+| Zoom | Scroll wheel (centered on cursor) or ± buttons in the panel |
+| Pan | Right-drag or middle-drag; or arrow buttons in the panel |
+| Reset view | "Reset view" button in the panel |
 
-**Implemented controls:** demo mode toggle (3 modes), field-layer toggle (Total E / Velocity E / Acceleration E), play/pause/step/reset, speed-of-light slider (c = 0.65–3.0), moving-charge mini panel (Stop now trigger, ghost charge overlay toggle), radiation heatmap toggle, wavefront contours toggle, cursor field readout (|E|, Ev, Ea, Bz), pan, zoom.
+---
+
+## Demo modes
+
+### Charge at rest
+
+A single stationary charge produces a pure Coulomb field — radial arrows, magnitude falling as 1/R². The acceleration field is identically zero.
+
+**To try:** Click **Run** and drag the charge. Every time you accelerate it you create a radiation pulse — visible as a kink that moves outward. Switch to **Accel E** to isolate just the radiation term. Try a quick jerk versus a slow drag and compare the pulse shapes.
+
+### Moving charge
+
+A charge moves at constant velocity. While moving, its field shows relativistic beaming — compressed forward, expanded backward. Click **Stop now** (in the mini panel that appears near the charge) to brake the charge and launch a radiation shell. The shell expands outward at c. Inside: a pure Coulomb field from the stationary charge. Outside: the field still points toward where the charge would have been if it hadn't stopped.
+
+**To try:**
+- Lower c before clicking Stop so the shell is easy to see at normal zoom.
+- Enable the **Radiation heatmap** to see where the radiated energy is concentrated.
+- Toggle **Ghost charge** in the mini panel — a marker appears at the would-have-been position so the outside-of-shell field makes sense.
+- Enable **Field lines** (while paused) and then **Ghost field lines** in the mini panel to compare the inside and outside field geometries side by side.
+
+> **Note:** The **Wavefront contours** toggle is greyed out in this mode — the envelope contour is coming in a future update (M8).
+
+### Oscillating charge
+
+A charge oscillates sinusoidally along one axis, radiating continuously. The field shows the characteristic dipole pattern: strongest perpendicular to the motion, weaker along the axis. The wavefronts expand outward at c.
+
+**To try:**
+- Enable **Radiation heatmap** to map the radiated field intensity.
+- Enable **Wavefront contours** to see zero-crossing lines that track the wave phase exactly.
+- Lower c until you can see the wavefronts expanding in real time.
+- Pause and enable **Field lines** to see the instantaneous field geometry.
+
+---
+
+## Teaching overlays
+
+All overlays are off by default. They stack freely — you can enable any combination.
+
+| Overlay | Where | What it shows |
+|---------|-------|---------------|
+| **Field lines** | All modes, when paused | Instantaneous streamlines of the total electric field at the paused frame. Not material lines that move with the charge — they are a snapshot of the field at that moment. |
+| **Radiation heatmap** | Moving charge, Oscillating | Color map of the radiation magnetic field (Bz from the acceleration term). Warm/orange = positive phase, cool/blue = negative phase in oscillating; envelope intensity in moving charge. |
+| **Wavefront contours** | Oscillating only | Zero-crossing lines of the radiation field, computed directly in the GPU shader. Stays aligned with the heatmap at all zoom levels. |
+| **Ghost charge** (mini panel) | Moving charge | A marker at the extrapolated would-have-been position after the stop. Shows why the field outside the shell still points toward a charge that is no longer there. |
+| **Ghost field lines** (mini panel) | Moving charge, paused | Streamlines of the extrapolated constant-velocity field — shows what the field would look like if the charge had never stopped. |
+
+---
 
 ## Getting started (developers)
 
 ```bash
 npm install
-npm run dev      # start dev server with hot reload
-npm test         # run physics unit tests (Vitest)
+npm run dev      # start dev server with hot reload at http://localhost:5173
+npm test         # run physics unit tests (Vitest) — 169 tests across 10 suites
 npm run lint     # ESLint on all source files
-npm run build    # TypeScript strict build
+npm run build    # TypeScript strict type-check + Vite production build
 ```
 
 ### Architecture
 
-The target layout is three layers with hard dependency rules:
+Three layers with hard dependency rules:
 
 ```
-src/physics/     — pure TypeScript, zero React imports, fully unit-tested   [exists]
-src/rendering/   — pure functions, no canvas/DOM                            [exists]
-src/components/  — React components, owns canvases and interaction hooks    [exists]
+src/physics/     — pure TypeScript, zero React imports, fully unit-tested
+src/rendering/   — pure functions, no canvas/DOM side effects
+src/components/  — React components, owns canvases and interaction hooks
 ```
 
 Key design decisions:
 
 - **Analytical over numerical** — exact Liénard-Wiechert potentials, not FDTD grid solvers
-- **History-driven** — `ChargeHistory` is the single source of truth for all charge kinematics; the retarded-time solver reads from it
+- **History-driven** — `ChargeHistory` is the single source of truth for all charge kinematics; the retarded-time solver reads from it at evaluation time
 - **c is always a parameter** — the speed of light is never hardcoded; slowing it down is a first-class feature
-- **Ref-based live state** — animation-frame loops will read from refs; React state drives only the control panel UI
+- **Ref-based live state** — animation-frame loops read from `useRef` values; React state drives only the control panel UI
+
+### Source files
+
+**`src/physics/`** — pure TypeScript, no React
+
+| File | Purpose |
+|------|---------|
+| `types.ts` | Core types: `Vec2`, `KinematicState`, `SimConfig`, `RetardedSolveResult`, `LWFieldResult` |
+| `vec2.ts` | 2D vector math helpers |
+| `chargeHistory.ts` | Per-charge kinematic history buffer: circular storage, binary-search interpolation, time-window pruning |
+| `retardedTime.ts` | Retarded-time root-finder: fixed-point iteration (max 15 steps), graceful fallback |
+| `lienardWiechert.ts` | Exact LW field evaluator: velocity term (1/R²) + acceleration term (1/R) + B field decomposition |
+| `demoModes.ts` | Analytical kinematics for each demo mode; `sampleSuddenStopState` for interactive braking; braking substep helper for radiation-shell sharpness |
+| `dragKinematics.ts` | Tick-owned drag kinematics: EMA smoothing, zero-motion guard, speed cap |
+| `wavefrontSampler.ts` | Coarse scalar sampler for `bZAccel` with per-cell retarded-time warm-starting (CPU fallback path) |
+| `streamlineTracer.ts` | RK4 streamline tracer for paused-frame field-line overlays; ghost-angle numeric solver for moving-charge ghost lines |
+
+**`src/rendering/`** — pure functions, no DOM
+
+| File | Purpose |
+|------|---------|
+| `worldSpace.ts` | World↔canvas coordinate transforms, view-bounds helpers, history-horizon geometry |
+| `arrows.ts` | Field magnitude → visual weight mapping, orange→hot-yellow color palette, arrow geometry |
+| `chargeMarker.ts` | Shared visual radius constant for the charge dot |
+| `chargeHitTest.ts` | Hit-test helper for drag start |
+| `wavefrontRender.ts` | CPU-path wavefront rendering helpers: dynamic-range compression, bilinear upscaling, heatmap image generation, contour extraction |
+| `wavefrontWebGLConfig.ts` | Per-mode c-slider minimum constants and `minCForMode()` accessor (Policy A conservative bounds) |
+| `webglUtils.ts` | WebGL setup utilities: `compileShader`, `createShaderProgram`, `createFloat32Texture`, `createFullscreenQuad` |
+
+**`src/components/`** — React components and hooks
+
+| File | Purpose |
+|------|---------|
+| `ChargeRadiationSandbox.tsx` | Root orchestrator: simulation RAF tick, charge history, demo/display state, drag handling, camera wiring |
+| `StartPanel.tsx` | Home screen overlay shown on initial load and after Reset; mode cards serve as navigation |
+| `ControlPanel.tsx` | Floating glass panel: mode selector, playback controls, c slider, field layer toggles, overlay toggles, cursor readout |
+| `MovingChargeMiniPanel.tsx` | Draggable mini panel for moving-charge controls: Stop now trigger, ghost-charge and ghost-field-lines toggles |
+| `VectorFieldCanvas.tsx` | 40×40 arrow grid, ghost charge overlay, continuous RAF loop, DPR-aware canvas |
+| `WavefrontWebGLCanvas.tsx` | WebGL2 fragment-shader heatmap: full-screen quad, RGBA32F history texture, bracketed Newton retarded-time solver in GLSL |
+| `WavefrontOverlayCanvas.tsx` | CPU fallback heatmap + contour canvas (active when WebGL2 / RGBA32F is unavailable) |
+| `StreamlineCanvas.tsx` | Paused-frame field-line overlay; traces main and ghost streamlines on demand; clears during playback |
+| `useSandboxCamera.ts` | Pan/zoom hook: RAF-batched state updates, zoom-about-cursor, world↔screen transform plumbing |
+| `useCursorReadout.ts` | Canvas-scoped hover listeners, RAF-batched LW field evaluation at cursor position |
 
 ### Stack
 
 - **Build:** Vite + `@vitejs/plugin-react`
-- **Styling:** Tailwind CSS v4 (`@tailwindcss/vite`) — all UI components use Tailwind classes; `src/index.css` is the single CSS entry point
-- **Import alias:** `@/` maps to `src/` — use `@/...` for cross-directory imports (e.g., `@/physics/types`), `./...` for same-directory imports
+- **Styling:** Tailwind CSS v4 (`@tailwindcss/vite`) — all UI components use Tailwind utility classes; `src/index.css` is the single CSS entry point
+- **Import alias:** `@/` maps to `src/` — use `@/physics/types`, `@/rendering/worldSpace`, etc. for cross-directory imports; `./` for same-directory
 
 ### Reference docs
 
-- `IDEAS.md` — Liénard-Wiechert math, retarded-time derivation, and why FDTD was ruled out
-- `SPEC.md` — milestone definitions and acceptance criteria
-- `AGENTS.md` — code style, naming conventions, and architectural constraints
+| File | What it covers |
+|------|---------------|
+| `IDEAS.md` | Liénard-Wiechert math, retarded-time derivation, why FDTD was ruled out |
+| `IDEAS-wavefronts.md` | Design rationale and extended spec for the M6 sampled wavefront overlay |
+| `IDEAS-webGL.md` | Full design spec for the WebGL renderer: data model, texture packing, solver design, c-slider policy |
+| `SPEC.md` | Milestone definitions and acceptance criteria |
+| `AGENTS.md` | Code style, naming conventions, and architectural constraints |

@@ -49,6 +49,7 @@ import { MovingChargeMiniPanel } from './MovingChargeMiniPanel';
 import { StreamlineCanvas } from './StreamlineCanvas';
 // ── end M9 ────────────────────────────────────────────────────
 import { useCursorReadout } from './useCursorReadout';
+import { StartPanel } from './StartPanel';
 import { isWithinBounds, maxCornerDist, worldToScreen, type WorldBounds } from '@/rendering/worldSpace';
 import { hitTestCharge } from '@/rendering/chargeHitTest';
 
@@ -103,6 +104,17 @@ export function ChargeRadiationSandbox() {
   const [showStreamlines, setShowStreamlines] = useState(false);
   const [showGhostStreamlines, setShowGhostStreamlines] = useState(false);
   // ── end M9 ────────────────────────────────────────────────────
+
+  // Start panel — shown on initial load and after Reset.
+  // While visible, no mode is highlighted in the ControlPanel.
+  const [showStartPanel, setShowStartPanel] = useState(true);
+  const showStartPanelRef = useRef(true);
+  useEffect(() => { showStartPanelRef.current = showStartPanel; }, [showStartPanel]);
+
+  // Prevents effect B from double-reseeding when handleDemoModeChange is
+  // called from the start panel and the mode actually changes: in that path
+  // we call reseed() directly before setDemoMode(), so effect B must skip.
+  const skipModeChangeReseedRef = useRef(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const {
@@ -251,8 +263,14 @@ export function ChargeRadiationSandbox() {
   }, [defaultBounds, reseed]);
 
   // Effect B — mode-change reseed.
+  // Skipped when handleDemoModeChange already called reseed() directly (start-panel
+  // path with a mode change) — skipModeChangeReseedRef prevents the double-reseed.
   useEffect(() => {
     if (!hasSeededRef.current) return;
+    if (skipModeChangeReseedRef.current) {
+      skipModeChangeReseedRef.current = false;
+      return;
+    }
     const db = defaultBoundsRef.current;
     if (db === null) return;
     reseed(demoMode, db);
@@ -381,21 +399,56 @@ export function ChargeRadiationSandbox() {
         setC(cMin);
       }
     }
-    setDemoMode(newMode);
-  }, []);
+
+    if (showStartPanelRef.current) {
+      // Navigating from the start panel: always reseed (mode may be same as current,
+      // so we can't rely on effect B, which only fires on state changes).
+      // If the mode IS changing, effect B would also run — pre-empt it.
+      if (newMode !== demoModeRef.current) {
+        skipModeChangeReseedRef.current = true;
+      }
+      showStartPanelRef.current = false;
+      setShowStartPanel(false);
+      const db = defaultBoundsRef.current;
+      if (db !== null) reseed(newMode, db);
+      setDemoMode(newMode);
+      ghostPosRef.current = null;
+      setStopTriggered(false);
+      setShowGhost(false);
+      setShowRadiationHeatmap(false);
+      setShowWavefrontContours(false);
+      setShowStreamlines(false);
+      setShowGhostStreamlines(false);
+      isPausedRef.current = true;
+      pendingStepRef.current = false;
+      setIsPaused(true);
+    } else {
+      // Normal mode change: effect B handles the reseed.
+      setDemoMode(newMode);
+    }
+  }, [reseed]);
 
   const handleReset = useCallback(() => {
-    // End any active drag (same cleanup as togglePause on drag end).
+    // End any active drag.
     if (isDraggingRef.current) {
       isDraggingRef.current = false;
       rawDragPosRef.current = null;
       dragStateRef.current = stoppedDragState(dragStateRef.current?.pos ?? { x: 0, y: 0 });
       dragPeakSpeedRef.current = 0;
     }
-    const db = defaultBoundsRef.current;
-    if (db === null) return;
-    reseed(demoModeRef.current, db);
-    // Sync UI state with the cleared refs set inside reseed().
+
+    // Clear simulation state — mode selection from the start panel will reseed.
+    historyRef.current = new ChargeHistory();
+    simTimeRef.current = 0;
+    lastWallTimeRef.current = performance.now();
+    simEpochRef.current += 1;
+    stopTriggerTimeRef.current = null;
+    ghostPosRef.current = null;
+    reseedBoundsRef.current = null;
+
+    resetCamera();
+
+    // Clear all UI overlays and derived state.
     setStopTriggered(false);
     setShowGhost(false);
     setShowRadiationHeatmap(false);
@@ -404,7 +457,6 @@ export function ChargeRadiationSandbox() {
     setShowStreamlines(false);
     setShowGhostStreamlines(false);
     // ── end M9 ────────────────────────────────────────────────────
-    ghostPosRef.current = null;
     isPausedRef.current = true;
     pendingStepRef.current = false;
     if (dragCalloutTimerRef.current !== null) {
@@ -413,7 +465,11 @@ export function ChargeRadiationSandbox() {
     }
     setDragCalloutPos(null);
     setIsPaused(true);
-  }, [reseed]);
+
+    // Return to start panel. Mode selection from there will call reseed().
+    showStartPanelRef.current = true;
+    setShowStartPanel(true);
+  }, [resetCamera]);
 
   // ─── Simulation tick ────────────────────────────────────────────────────────
 
@@ -732,8 +788,12 @@ export function ChargeRadiationSandbox() {
         onStreamlinesToggle={() => setShowStreamlines(v => !v)}
         contoursDisabled={contoursDisabled}
         cMin={cMin}
+        noModeActive={showStartPanel}
       />
-      {demoMode === 'moving_charge' && (
+      {showStartPanel && (
+        <StartPanel onSelectMode={handleDemoModeChange} />
+      )}
+      {demoMode === 'moving_charge' && !showStartPanel && (
         <MovingChargeMiniPanel
           stopTriggered={stopTriggered}
           showGhost={showGhost}

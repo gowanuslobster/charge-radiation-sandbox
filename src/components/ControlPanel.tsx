@@ -50,6 +50,11 @@ type Props = {
    * slider UI matches the M7 c-min policy enforced in handleCChange.
    */
   cMin?: number;
+  /**
+   * When true, no mode button is shown as active. Used while the start panel
+   * is visible — the user has not yet chosen a mode for this session.
+   */
+  noModeActive?: boolean;
 };
 
 // Shared base classes for all mode/field toggle buttons.
@@ -69,6 +74,7 @@ export function ControlPanel({
   onRadiationHeatmapToggle, onWavefrontContoursToggle, onStreamlinesToggle,
   contoursDisabled = false,
   cMin = 0.65,
+  noModeActive = false,
 }: Props) {
   return (
     <div className="absolute left-4 top-4 z-20 flex flex-col gap-3 rounded-2xl border border-orange-400/20 bg-black/65 p-4 text-sm text-zinc-200 backdrop-blur-md select-none pointer-events-auto">
@@ -78,19 +84,19 @@ export function ControlPanel({
         <p className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400">Mode</p>
         <div className="flex flex-wrap gap-1.5">
           <button type="button" onClick={() => onDemoModeChange('draggable')}
-            className={`${TOGGLE_BASE} ${demoMode === 'draggable'
+            className={`${TOGGLE_BASE} ${!noModeActive && demoMode === 'draggable'
               ? 'bg-orange-400 text-black shadow-[0_0_16px_rgba(251,146,60,0.5)]'
               : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
             Charge at Rest
           </button>
           <button type="button" onClick={() => onDemoModeChange('moving_charge')}
-            className={`${TOGGLE_BASE} ${demoMode === 'moving_charge'
+            className={`${TOGGLE_BASE} ${!noModeActive && demoMode === 'moving_charge'
               ? 'bg-orange-400 text-black shadow-[0_0_16px_rgba(251,146,60,0.5)]'
               : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
             Moving charge
           </button>
           <button type="button" onClick={() => onDemoModeChange('oscillating')}
-            className={`${TOGGLE_BASE} ${demoMode === 'oscillating'
+            className={`${TOGGLE_BASE} ${!noModeActive && demoMode === 'oscillating'
               ? 'bg-orange-400 text-black shadow-[0_0_16px_rgba(251,146,60,0.5)]'
               : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
             Oscillating

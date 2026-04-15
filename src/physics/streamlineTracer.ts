@@ -310,19 +310,136 @@ function findGhostAnchorOnRealLine(
   return null;
 }
 
+// ── Ghost seed-angle numeric solve ───────────────────────────────────────────
+//
+// For strongly anisotropic velocity fields (low c, high β) the ray from the
+// ghost charge to the anchor is only an approximation of the seed angle whose
+// streamline actually passes through that anchor. The solve replaces the direct
+// atan2 with a cheap coarse-then-refine search over a ±0.35 rad window.
+
+const GHOST_SEED_SEARCH_HALF   = 0.35;  // half-width of search window (rad)
+const GHOST_SEED_COARSE_N      = 9;     // samples in coarse sweep
+const GHOST_SEED_REFINE_N      = 7;     // samples per refinement round
+const GHOST_SEED_REFINE_ROUNDS = 3;     // number of narrowing rounds
+const GHOST_SEED_MAX_STEPS     = 150;   // reduced step budget for search traces
+
+/** Squared distance from `point` to the nearest point on any segment of `polyline`. */
+function minDistSquaredToPolyline(point: Vec2, polyline: Vec2[]): number {
+  let minD2 = Infinity;
+  for (let i = 0; i + 1 < polyline.length; i++) {
+    const ax = polyline[i].x,     ay = polyline[i].y;
+    const bx = polyline[i + 1].x, by = polyline[i + 1].y;
+    const dx = bx - ax,           dy = by - ay;
+    const lenSq = dx * dx + dy * dy;
+    let t = 0;
+    if (lenSq > 1e-20) {
+      t = ((point.x - ax) * dx + (point.y - ay) * dy) / lenSq;
+      if (t < 0) t = 0; else if (t > 1) t = 1;
+    }
+    const ex = ax + t * dx - point.x;
+    const ey = ay + t * dy - point.y;
+    const d2 = ex * ex + ey * ey;
+    if (d2 < minD2) minD2 = d2;
+  }
+  return minD2;
+}
+
+/**
+ * Find the ghost seed angle whose streamline passes closest to `anchor`.
+ *
+ * Two-stage search in [theta0 ± GHOST_SEED_SEARCH_HALF]:
+ *   1. Coarse: GHOST_SEED_COARSE_N evenly-spaced samples → best theta.
+ *   2. Refine: GHOST_SEED_REFINE_ROUNDS rounds, each sampling GHOST_SEED_REFINE_N
+ *      points in the ±spacing/2 neighbourhood of the current best.
+ *
+ * Each candidate is evaluated by tracing a full ghost streamline (capped at
+ * GHOST_SEED_MAX_STEPS) and computing the minimum squared distance to `anchor`.
+ *
+ * Falls back to `theta0` implicitly when all search traces are empty (the
+ * initial bestTheta is theta0 and bestDist2 starts at Infinity).
+ */
+function solveGhostSeedAngle(
+  anchor: Vec2,
+  ghostPos: Vec2,
+  observationTime: number,
+  ghostHistory: ChargeHistory,
+  charge: number,
+  config: SimConfig,
+  bounds: TraceBounds,
+  opts: StreamlineOptions,
+  theta0: number,
+): number {
+  // Padded clip region — same 2× expansion used by buildStreamlines.
+  const spanX = bounds.maxX - bounds.minX;
+  const spanY = bounds.maxY - bounds.minY;
+  const paddedBounds: TraceBounds = {
+    minX: bounds.minX - spanX * 2, maxX: bounds.maxX + spanX * 2,
+    minY: bounds.minY - spanY * 2, maxY: bounds.maxY + spanY * 2,
+  };
+  const searchOpts: StreamlineOptions = { ...opts, maxSteps: GHOST_SEED_MAX_STEPS };
+  const dirSign = charge >= 0 ? 1 : -1;
+
+  const traceAndMeasure = (theta: number): number => {
+    const seed: Vec2 = {
+      x: ghostPos.x + opts.seedOffsetRadius * Math.cos(theta),
+      y: ghostPos.y + opts.seedOffsetRadius * Math.sin(theta),
+    };
+    const line = traceSingleLine(
+      seed, observationTime, ghostHistory, charge, config,
+      paddedBounds, dirSign, searchOpts, true,
+    );
+    return line.length >= 2 ? minDistSquaredToPolyline(anchor, line) : Infinity;
+  };
+
+  const lo = theta0 - GHOST_SEED_SEARCH_HALF;
+  const hi = theta0 + GHOST_SEED_SEARCH_HALF;
+  let bestTheta = theta0;
+  let bestDist2 = Infinity;
+
+  // Coarse sweep — theta0 is included as the centre sample (COARSE_N is odd).
+  for (let i = 0; i < GHOST_SEED_COARSE_N; i++) {
+    const theta = lo + (i / (GHOST_SEED_COARSE_N - 1)) * (hi - lo);
+    const d2 = traceAndMeasure(theta);
+    if (d2 < bestDist2) { bestDist2 = d2; bestTheta = theta; }
+  }
+
+  // Refinement: progressively narrow the interval around the current best.
+  // halfWidth starts at one coarse sample spacing; shrinks by (REFINE_N-1)/2 each round.
+  let halfWidth = (hi - lo) / (GHOST_SEED_COARSE_N - 1);
+  for (let round = 0; round < GHOST_SEED_REFINE_ROUNDS; round++) {
+    const rLo = bestTheta - halfWidth;
+    const rHi = bestTheta + halfWidth;
+    for (let i = 0; i < GHOST_SEED_REFINE_N; i++) {
+      const theta = rLo + (i / (GHOST_SEED_REFINE_N - 1)) * (rHi - rLo);
+      const d2 = traceAndMeasure(theta);
+      if (d2 < bestDist2) { bestDist2 = d2; bestTheta = theta; }
+    }
+    // New halfWidth = half of one refine-sample spacing = halfWidth / (REFINE_N - 1).
+    halfWidth = halfWidth / (GHOST_SEED_REFINE_N - 1);
+  }
+
+  return bestTheta;
+}
+
 /**
  * Derive ghost-charge seed angles from the already-traced real streamlines.
  *
  * For each real streamline, find the first point after the radiation band where
  * the acceleration field has dropped back to a small fraction of the total
- * field. The ghost seed angle is then the ray from `ghostPos` through that
- * settled outer-branch point. This aligns the ghost line with the visible old
- * velocity-field branch outside the shell, not with an idealized zero-thickness
- * shell crossing.
+ * field. That anchor is the target the ghost streamline must pass through.
  *
- * If a streamline never cleanly exits the acceleration band inside the traced
- * region, fall back to the original analytic aberration formula inferred from
- * the real seed direction.
+ * The ghost seed angle is found by a two-stage numeric search (see
+ * solveGhostSeedAngle) rather than the direct atan2 ray. The ray is only an
+ * approximation for anisotropic velocity fields (low c / high β); the solve
+ * finds the seed whose ghost streamline actually reaches the anchor.
+ *
+ * If no settled anchor is found for a line, fall back to the analytic
+ * aberration formula derived from the real seed direction.
+ *
+ * @param ghostHistory  Pre-built ghost-charge history (from buildGhostHistory).
+ * @param bounds        Unpadded view bounds (solve traces use the same 2× padding
+ *                      as buildStreamlines).
+ * @param opts          Optional streamline option overrides (usually undefined).
  */
 export function deriveGhostSeedAnglesFromRealLines(
   realLines: Vec2[][],
@@ -333,7 +450,11 @@ export function deriveGhostSeedAnglesFromRealLines(
   history: ChargeHistory,
   charge: number,
   config: SimConfig,
+  ghostHistory: ChargeHistory,
+  bounds: TraceBounds,
+  opts?: Partial<StreamlineOptions>,
 ): number[] {
+  const options: StreamlineOptions = { ...DEFAULT_STREAMLINE_OPTIONS, ...opts };
   const ghostAngles: number[] = [];
 
   for (const line of realLines) {
@@ -348,10 +469,17 @@ export function deriveGhostSeedAnglesFromRealLines(
     );
 
     if (anchor !== null) {
-      ghostAngles.push(Math.atan2(anchor.y - ghostPos.y, anchor.x - ghostPos.x));
+      const theta0 = Math.atan2(anchor.y - ghostPos.y, anchor.x - ghostPos.x);
+      ghostAngles.push(
+        solveGhostSeedAngle(
+          anchor, ghostPos, observationTime,
+          ghostHistory, charge, config, bounds, options, theta0,
+        ),
+      );
       continue;
     }
 
+    // No settled anchor found — fall back to analytic aberration formula.
     const seed = line[0];
     const realSeedAngle = Math.atan2(seed.y - sourcePos.y, seed.x - sourcePos.x);
     ghostAngles.push(analyticGhostSeedAngle(realSeedAngle, ghostVel, config.c));

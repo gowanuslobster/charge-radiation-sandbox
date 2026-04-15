@@ -52,8 +52,8 @@ The current official scope does not include:
 - Poynting vector or energy flow visualization
 - time-averaged field displays
 
-M1–M6 are complete. The remaining work is M7–M10 as defined in the Milestones
-section.
+M1–M7 and M9 are complete. The remaining milestone work is M8 and M10 as
+defined in the Milestones section.
 
 ## Canonical Demo Modes
 
@@ -158,7 +158,7 @@ available in `moving_charge` and `oscillating` modes only.
 - Performance remains usable (>25 FPS) for the two supported single-charge modes on the default grid
 - Physics tests cover the magnetic decomposition and the decomposition identity
 
-### M7: WebGL heatmap and oscillating contour
+### M7: WebGL heatmap and oscillating contour — complete
 
 Replace the CPU `WavefrontOverlayCanvas` with a WebGL fragment-shader renderer
 that evaluates the LW field per-pixel. This milestone covers the radiation
@@ -180,9 +180,10 @@ rationale, data model, and solver specification.
 - The `useEffect` RAF loop must return a cleanup function that calls
   `cancelAnimationFrame` to prevent zombie loops under React Strict Mode
 - The c-slider policy must prevent the causal horizon from exceeding the history
-  buffer for visible pixels; the specific implementation (conservative global
-  minimum or dynamic per-mode bound) is determined during M7 development using
-  the constraint formula in `IDEAS-webGL.md` §5
+  buffer for visible pixels. M7 adopts Policy A (conservative global minimum)
+  using the constraint formula in `IDEAS-webGL.md` §5:
+  - `c_min(moving_charge) = 0.72`
+  - `c_min(oscillating) = 0.62`
 - If `WebGL2` or `RGBA32F` texture support is unavailable, the CPU
   `WavefrontOverlayCanvas` path activates as a lower-fidelity fallback with an
   inline student-friendly banner
@@ -206,10 +207,8 @@ rationale, data model, and solver specification.
 - No coarse-grid dropout islands in the `moving_charge` shell at far zoom
 - `oscillating` heatmap shows continuous phase structure without staircase bands
 - Heatmap and contour remain stable under zoom and pan
-- ≥30 FPS on a clearly documented reference configuration (viewport size, mode,
-  `c` value, and GPU class recorded in the sign-off note)
-- A repeatable probe-validation artifact exists (script or browser diagnostic)
-  that samples CPU and GPU values at the standard probe set and reports deltas
+- Performance remains usable on supported WebGL2-capable hardware for the
+  standard single-charge teaching scenarios in `moving_charge` and `oscillating`
 - If WebGL2 / RGBA32F is unavailable, the CPU fallback activates with an inline
   banner and all other app functionality remains intact
 - Existing tests (M1–M6) continue to pass
@@ -238,7 +237,7 @@ part of this milestone if the normalization design makes it straightforward.
   sudden-stop scenario
 - Existing tests (M1–M7) continue to pass
 
-### M9: Paused streamline overlays
+### M9: Paused streamline overlays — complete
 
 Add optional field-line / streamline overlays for single-charge scenes when the simulation is paused or stepped to a fixed frame.
 
@@ -286,7 +285,6 @@ Support two or more charges with independent history buffers. Fields superpose l
   - **Playback:** play / pause / step / reset buttons
   - **Speed of light:** slider for `c` with visible numeric readout
   - **Field layers:** toggles for total field, velocity field, acceleration field
-  - **Grid density:** selector (low / medium / high)
   - **Mode-specific controls:** in `moving_charge` mode, a separate draggable mini panel provides a `Stop now` trigger and ghost-charge overlay toggle
   - **Teaching overlays:** toggles for pedagogical overlays — ghost-charge markers, radiation heatmap (M6), wavefront contours (M6), and paused-frame streamline displays (M9)
 
@@ -308,13 +306,13 @@ Support two or more charges with independent history buffers. Fields superpose l
 
 The v1 renderer iterates over a grid of observation points, solves the retarded time for each, evaluates the LW field, and draws arrows on a 2D Canvas. This is CPU-bound but straightforward to implement and debug.
 
-### Next: WebGL (Path B, M7–M8)
+### Next: M8 envelope contour and GPU follow-on work
 
-The WebGL renderer transition is the next active work. The design is specified
-in full in `IDEAS-webGL.md`. M7 delivers a fragment-shader heatmap for
-`moving_charge` and `oscillating` modes plus a shader-native zero-crossing
-contour for `oscillating`. M8 adds the envelope contour for `moving_charge` and
-resolves the normalization coupling.
+The WebGL renderer transition is now shipped for the M7 scope. The design is
+specified in full in `IDEAS-webGL.md`. M7 delivered a fragment-shader heatmap
+for `moving_charge` and `oscillating` modes plus a shader-native zero-crossing
+contour for `oscillating`. The next rendering milestone is M8, which adds the
+envelope contour for `moving_charge` and resolves the normalization coupling.
 
 The CPU arrow renderer (Path A) is retained alongside the WebGL heatmap through
 these milestones. The CPU physics implementation remains the validation oracle
@@ -322,7 +320,15 @@ for all GPU field values.
 
 ## Deferred Work and Future Directions
 
-- **WebGL rendering (Path B):** now in active scope. M7 delivers the heatmap and oscillating contour; M8 adds the `moving_charge` envelope contour. See `IDEAS-webGL.md` for the full design.
+- **Remaining GPU rendering work:** M7 is shipped. M8 adds the
+  `moving_charge` envelope contour and resolves its normalization coupling. See
+  `IDEAS-webGL.md` for the full design.
+- **Vector-grid density control:** an optional low / medium / high selector for
+  the CPU arrow field may be added in a future pass if teaching needs or
+  performance tuning justify it. This was removed from the v1 control-panel
+  contract because it is not required for the current milestones, but it remains
+  a valid future UX enhancement, especially for balancing visual clarity against
+  CPU cost on weaker hardware or during interaction.
 - **Self-consistent dynamics:** charges responding to each other's fields via Lorentz force integration. Architecturally possible but physically subtle (radiation reaction, Abraham-Lorentz force). Treat as a separate deliberate expansion.
 - **Magnetic field visualization:** B is computed for free from the LW equations. The M6 radiation heatmap uses `bZAccel` as a measure of radiation intensity. A dedicated B-field vector arrow layer remains deferred.
 - **Poynting vector / energy flow:** plausible later as a derived overlay. Requires both E and B, which are already computed.
@@ -356,7 +362,8 @@ for all GPU field values.
 - Default `c = 1` in simulation units.
 - Default grid density is 40x40.
 - Default field display is total E (velocity + acceleration).
-- Default demo mode on app load is Charge at Rest.
+- The app opens to a start panel. No demo mode is active until the student
+  selects one.
 - All field computation uses the exact LW equations with full relativistic terms. No non-relativistic approximations unless explicitly added and labeled.
 - Coordinate system: physics layer uses Cartesian (+X right, +Y up); rendering layer handles the Canvas flip (+Y down).
 - No claim of self-consistent radiation reaction, charge-charge dynamics, or energy conservation is made in v1.

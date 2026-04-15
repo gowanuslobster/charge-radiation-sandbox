@@ -324,6 +324,8 @@ export function StreamlineCanvas({
                 history,
                 charge,
                 config,
+                ghostHistory,
+                currentBounds,
               )
             : [];
 

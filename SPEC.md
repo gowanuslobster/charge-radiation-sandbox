@@ -170,9 +170,10 @@ rationale, data model, and solver specification.
 **Implementation notes:**
 - `WavefrontOverlayCanvas` is replaced by a new `WavefrontWebGLCanvas` component
   using `canvas.getContext('webgl2')` at the same z-index
-- `ChargeHistory` is uploaded each frame as a single-row `RGBA32F` texture;
-  timestamps are stored offset-relative to `t_current` to preserve float32
-  precision; the packing layout is 2 texels per state (see `IDEAS-webGL.md` §4)
+- `ChargeHistory` is uploaded each frame as a 2D `RGBA32F` texture (`TEX_WIDTH=512 × TEX_HEIGHT=16`);
+  timestamps are stored offset-relative to `t_current` to preserve float32 precision;
+  the packing layout is 2 texels per state with 2D addressing `ivec2(texelIdx % TEX_WIDTH, texelIdx / TEX_WIDTH)`
+  (see `IDEAS-webGL.md` §4); `MAX_TEXTURE_SIZE >= 512` is verified in the capability probe
 - The fragment shader uses a bracketed Newton retarded-time solver (robust
   convergence within the valid history bracket); inner loop is a fixed-count
   binary search over the history texture

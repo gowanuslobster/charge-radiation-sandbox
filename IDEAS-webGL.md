@@ -112,17 +112,25 @@ texel 2i+0 = (t_offset, pos.x, pos.y, vel.x)
 texel 2i+1 = (vel.y, accel.x, accel.y, 0.0)   // one channel padding
 ```
 
-All texels are packed into a single-row texture of width `2 * MAX_HISTORY_SAMPLES`.
+All texels are packed into a 2D texture of dimensions `TEX_WIDTH × TEX_HEIGHT`, where
+`TEX_WIDTH = 512` and `TEX_HEIGHT = 16` (8192 total texels = `2 × MAX_HISTORY_SAMPLES`).
+Both dimensions are within WebGL2's minimum guaranteed `MAX_TEXTURE_SIZE` (2048), unlike a
+single-row design that would require width 8192 — which is not guaranteed on all hardware.
 `MAX_HISTORY_SAMPLES` should be fixed at compile time (e.g., 4096).
 
 In the shader, state `i` is retrieved as:
 
 ```glsl
-vec4 a = texelFetch(u_history, ivec2(2*i,   0), 0);
-vec4 b = texelFetch(u_history, ivec2(2*i+1, 0), 0);
+int t0 = 2 * i;
+int t1 = 2 * i + 1;
+vec4 a = texelFetch(u_history, ivec2(t0 % TEX_WIDTH, t0 / TEX_WIDTH), 0);
+vec4 b = texelFetch(u_history, ivec2(t1 % TEX_WIDTH, t1 / TEX_WIDTH), 0);
 // a = (t_offset, pos.x, pos.y, vel.x)
 // b = (vel.y, accel.x, accel.y, _)
 ```
+
+`TEX_WIDTH` is passed to the shader as a uniform (`u_texWidth`) so the 2D addressing formula
+is not hardcoded in the GLSL.
 
 This layout is simple and robust for the single-charge first milestone. More
 specialized layouts may be worth considering later if multi-charge bandwidth or
@@ -151,7 +159,7 @@ then subtract; that defeats the precision benefit near `t_current`.
 
 ### Texture upload strategy
 
-Use a **full re-upload each frame** on the single-row texture. Allocate storage
+Use a **full re-upload each frame** on the 2D history texture. Allocate storage
 once, then update via `texSubImage2D` against a pre-allocated `Float32Array`
 staging buffer. Do not reallocate texture storage every frame unless profiling
 shows that the simpler implementation is acceptable and still comfortably below
@@ -225,8 +233,8 @@ zero-crossing contour in a fragment shader, while leaving arrows on the CPU.
 
 ### Core shader responsibilities
 
-- Upload `ChargeHistory` to the GPU as a single-row `RGBA32F` texture using the
-  packing layout described in section 4.
+- Upload `ChargeHistory` to the GPU as a 2D `RGBA32F` texture (`TEX_WIDTH × TEX_HEIGHT`)
+  using the packing layout described in section 4.
 - For each fragment, solve the retarded-time equation using a fixed-count
   bracketed Newton solver (see below).
 - Reconstruct the retarded kinematic state from the history texture via a

@@ -38,6 +38,18 @@ type Props = {
   onRadiationHeatmapToggle: () => void;
   onWavefrontContoursToggle: () => void;
   onStreamlinesToggle: () => void;
+  /**
+   * When true, the Wavefront contours toggle is visually disabled (greyed out)
+   * and ignores clicks. Used during M7 when the WebGL path is active in
+   * moving_charge mode — the envelope contour is deferred to M8.
+   */
+  contoursDisabled?: boolean;
+  /**
+   * Lower bound for the c slider. Defaults to 0.65.
+   * Set to minCForMode(demoMode) when the WebGL path is active so the
+   * slider UI matches the M7 c-min policy enforced in handleCChange.
+   */
+  cMin?: number;
 };
 
 // Shared base classes for all mode/field toggle buttons.
@@ -55,6 +67,8 @@ export function ControlPanel({
   onResetView, onZoomIn, onZoomOut,
   onPanLeft, onPanRight, onPanUp, onPanDown,
   onRadiationHeatmapToggle, onWavefrontContoursToggle, onStreamlinesToggle,
+  contoursDisabled = false,
+  cMin = 0.65,
 }: Props) {
   return (
     <div className="absolute left-4 top-4 z-20 flex flex-col gap-3 rounded-2xl border border-orange-400/20 bg-black/65 p-4 text-sm text-zinc-200 backdrop-blur-md select-none pointer-events-auto">
@@ -129,7 +143,7 @@ export function ControlPanel({
         </p>
         <input
           type="range"
-          min={0.65}
+          min={cMin}
           max={3.0}
           step={0.05}
           value={c}
@@ -182,10 +196,17 @@ export function ControlPanel({
                 : 'bg-amber-400/15 text-amber-200 hover:bg-amber-400/28'}`}>
               Radiation heatmap
             </button>
-            <button type="button" onClick={onWavefrontContoursToggle}
-              className={`${TOGGLE_BASE} ${showWavefrontContours
-                ? 'bg-violet-400/90 text-black shadow-[0_0_12px_rgba(192,132,250,0.4)]'
-                : 'bg-violet-400/15 text-violet-200 hover:bg-violet-400/28'}`}>
+            <button
+              type="button"
+              onClick={contoursDisabled ? undefined : onWavefrontContoursToggle}
+              title={contoursDisabled ? 'Contour lines available in a future update' : undefined}
+              className={`${TOGGLE_BASE} ${
+                contoursDisabled
+                  ? 'opacity-35 cursor-not-allowed bg-violet-400/10 text-violet-400/50'
+                  : showWavefrontContours
+                    ? 'bg-violet-400/90 text-black shadow-[0_0_12px_rgba(192,132,250,0.4)]'
+                    : 'bg-violet-400/15 text-violet-200 hover:bg-violet-400/28'
+              }`}>
               Wavefront contours
             </button>
           </>)}

@@ -115,6 +115,20 @@ export class ChargeHistory {
     return this.states.length === 0;
   }
 
+  /** Number of stored states. */
+  get count(): number {
+    return this.states.length;
+  }
+
+  /**
+   * Direct indexed access to a recorded state in chronological order.
+   * Index 0 is the oldest, count-1 is the newest.
+   * Used by the GPU texture upload path to pack history without copying.
+   */
+  stateAt(index: number): KinematicState {
+    return this.states[index];
+  }
+
   /** Returns the oldest state, or null if history is empty. */
   oldest(): KinematicState | null {
     if (this.isEmpty()) return null;

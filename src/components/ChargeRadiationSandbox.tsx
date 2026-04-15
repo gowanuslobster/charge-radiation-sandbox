@@ -41,6 +41,7 @@ import { type DragState, computeDragState, stoppedDragState } from '@/physics/dr
 import { useSandboxCamera } from './useSandboxCamera';
 import { VectorFieldCanvas } from './VectorFieldCanvas';
 import { WavefrontOverlayCanvas } from './WavefrontOverlayCanvas';
+import { WavefrontWebGLCanvas, minCForMode } from './WavefrontWebGLCanvas';
 import { ControlPanel } from './ControlPanel';
 import { MovingChargeMiniPanel } from './MovingChargeMiniPanel';
 import { useCursorReadout } from './useCursorReadout';
@@ -72,6 +73,24 @@ export function ChargeRadiationSandbox() {
   // M6 overlay state.
   const [showRadiationHeatmap, setShowRadiationHeatmap] = useState(false);
   const [showWavefrontContours, setShowWavefrontContours] = useState(false);
+
+  // M7: WebGL capability detection. null = detecting, true = WebGL2+RGBA32F ready, false = fallback.
+  const [webGLReady, setWebGLReady] = useState<boolean | null>(null);
+  useEffect(() => {
+    const probe = document.createElement('canvas');
+    const gl = probe.getContext('webgl2');
+    if (!gl) { setWebGLReady(false); return; }
+    // Verify RGBA32F texture support (not guaranteed on all WebGL2 contexts)
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 1, 1, 0, gl.RGBA, gl.FLOAT, null);
+    const floatOk = gl.getError() === gl.NO_ERROR;
+    gl.deleteTexture(tex);
+    // Verify MAX_TEXTURE_SIZE supports the 2D history texture layout (TEX_WIDTH=512, TEX_HEIGHT=16)
+    const maxTexSize = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number;
+    const sizeOk = maxTexSize >= 512;
+    setWebGLReady(floatOk && sizeOk);
+  }, []);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const {
@@ -263,11 +282,30 @@ export function ChargeRadiationSandbox() {
     }
   }, []);
 
-  const handleCChange = useCallback((newC: number) => {
+  const handleCChange = useCallback((rawC: number) => {
+    // M7: enforce per-mode c minimum (Policy A conservative global minimum).
+    // Prevents the causal horizon from exceeding the GPU history buffer for visible pixels.
+    const mode = demoModeRef.current;
+    const cMin = (mode === 'moving_charge' || mode === 'oscillating')
+      ? minCForMode(mode)
+      : 0.15;
+    const newC = Math.max(cMin, rawC);
     configRef.current = { ...configRef.current, c: newC };
     setC(newC);
     // No reseed needed — history stays valid; needsSolve cache in VectorFieldCanvas
     // includes c and will re-solve paused frames after the slider moves.
+  }, []);
+
+  const handleDemoModeChange = useCallback((newMode: DemoMode) => {
+    // M7: when switching to a mode with a higher c minimum, bump c up before the reseed.
+    if (newMode === 'moving_charge' || newMode === 'oscillating') {
+      const cMin = minCForMode(newMode);
+      if (configRef.current.c < cMin) {
+        configRef.current = { ...configRef.current, c: cMin };
+        setC(cMin);
+      }
+    }
+    setDemoMode(newMode);
   }, []);
 
   const handleReset = useCallback(() => {
@@ -500,19 +538,42 @@ export function ChargeRadiationSandbox() {
       onContextMenu={e => e.preventDefault()}
     >
       {(demoMode === 'moving_charge' || demoMode === 'oscillating') && (
-        <WavefrontOverlayCanvas
-          historyRef={historyRef}
-          simulationTimeRef={simTimeRef}
-          chargeRef={chargeRef}
-          configRef={configRef}
-          simEpochRef={simEpochRef}
-          bounds={viewBounds}
-          demoMode={demoMode}
-          showHeatmap={showRadiationHeatmap}
-          showContours={showWavefrontContours}
-          isPausedRef={isPausedRef}
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 10 }}
-        />
+        webGLReady === true ? (
+          <WavefrontWebGLCanvas
+            historyRef={historyRef}
+            simulationTimeRef={simTimeRef}
+            chargeRef={chargeRef}
+            configRef={configRef}
+            simEpochRef={simEpochRef}
+            bounds={viewBounds}
+            demoMode={demoMode}
+            showHeatmap={showRadiationHeatmap}
+            showContours={showWavefrontContours}
+            isPausedRef={isPausedRef}
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 10 }}
+          />
+        ) : webGLReady === false ? (
+          <>
+            <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20
+                            bg-black/70 text-gray-400 text-xs px-3 py-1 rounded
+                            pointer-events-none select-none">
+              High-fidelity heatmap requires GPU acceleration — running in lower-fidelity mode.
+            </div>
+            <WavefrontOverlayCanvas
+              historyRef={historyRef}
+              simulationTimeRef={simTimeRef}
+              chargeRef={chargeRef}
+              configRef={configRef}
+              simEpochRef={simEpochRef}
+              bounds={viewBounds}
+              demoMode={demoMode}
+              showHeatmap={showRadiationHeatmap}
+              showContours={showWavefrontContours}
+              isPausedRef={isPausedRef}
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 10 }}
+            />
+          </>
+        ) : null  /* detecting */
       )}
       <VectorFieldCanvas
         historyRef={historyRef}
@@ -545,7 +606,7 @@ export function ChargeRadiationSandbox() {
         readout={readout}
         showRadiationHeatmap={showRadiationHeatmap}
         showWavefrontContours={showWavefrontContours}
-        onDemoModeChange={setDemoMode}
+        onDemoModeChange={handleDemoModeChange}
         onFieldLayerChange={setFieldLayer}
         onPauseToggle={togglePause}
         onStepForward={stepForward}
@@ -560,6 +621,7 @@ export function ChargeRadiationSandbox() {
         onPanDown={() => panBy(0, PAN_STEP_PX)}
         onRadiationHeatmapToggle={() => setShowRadiationHeatmap(v => !v)}
         onWavefrontContoursToggle={() => setShowWavefrontContours(v => !v)}
+        contoursDisabled={webGLReady === true && demoMode === 'moving_charge'}
       />
       {demoMode === 'moving_charge' && (
         <MovingChargeMiniPanel

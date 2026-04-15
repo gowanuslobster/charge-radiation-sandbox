@@ -39,6 +39,22 @@ export const DEFAULT_STREAMLINE_OPTIONS: StreamlineOptions = {
   seedCount: 16,
 };
 
+// Ghost-line alignment heuristics for the sudden-stop demo.
+//
+// The radiation shell has finite thickness because the stop happens over
+// SUDDEN_STOP_T_BRAKE, not instantaneously. Matching ghost lines to the ideal
+// zero-thickness shell crossing anchors them too early, while the real
+// streamline is still turning through the acceleration band.
+//
+// Instead, find the first point on each real streamline where the acceleration
+// contribution has risen through the band and then fallen back to a small
+// fraction of the total field. That point lies on the settled outer branch,
+// where the old velocity field dominates again.
+const GHOST_ACCEL_ENTER_RATIO = 0.12;
+const GHOST_ACCEL_EXIT_RATIO = 0.05;
+const GHOST_EXIT_RUN_LENGTH = 3;
+const GHOST_EXIT_FORWARD_OFFSET = 2;
+
 type TraceBounds = { minX: number; maxX: number; minY: number; maxY: number };
 
 function inBounds(pt: Vec2, b: TraceBounds): boolean {
@@ -239,6 +255,109 @@ export function buildStreamlines(
   }
 
   return lines;
+}
+
+function analyticGhostSeedAngle(realSeedAngle: number, ghostVel: Vec2, c: number): number {
+  return Math.atan2(
+    c * Math.sin(realSeedAngle) - ghostVel.y,
+    c * Math.cos(realSeedAngle) - ghostVel.x,
+  );
+}
+
+function findGhostAnchorOnRealLine(
+  line: Vec2[],
+  observationTime: number,
+  history: ChargeHistory,
+  charge: number,
+  config: SimConfig,
+): Vec2 | null {
+  let sawAccelerationBand = false;
+  let settledRun = 0;
+
+  for (let i = 0; i < line.length; i++) {
+    const result = evaluateLienardWiechertField({
+      observationPos: line[i],
+      observationTime,
+      history,
+      charge,
+      config,
+    });
+    if (!result) continue;
+
+    const totalMag = magnitude(result.eTotal);
+    if (totalMag < 1e-8) continue;
+
+    const accelRatio = magnitude(result.eAccel) / totalMag;
+    if (!sawAccelerationBand) {
+      if (accelRatio >= GHOST_ACCEL_ENTER_RATIO) {
+        sawAccelerationBand = true;
+      }
+      continue;
+    }
+
+    if (accelRatio <= GHOST_ACCEL_EXIT_RATIO) {
+      settledRun += 1;
+    } else {
+      settledRun = 0;
+    }
+
+    if (settledRun >= GHOST_EXIT_RUN_LENGTH) {
+      const anchorIndex = Math.min(i + GHOST_EXIT_FORWARD_OFFSET, line.length - 1);
+      return line[anchorIndex];
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Derive ghost-charge seed angles from the already-traced real streamlines.
+ *
+ * For each real streamline, find the first point after the radiation band where
+ * the acceleration field has dropped back to a small fraction of the total
+ * field. The ghost seed angle is then the ray from `ghostPos` through that
+ * settled outer-branch point. This aligns the ghost line with the visible old
+ * velocity-field branch outside the shell, not with an idealized zero-thickness
+ * shell crossing.
+ *
+ * If a streamline never cleanly exits the acceleration band inside the traced
+ * region, fall back to the original analytic aberration formula inferred from
+ * the real seed direction.
+ */
+export function deriveGhostSeedAnglesFromRealLines(
+  realLines: Vec2[][],
+  sourcePos: Vec2,
+  ghostPos: Vec2,
+  ghostVel: Vec2,
+  observationTime: number,
+  history: ChargeHistory,
+  charge: number,
+  config: SimConfig,
+): number[] {
+  const ghostAngles: number[] = [];
+
+  for (const line of realLines) {
+    if (line.length === 0) continue;
+
+    const anchor = findGhostAnchorOnRealLine(
+      line,
+      observationTime,
+      history,
+      charge,
+      config,
+    );
+
+    if (anchor !== null) {
+      ghostAngles.push(Math.atan2(anchor.y - ghostPos.y, anchor.x - ghostPos.x));
+      continue;
+    }
+
+    const seed = line[0];
+    const realSeedAngle = Math.atan2(seed.y - sourcePos.y, seed.x - sourcePos.x);
+    ghostAngles.push(analyticGhostSeedAngle(realSeedAngle, ghostVel, config.c));
+  }
+
+  return ghostAngles;
 }
 
 /**

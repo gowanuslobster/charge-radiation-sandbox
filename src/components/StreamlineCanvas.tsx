@@ -27,7 +27,11 @@ import {
   type CSSProperties,
   type RefObject,
 } from 'react';
-import { buildStreamlines, buildGhostHistory, DEFAULT_STREAMLINE_OPTIONS } from '@/physics/streamlineTracer';
+import {
+  buildStreamlines,
+  buildGhostHistory,
+  deriveGhostSeedAnglesFromRealLines,
+} from '@/physics/streamlineTracer';
 import type { ChargeHistory } from '@/physics/chargeHistory';
 import {
   getWorldToScreenTransform,
@@ -269,10 +273,15 @@ export function StreamlineCanvas({
         const charge  = chargeRef.current;
         const config  = configRef.current;
 
+        let realLinesForGhost: Vec2[][] = [];
+        const newest = history.isEmpty() ? null : history.newest()!;
+
         // Main streamlines — total LW E field at the paused frame.
-        if (showSL && !history.isEmpty()) {
-          const newest = history.newest()!;
-          tracedLines = buildStreamlines(
+        // When ghost lines are requested, also trace the real total-field lines
+        // even if they are hidden. The ghost-line correspondence is derived from
+        // the settled outer branch of those real streamlines.
+        if ((showSL || showGSL) && newest !== null) {
+          const computedMainLines = buildStreamlines(
             newest.pos,
             simTime,
             history,
@@ -280,6 +289,8 @@ export function StreamlineCanvas({
             config,
             currentBounds,
           );
+          tracedLines = showSL ? computedMainLines : [];
+          realLinesForGhost = computedMainLines;
         } else {
           tracedLines = [];
         }
@@ -294,34 +305,39 @@ export function StreamlineCanvas({
           const histWindow  = maxCornerDist(ghostPos, currentBounds) / safeGap;
           const ghostHistory = buildGhostHistory(ghostPos, gVel, simTime, histWindow);
 
-          // Geometric seed-angle matching: for each real seed angle α, the ghost
-          // seed angle is atan2(c·sinα − vy, c·cosα − vx).
-          //
-          // Derivation: flux is conserved across the radiation shell (Gauss's Law).
-          // A ray at angle α from the stopped charge, extended to the shell, intersects
-          // the same flux tube as the ghost field line that points toward the ghost's
-          // present position at the same physical point. The angular aberration is
-          // exactly the velocity-aberration of the direction (c·cosα, c·sinα) relative
-          // to the ghost's motion (vx, vy). This result is exact for all speeds,
-          // including near-c where field lines bend strongly (relativistic beaming).
-          const seedCount = DEFAULT_STREAMLINE_OPTIONS.seedCount;
-          const c = config.c;
-          const realAngles   = Array.from({ length: seedCount }, (_, i) => (i / seedCount) * Math.PI * 2);
-          const ghostAngles  = realAngles.map(α =>
-            Math.atan2(c * Math.sin(α) - gVel.y, c * Math.cos(α) - gVel.x)
-          );
+          // Match each ghost line to the settled outer branch of a traced real
+          // streamline, not to the idealized zero-thickness shell crossing.
+          // The stop is finite-width in this sandbox, so anchoring at the shell
+          // crossing makes the ghost lines lock on too early while the real line
+          // is still turning through the acceleration band.
+          const ghostAngles = newest !== null
+            ? deriveGhostSeedAnglesFromRealLines(
+                realLinesForGhost,
+                newest.pos,
+                ghostPos,
+                gVel,
+                simTime,
+                history,
+                charge,
+                config,
+              )
+            : [];
 
-          tracedGhostLines = buildStreamlines(
-            ghostPos,
-            simTime,
-            ghostHistory,
-            charge,
-            config,
-            currentBounds,
-            undefined,
-            true, // velocityOnly — ghost represents constant-velocity, no radiation term
-            ghostAngles,
-          );
+          if (ghostAngles.length === 0) {
+            tracedGhostLines = [];
+          } else {
+            tracedGhostLines = buildStreamlines(
+              ghostPos,
+              simTime,
+              ghostHistory,
+              charge,
+              config,
+              currentBounds,
+              undefined,
+              true, // velocityOnly — ghost represents constant-velocity, no radiation term
+              ghostAngles,
+            );
+          }
         } else {
           tracedGhostLines = [];
         }

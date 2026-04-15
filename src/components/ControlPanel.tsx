@@ -44,6 +44,12 @@ type Props = {
    * moving_charge mode — the envelope contour is deferred to M8.
    */
   contoursDisabled?: boolean;
+  /**
+   * Lower bound for the c slider. Defaults to 0.65.
+   * Set to minCForMode(demoMode) when the WebGL path is active so the
+   * slider UI matches the M7 c-min policy enforced in handleCChange.
+   */
+  cMin?: number;
 };
 
 // Shared base classes for all mode/field toggle buttons.
@@ -62,6 +68,7 @@ export function ControlPanel({
   onPanLeft, onPanRight, onPanUp, onPanDown,
   onRadiationHeatmapToggle, onWavefrontContoursToggle, onStreamlinesToggle,
   contoursDisabled = false,
+  cMin = 0.65,
 }: Props) {
   return (
     <div className="absolute left-4 top-4 z-20 flex flex-col gap-3 rounded-2xl border border-orange-400/20 bg-black/65 p-4 text-sm text-zinc-200 backdrop-blur-md select-none pointer-events-auto">
@@ -136,7 +143,7 @@ export function ControlPanel({
         </p>
         <input
           type="range"
-          min={0.65}
+          min={cMin}
           max={3.0}
           step={0.05}
           value={c}

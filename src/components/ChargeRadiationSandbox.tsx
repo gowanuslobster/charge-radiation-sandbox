@@ -549,6 +549,17 @@ export function ChargeRadiationSandbox() {
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
+  // M7: Wavefront contours are suppressed on the WebGL path in moving_charge mode
+  // (envelope contour deferred to M8). Computed once so both WavefrontWebGLCanvas
+  // (actual GPU work) and ControlPanel (button styling) stay in sync.
+  const contoursDisabled = webGLReady === true && demoMode === 'moving_charge';
+
+  // M7: c-slider lower bound matches the per-mode history-buffer constraint.
+  // Only applied when WebGL is active; CPU fallback has no buffer limit.
+  const cMin = webGLReady === true && (demoMode === 'moving_charge' || demoMode === 'oscillating')
+    ? minCForMode(demoMode)
+    : 0.65;
+
   return (
     <div
       ref={containerRef}
@@ -584,7 +595,7 @@ export function ChargeRadiationSandbox() {
             bounds={viewBounds}
             demoMode={demoMode}
             showHeatmap={showRadiationHeatmap}
-            showContours={showWavefrontContours}
+            showContours={showWavefrontContours && !contoursDisabled}
             isPausedRef={isPausedRef}
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 10 }}
           />
@@ -659,7 +670,8 @@ export function ChargeRadiationSandbox() {
         onWavefrontContoursToggle={() => setShowWavefrontContours(v => !v)}
         showStreamlines={showStreamlines}
         onStreamlinesToggle={() => setShowStreamlines(v => !v)}
-        contoursDisabled={webGLReady === true && demoMode === 'moving_charge'}
+        contoursDisabled={contoursDisabled}
+        cMin={cMin}
       />
       {demoMode === 'moving_charge' && (
         <MovingChargeMiniPanel

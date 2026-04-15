@@ -298,6 +298,57 @@ export function ChargeRadiationSandbox() {
     }
   }, []);
 
+  // Rebuild the source history window from the current sim time after a c change.
+  //
+  // Only valid for analytic modes (moving_charge, oscillating) — the entire past
+  // trajectory is closed-form, so any history window can be reconstructed exactly.
+  //
+  // Preserves: simTimeRef.current, stopTriggerTimeRef.current, demoMode.
+  // Replaces:  historyRef.current (fresh ChargeHistory with correct window).
+  // Increments: simEpochRef.current so paused canvases re-solve the current frame.
+  const rebuildAnalyticHistoryAtCurrentTime = useCallback(
+    (mode: 'moving_charge' | 'oscillating') => {
+      const T      = simTimeRef.current;
+      const config = configRef.current;     // already updated before this call
+      const T_trig = stopTriggerTimeRef.current;
+
+      // Current source position at T used to calculate the corner-to-source horizon.
+      const currentPos = (mode === 'moving_charge' && T_trig !== null)
+        ? sampleSuddenStopState(T, T_trig).pos
+        : sampleSourceState(mode, T).pos;
+
+      // Use peak speed (conservative mode-level bound) — same as the tick.
+      const horizonSpeed  = maxHistorySpeed(mode);
+      const historyWindow = maxCornerDist(currentPos, viewBoundsRef.current) / (config.c - horizonSpeed);
+      const DT            = 0.05;  // step spacing matches initial reseed
+      const n             = Math.ceil(historyWindow / DT);
+
+      const newHistory = new ChargeHistory();
+
+      if (mode === 'moving_charge' && T_trig !== null) {
+        // Post-stop: use sampleSuddenStopState for all steps and preserve braking
+        // substeps so the acceleration-ramp shell edge stays sharp after a c change.
+        for (let i = -n; i <= 0; i++) {
+          const t     = T + i * DT;
+          const tPrev = T + (i - 1) * DT;
+          for (const tSub of brakingSubstepTimes(tPrev, t, T_trig)) {
+            newHistory.recordState(sampleSuddenStopState(tSub, T_trig));
+          }
+          newHistory.recordState(sampleSuddenStopState(t, T_trig));
+        }
+      } else {
+        // Pre-stop moving_charge or oscillating: closed-form past.
+        for (let i = -n; i <= 0; i++) {
+          newHistory.recordState(sampleSourceState(mode, T + i * DT));
+        }
+      }
+
+      historyRef.current   = newHistory;
+      simEpochRef.current += 1;
+    },
+    [], // stable: reads only from refs, no React state
+  );
+
   const handleCChange = useCallback((rawC: number) => {
     // M7: enforce per-mode c minimum (Policy A conservative global minimum).
     // Prevents the causal horizon from exceeding the GPU history buffer for visible pixels.
@@ -308,9 +359,18 @@ export function ChargeRadiationSandbox() {
     const newC = Math.max(cMin, rawC);
     configRef.current = { ...configRef.current, c: newC };
     setC(newC);
-    // No reseed needed — history stays valid; needsSolve cache in VectorFieldCanvas
-    // includes c and will re-solve paused frames after the slider moves.
-  }, []);
+
+    // For analytic modes, immediately rebuild the history window for the new c.
+    // The horizon is c-dependent: decreasing c widens it, and the existing buffer
+    // may not reach far enough back — the solver would clamp to the oldest state
+    // and produce a field inconsistent with the new speed of light.
+    // Draggable history is accumulated from live drag events and is not analytically
+    // reconstructible; it is left as-is and the tick adjusts the window on subsequent
+    // frames via setMaxHistoryTime / pruneToWindow.
+    if (mode === 'moving_charge' || mode === 'oscillating') {
+      rebuildAnalyticHistoryAtCurrentTime(mode);
+    }
+  }, [rebuildAnalyticHistoryAtCurrentTime]);
 
   const handleDemoModeChange = useCallback((newMode: DemoMode) => {
     // M7: when switching to a mode with a higher c minimum, bump c up before the reseed.

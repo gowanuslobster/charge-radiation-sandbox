@@ -9,8 +9,12 @@ import { useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 type Props = {
   stopTriggered: boolean;
   showGhost: boolean;
+  /** M9: whether the ghost velocity-field streamline overlay is active. */
+  showGhostStreamlines: boolean;
   onStopNow: () => void;
   onToggleGhost: () => void;
+  /** M9: toggle ghost velocity-field streamlines. Only meaningful when showGhost is true. */
+  onToggleGhostStreamlines: () => void;
   pos: { x: number; y: number };
   onPosChange: (pos: { x: number; y: number }) => void;
 };
@@ -18,7 +22,9 @@ type Props = {
 const TOGGLE_BASE = 'rounded-md px-3 py-2 text-sm font-medium transition-all duration-200';
 
 export function MovingChargeMiniPanel({
-  stopTriggered, showGhost, onStopNow, onToggleGhost, pos, onPosChange,
+  stopTriggered, showGhost, showGhostStreamlines,
+  onStopNow, onToggleGhost, onToggleGhostStreamlines,
+  pos, onPosChange,
 }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
   const dragOffsetRef = useRef<{ dx: number; dy: number } | null>(null);
@@ -96,6 +102,18 @@ export function MovingChargeMiniPanel({
         >
           Ghost charge
         </button>
+        {/* M9: ghost velocity-field streamlines — only meaningful when ghost overlay is on */}
+        {showGhost && (
+          <button
+            type="button"
+            onClick={onToggleGhostStreamlines}
+            className={`${TOGGLE_BASE} ${showGhostStreamlines
+              ? 'bg-amber-400/80 text-black shadow-[0_0_12px_rgba(251,191,36,0.35)]'
+              : 'bg-amber-400/15 text-amber-200 hover:bg-amber-400/28'}`}
+          >
+            Ghost field lines
+          </button>
+        )}
       </div>
     </div>
   );

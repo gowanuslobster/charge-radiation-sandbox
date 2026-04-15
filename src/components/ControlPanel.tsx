@@ -21,6 +21,7 @@ type Props = {
   readout: CursorReadout;
   showRadiationHeatmap: boolean;
   showWavefrontContours: boolean;
+  showStreamlines: boolean;
   onDemoModeChange: (mode: DemoMode) => void;
   onFieldLayerChange: (layer: FieldLayer) => void;
   onPauseToggle: () => void;
@@ -36,6 +37,7 @@ type Props = {
   onPanDown: () => void;
   onRadiationHeatmapToggle: () => void;
   onWavefrontContoursToggle: () => void;
+  onStreamlinesToggle: () => void;
 };
 
 // Shared base classes for all mode/field toggle buttons.
@@ -46,13 +48,13 @@ const ICON_BASE = 'flex h-7 w-7 items-center justify-center rounded-md text-sm t
 
 export function ControlPanel({
   demoMode, fieldLayer, isPaused, c, stopTriggered, readout,
-  showRadiationHeatmap, showWavefrontContours,
+  showRadiationHeatmap, showWavefrontContours, showStreamlines,
   onDemoModeChange, onFieldLayerChange,
   onPauseToggle, onStepForward, onReset,
   onCChange,
   onResetView, onZoomIn, onZoomOut,
   onPanLeft, onPanRight, onPanUp, onPanDown,
-  onRadiationHeatmapToggle, onWavefrontContoursToggle,
+  onRadiationHeatmapToggle, onWavefrontContoursToggle, onStreamlinesToggle,
 }: Props) {
   return (
     <div className="absolute left-4 top-4 z-20 flex flex-col gap-3 rounded-2xl border border-orange-400/20 bg-black/65 p-4 text-sm text-zinc-200 backdrop-blur-md select-none pointer-events-auto">
@@ -161,11 +163,19 @@ export function ControlPanel({
         </div>
       </div>
 
-      {/* Teaching Overlays — mode-gated */}
-      {(demoMode === 'moving_charge' || demoMode === 'oscillating') && (
-        <div>
-          <p className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400">Overlays</p>
-          <div className="flex flex-wrap gap-1.5">
+      {/* Teaching Overlays */}
+      <div>
+        <p className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400">Overlays</p>
+        <div className="flex flex-wrap gap-1.5">
+          {/* M9: field-line overlay — available in all modes when paused */}
+          <button type="button" onClick={onStreamlinesToggle}
+            className={`${TOGGLE_BASE} ${showStreamlines
+              ? 'bg-sky-400/90 text-black shadow-[0_0_12px_rgba(56,189,248,0.4)]'
+              : 'bg-sky-400/15 text-sky-200 hover:bg-sky-400/28'}`}>
+            Field lines
+          </button>
+          {/* M6 radiation overlays — moving_charge and oscillating only */}
+          {(demoMode === 'moving_charge' || demoMode === 'oscillating') && (<>
             <button type="button" onClick={onRadiationHeatmapToggle}
               className={`${TOGGLE_BASE} ${showRadiationHeatmap
                 ? 'bg-amber-400/90 text-black shadow-[0_0_12px_rgba(251,191,36,0.4)]'
@@ -178,9 +188,19 @@ export function ControlPanel({
                 : 'bg-violet-400/15 text-violet-200 hover:bg-violet-400/28'}`}>
               Wavefront contours
             </button>
-          </div>
+          </>)}
         </div>
-      )}
+        {showStreamlines && isPaused && (
+          <p className="mt-1.5 text-[11px] text-zinc-400">
+            Instantaneous snapshot — not material lines that move with the charge.
+          </p>
+        )}
+        {showStreamlines && !isPaused && (
+          <p className="mt-1.5 text-[11px] text-zinc-400">
+            Pause to show field lines.
+          </p>
+        )}
+      </div>
 
       {/* Camera */}
       <div>

@@ -102,24 +102,29 @@ export function ControlPanel({
             Oscillating
           </button>
         </div>
-        {demoMode === 'draggable' && (
+        {/* Mode hint — suppressed while no mode is active (start panel state) */}
+        {!noModeActive && demoMode === 'draggable' && (
           <p className="mt-1.5 text-[11px] text-zinc-400">
             {isPaused
               ? 'Click Run, then drag the charge to create radiation pulses.'
               : 'Drag the charge to create radiation pulses.'}
           </p>
         )}
-        {demoMode === 'moving_charge' && (
+        {!noModeActive && demoMode === 'moving_charge' && (
           <p className="mt-1.5 text-[11px] text-zinc-400">
             {stopTriggered
               ? 'The charge has stopped. The shell separates the old moving field from the new at-rest field.'
               : 'A charge moves at constant velocity. Click Stop now to launch a radiation shell.'}
           </p>
         )}
-        {demoMode === 'oscillating' && (
+        {!noModeActive && demoMode === 'oscillating' && (
           <p className="mt-1.5 text-[11px] text-zinc-400">The charge oscillates sinusoidally. Continuous dipole radiation propagates outward.</p>
         )}
       </div>
+
+      {/* All non-mode controls are locked while the start panel is visible.
+          pointer-events-none blocks interaction; opacity signals unavailability. */}
+      <div className={noModeActive ? 'pointer-events-none opacity-40' : ''}>
 
       {/* Playback */}
       <div>
@@ -265,6 +270,8 @@ export function ControlPanel({
           </div>
         </div>
       )}
+
+      </div>{/* end non-mode controls lock */}
 
     </div>
   );

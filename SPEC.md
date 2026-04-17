@@ -329,6 +329,11 @@ for all GPU field values.
   contract because it is not required for the current milestones, but it remains
   a valid future UX enhancement, especially for balancing visual clarity against
   CPU cost on weaker hardware or during interaction.
+- **Full magnetic-field visualization:** a future expansion may add signed
+  `Total B`, `Velocity B`, and `Accel B` heatmap modes, analogous to the
+  existing `E` decomposition controls, while preserving the existing
+  radiation-intensity overlay and keeping wavefront contours tied to `bZAccel`
+  only. See `IDEAS-full-B-field-visualization.md`.
 - **Self-consistent dynamics:** charges responding to each other's fields via Lorentz force integration. Architecturally possible but physically subtle (radiation reaction, Abraham-Lorentz force). Treat as a separate deliberate expansion.
 - **Magnetic field visualization:** B is computed for free from the LW equations. The M6 radiation heatmap uses `bZAccel` as a measure of radiation intensity. A dedicated B-field vector arrow layer remains deferred.
 - **Poynting vector / energy flow:** plausible later as a derived overlay. Requires both E and B, which are already computed.
@@ -374,5 +379,9 @@ for all GPU field values.
 - `IDEAS.md` is the physics and mathematics reference. It documents the LW framework, the FDTD failure analysis, and implementation skeletons. It is authoritative for "how the physics works."
 - `IDEAS-wavefronts.md` is the design rationale and extended specification for the M6 sampled wavefront overlay. It documents the `bZVel`/`bZAccel` decomposition, the warm-start tRet cache design, rendering architecture, and pedagogical positioning for that feature.
 - `IDEAS-webGL.md` is the design specification for the WebGL renderer transition (M7–M8). It documents the data model, texture packing layout, solver design, c-slider policy, canvas architecture, fallback behavior, and acceptance criteria for the GPU rendering path.
+- `IDEAS-full-B-field-visualization.md` records the future design direction for
+  expanding the current radiation heatmap into full `B`-field visualization
+  modes (`Total B`, `Velocity B`, `Accel B`) while keeping contours tied to
+  `bZAccel`.
 - `AGENTS.md` governs implementation style, engineering conventions, and agent behavior. It is authoritative for "how to write the code."
 - If there is a conflict between documents, SPEC.md defines intent.

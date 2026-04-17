@@ -1,4 +1,4 @@
-// StreamlineCanvas — paused-frame field-line overlay (M9).
+// StreamlineCanvas — paused-frame field-line overlay.
 //
 // Renders streamlines of the instantaneous LW electric field when the
 // simulation is paused. Streamlines are traced on demand (once per paused

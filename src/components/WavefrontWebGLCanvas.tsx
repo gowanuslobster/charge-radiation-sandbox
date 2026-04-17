@@ -1,4 +1,4 @@
-// WavefrontWebGLCanvas — WebGL2 fragment-shader heatmap for the M7 radiation overlay.
+// WavefrontWebGLCanvas — WebGL2 fragment-shader heatmap for the radiation overlay.
 //
 // Drop-in replacement for WavefrontOverlayCanvas (same prop interface).
 // Evaluates the Liénard-Wiechert bZAccel field at every screen pixel via a GLSL
@@ -496,7 +496,7 @@ export function WavefrontWebGLCanvas({
         gl.uniform1i(uniforms['u_showHeatmap'], doHeatmap ? 1 : 0);
       }
       if (uniforms['u_showContour'] !== undefined) {
-        // Contour only available for oscillating in M7
+        // Contour only available for oscillating (moving_charge envelope contour deferred to M8)
         gl.uniform1i(uniforms['u_showContour'],
           (doContour && mode === 'oscillating') ? 1 : 0);
       }

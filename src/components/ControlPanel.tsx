@@ -40,14 +40,14 @@ type Props = {
   onStreamlinesToggle: () => void;
   /**
    * When true, the Wavefront contours toggle is visually disabled (greyed out)
-   * and ignores clicks. Used during M7 when the WebGL path is active in
-   * moving_charge mode — the envelope contour is deferred to M8.
+   * and ignores clicks. Used when the WebGL path is active in moving_charge mode
+   * — the envelope contour is deferred to M8.
    */
   contoursDisabled?: boolean;
   /**
    * Lower bound for the c slider. Defaults to 0.65.
    * Set to minCForMode(demoMode) when the WebGL path is active so the
-   * slider UI matches the M7 c-min policy enforced in handleCChange.
+   * slider UI matches the per-mode c minimum enforced in handleCChange.
    */
   cMin?: number;
   /**
@@ -192,7 +192,6 @@ export function ControlPanel({
       <div>
         <p className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400">Overlays</p>
         <div className="flex flex-wrap gap-1.5">
-          {/* M9: field-line overlay — available in all modes when paused */}
           <button type="button" onClick={onStreamlinesToggle}
             className={`${TOGGLE_BASE} ${showStreamlines
               ? 'bg-sky-400/90 text-black shadow-[0_0_12px_rgba(56,189,248,0.4)]'

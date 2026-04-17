@@ -1,4 +1,4 @@
-// Streamline tracer for paused-frame LW field visualization (M9).
+// Streamline tracer for paused-frame LW field visualization.
 //
 // Traces the instantaneous electric field-lines of the LW field at a fixed
 // simulation snapshot. Intended for use ONLY on paused or stepped frames — not

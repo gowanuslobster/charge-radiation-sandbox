@@ -9,11 +9,11 @@ import { useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 type Props = {
   stopTriggered: boolean;
   showGhost: boolean;
-  /** M9: whether the ghost velocity-field streamline overlay is active. */
+  /** Whether the ghost velocity-field streamline overlay is active. */
   showGhostStreamlines: boolean;
   onStopNow: () => void;
   onToggleGhost: () => void;
-  /** M9: toggle ghost velocity-field streamlines. Only meaningful when showGhost is true. */
+  /** Toggle ghost velocity-field streamlines. Only meaningful when showGhost is true. */
   onToggleGhostStreamlines: () => void;
   pos: { x: number; y: number };
   onPosChange: (pos: { x: number; y: number }) => void;
@@ -102,7 +102,6 @@ export function MovingChargeMiniPanel({
         >
           Ghost charge
         </button>
-        {/* M9: ghost velocity-field streamlines — only meaningful when ghost overlay is on */}
         {showGhost && (
           <button
             type="button"

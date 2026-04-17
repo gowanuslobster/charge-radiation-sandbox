@@ -45,9 +45,7 @@ import { WavefrontWebGLCanvas } from './WavefrontWebGLCanvas';
 import { minCForMode } from '@/rendering/wavefrontWebGLConfig';
 import { ControlPanel } from './ControlPanel';
 import { MovingChargeMiniPanel } from './MovingChargeMiniPanel';
-// ── M9: paused streamline canvas ──────────────────────────────
 import { StreamlineCanvas } from './StreamlineCanvas';
-// ── end M9 ────────────────────────────────────────────────────
 import { useCursorReadout } from './useCursorReadout';
 import { StartPanel } from './StartPanel';
 import { isWithinBounds, maxCornerDist, worldToScreen, type WorldBounds } from '@/rendering/worldSpace';
@@ -79,7 +77,7 @@ export function ChargeRadiationSandbox() {
   const [showRadiationHeatmap, setShowRadiationHeatmap] = useState(false);
   const [showWavefrontContours, setShowWavefrontContours] = useState(false);
 
-  // M7: WebGL capability detection. null = detecting, true = WebGL2+RGBA32F ready, false = fallback.
+  // WebGL capability detection. null = detecting, true = WebGL2+RGBA32F ready, false = fallback.
   const [webGLReady, setWebGLReady] = useState<boolean | null>(null);
   useEffect(() => {
     const probe = document.createElement('canvas');
@@ -98,12 +96,10 @@ export function ChargeRadiationSandbox() {
     setWebGLReady(floatOk && sizeOk);
   }, []);
 
-  // ── M9: paused streamline canvas ──────────────────────────────
   // Both toggles default to off. showGhostStreamlines is only meaningful
   // when showGhost is also on (ghost pos is non-null) in moving_charge mode.
   const [showStreamlines, setShowStreamlines] = useState(false);
   const [showGhostStreamlines, setShowGhostStreamlines] = useState(false);
-  // ── end M9 ────────────────────────────────────────────────────
 
   // Start panel — shown on initial load and after Reset.
   // While visible, no mode is highlighted in the ControlPanel.
@@ -283,10 +279,8 @@ export function ChargeRadiationSandbox() {
     setShowGhost(false);
     setShowRadiationHeatmap(false);
     setShowWavefrontContours(false);
-    // ── M9: paused streamline canvas ──────────────────────────────
     setShowStreamlines(false);
     setShowGhostStreamlines(false);
-    // ── end M9 ────────────────────────────────────────────────────
     isPausedRef.current = true;
     pendingStepRef.current = false;
     setIsPaused(true);
@@ -368,7 +362,7 @@ export function ChargeRadiationSandbox() {
   );
 
   const handleCChange = useCallback((rawC: number) => {
-    // M7: enforce per-mode c minimum (Policy A conservative global minimum).
+    // Enforce per-mode c minimum (Policy A conservative global minimum).
     // Prevents the causal horizon from exceeding the GPU history buffer for visible pixels.
     const mode = demoModeRef.current;
     const cMin = (mode === 'moving_charge' || mode === 'oscillating')
@@ -391,7 +385,7 @@ export function ChargeRadiationSandbox() {
   }, [rebuildAnalyticHistoryAtCurrentTime]);
 
   const handleDemoModeChange = useCallback((newMode: DemoMode) => {
-    // M7: when switching to a mode with a higher c minimum, bump c up before the reseed.
+    // When switching to a mode with a higher c minimum, bump c up before the reseed.
     if (newMode === 'moving_charge' || newMode === 'oscillating') {
       const cMin = minCForMode(newMode);
       if (configRef.current.c < cMin) {
@@ -453,10 +447,8 @@ export function ChargeRadiationSandbox() {
     setShowGhost(false);
     setShowRadiationHeatmap(false);
     setShowWavefrontContours(false);
-    // ── M9: paused streamline canvas ──────────────────────────────
     setShowStreamlines(false);
     setShowGhostStreamlines(false);
-    // ── end M9 ────────────────────────────────────────────────────
     isPausedRef.current = true;
     pendingStepRef.current = false;
     if (dragCalloutTimerRef.current !== null) {
@@ -665,12 +657,12 @@ export function ChargeRadiationSandbox() {
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
-  // M7: Wavefront contours are suppressed on the WebGL path in moving_charge mode
+  // Wavefront contours are suppressed on the WebGL path in moving_charge mode
   // (envelope contour deferred to M8). Computed once so both WavefrontWebGLCanvas
   // (actual GPU work) and ControlPanel (button styling) stay in sync.
   const contoursDisabled = webGLReady === true && demoMode === 'moving_charge';
 
-  // M7: c-slider lower bound matches the per-mode history-buffer constraint.
+  // c-slider lower bound matches the per-mode history-buffer constraint.
   // Only applied when WebGL is active; CPU fallback has no buffer limit.
   const cMin = webGLReady === true && (demoMode === 'moving_charge' || demoMode === 'oscillating')
     ? minCForMode(demoMode)
@@ -684,7 +676,6 @@ export function ChargeRadiationSandbox() {
       onPointerDown={handlePointerDown}
       onContextMenu={e => e.preventDefault()}
     >
-      {/* ── M9: paused streamline canvas ────────────────────────── */}
       <StreamlineCanvas
         historyRef={historyRef}
         simulationTimeRef={simTimeRef}
@@ -699,7 +690,6 @@ export function ChargeRadiationSandbox() {
         ghostVel={demoMode === 'moving_charge' ? { x: SUDDEN_STOP_V, y: 0 } : undefined}
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 17 }}
       />
-      {/* ── end M9 ──────────────────────────────────────────────── */}
       {(demoMode === 'moving_charge' || demoMode === 'oscillating') && (
         webGLReady === true ? (
           <WavefrontWebGLCanvas

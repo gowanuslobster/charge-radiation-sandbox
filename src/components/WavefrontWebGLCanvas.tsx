@@ -43,6 +43,13 @@ const NORM_PROBE_W   = 32;
 const NORM_PROBE_H   = 32;
 const NORM_EMA_ALPHA = 0.12;       // temporal smoothing; tune if flicker observed
 
+// Phase I performance cap: limit the effective DPR for this canvas only.
+// The CSS size is unchanged — the browser upscales the lower-res render buffer.
+// Keeps fragment workload manageable on high-DPI / Retina displays without
+// touching solver math, texture layout, or any other canvas.
+// On a 2× display this caps pixel count at (1.5/2)² ≈ 56% of uncapped.
+const WEBGL_MAX_DPR = 1.5;
+
 // ── Props — identical to WavefrontOverlayCanvas ───────────────────────────────
 
 type Props = {
@@ -531,9 +538,9 @@ export function WavefrontWebGLCanvas({
     canvas.addEventListener('webglcontextlost', onContextLost);
     canvas.addEventListener('webglcontextrestored', onContextRestored);
 
-    // ── ResizeObserver — keeps canvas pixel buffer DPR-aware ─────────────
+    // ── ResizeObserver — keeps canvas pixel buffer sized with capped DPR ──
     const ro = new ResizeObserver(() => {
-      const dpr = window.devicePixelRatio || 1;
+      const dpr = Math.min(window.devicePixelRatio || 1, WEBGL_MAX_DPR);
       canvas.width  = Math.round(canvas.clientWidth  * dpr);
       canvas.height = Math.round(canvas.clientHeight * dpr);
     });

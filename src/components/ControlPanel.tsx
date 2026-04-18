@@ -27,6 +27,8 @@ type Props = {
   onPauseToggle: () => void;
   onStepForward: () => void;
   onReset: () => void;
+  /** Return to the mode-picker start screen, resetting all choices to defaults. */
+  onGoToStartScreen: () => void;
   onCChange: (c: number) => void;
   onResetView: () => void;
   onZoomIn: () => void;
@@ -67,7 +69,7 @@ export function ControlPanel({
   demoMode, fieldLayer, isPaused, c, stopTriggered, readout,
   showRadiationHeatmap, showWavefrontContours, showStreamlines,
   onDemoModeChange, onFieldLayerChange,
-  onPauseToggle, onStepForward, onReset,
+  onPauseToggle, onStepForward, onReset, onGoToStartScreen,
   onCChange,
   onResetView, onZoomIn, onZoomOut,
   onPanLeft, onPanRight, onPanUp, onPanDown,
@@ -102,6 +104,15 @@ export function ControlPanel({
             Oscillating
           </button>
         </div>
+        {/* Start Screen button — hidden while no mode is active (already on start screen) */}
+        {!noModeActive && (
+          <button
+            type="button"
+            onClick={onGoToStartScreen}
+            className={`mt-1.5 ${TOGGLE_BASE} bg-orange-400/20 text-orange-200 hover:bg-orange-400/35`}>
+            ← Start screen
+          </button>
+        )}
         {/* Mode hint — suppressed while no mode is active (start panel state) */}
         {!noModeActive && demoMode === 'draggable' && (
           <p className="mt-1.5 text-[11px] text-zinc-400">

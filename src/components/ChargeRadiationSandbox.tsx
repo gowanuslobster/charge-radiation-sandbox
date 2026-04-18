@@ -407,6 +407,7 @@ export function ChargeRadiationSandbox() {
       if (db !== null) reseed(newMode, db);
       setDemoMode(newMode);
       ghostPosRef.current = null;
+      setFieldLayer('total');
       setStopTriggered(false);
       setShowGhost(false);
       setShowRadiationHeatmap(false);
@@ -422,7 +423,37 @@ export function ChargeRadiationSandbox() {
     }
   }, [reseed]);
 
+  // Reset: reseed the current mode at t=0 and stay in the current mode.
+  // Preserves all overlay choices (field layer, heatmap, contours, streamlines).
+  // Resets only sim-derived state (stop trigger, ghost charge).
   const handleReset = useCallback(() => {
+    // End any active drag.
+    if (isDraggingRef.current) {
+      isDraggingRef.current = false;
+      rawDragPosRef.current = null;
+      dragStateRef.current = stoppedDragState(dragStateRef.current?.pos ?? { x: 0, y: 0 });
+      dragPeakSpeedRef.current = 0;
+    }
+
+    const db = defaultBoundsRef.current;
+    if (db !== null) reseed(demoModeRef.current, db);
+
+    // Reset sim-derived UI state only; overlay choices are preserved.
+    setStopTriggered(false);
+    setShowGhost(false);
+    isPausedRef.current = true;
+    pendingStepRef.current = false;
+    if (dragCalloutTimerRef.current !== null) {
+      clearTimeout(dragCalloutTimerRef.current);
+      dragCalloutTimerRef.current = null;
+    }
+    setDragCalloutPos(null);
+    setIsPaused(true);
+  }, [reseed]);
+
+  // Go to Start Screen: clears everything and returns to the mode-picker overlay.
+  // Resets all overlay choices to initial settings.
+  const handleGoToStartScreen = useCallback(() => {
     // End any active drag.
     if (isDraggingRef.current) {
       isDraggingRef.current = false;
@@ -442,7 +473,8 @@ export function ChargeRadiationSandbox() {
 
     resetCamera();
 
-    // Clear all UI overlays and derived state.
+    // Reset all UI choices to initial settings.
+    setFieldLayer('total');
     setStopTriggered(false);
     setShowGhost(false);
     setShowRadiationHeatmap(false);
@@ -458,7 +490,6 @@ export function ChargeRadiationSandbox() {
     setDragCalloutPos(null);
     setIsPaused(true);
 
-    // Return to start panel. Mode selection from there will call reseed().
     showStartPanelRef.current = true;
     setShowStartPanel(true);
   }, [resetCamera]);
@@ -764,6 +795,7 @@ export function ChargeRadiationSandbox() {
         onPauseToggle={togglePause}
         onStepForward={stepForward}
         onReset={handleReset}
+        onGoToStartScreen={handleGoToStartScreen}
         onCChange={handleCChange}
         onResetView={resetCamera}
         onZoomIn={() => zoomAtCenter(zoom * 1.5)}

@@ -323,6 +323,10 @@ for all GPU field values.
 - **Remaining GPU rendering work:** M7 is shipped. M8 adds the
   `moving_charge` envelope contour and resolves its normalization coupling. See
   `IDEAS-webGL.md` for the full design.
+- **WebGL efficiency tuning:** future work may add a manual heatmap quality
+  control for lower-tier hardware, first by reducing internal WebGL render scale
+  and then, if needed, by lowering CPU normalization-probe density/cadence. See
+  `IDEAS-webGL-efficiency.md`.
 - **Vector-grid density control:** an optional low / medium / high selector for
   the CPU arrow field may be added in a future pass if teaching needs or
   performance tuning justify it. This was removed from the v1 control-panel
@@ -379,6 +383,9 @@ for all GPU field values.
 - `IDEAS.md` is the physics and mathematics reference. It documents the LW framework, the FDTD failure analysis, and implementation skeletons. It is authoritative for "how the physics works."
 - `IDEAS-wavefronts.md` is the design rationale and extended specification for the M6 sampled wavefront overlay. It documents the `bZVel`/`bZAccel` decomposition, the warm-start tRet cache design, rendering architecture, and pedagogical positioning for that feature.
 - `IDEAS-webGL.md` is the design specification for the WebGL renderer transition (M7–M8). It documents the data model, texture packing layout, solver design, c-slider policy, canvas architecture, fallback behavior, and acceptance criteria for the GPU rendering path.
+- `IDEAS-webGL-efficiency.md` records future performance ideas for the WebGL
+  heatmap path on lower-tier hardware, including render-scale controls and
+  normalization-probe cost reduction.
 - `IDEAS-full-B-field-visualization.md` records the future design direction for
   expanding the current radiation heatmap into full `B`-field visualization
   modes (`Total B`, `Velocity B`, `Accel B`) while keeping contours tied to

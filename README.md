@@ -21,7 +21,7 @@ After a few minutes of exploration you should be able to see and understand:
 
 ### Starting up
 
-When you open the app you will see a **start panel** with three mode cards. Click any card to begin — the simulation seeds immediately and the panel clears. You can return to this screen at any time with the **Reset** button.
+When you open the app you will see a **start panel** with three mode cards. Click any card to begin — the simulation seeds immediately and the panel clears. You can return to this screen at any time with the **← Start screen** button in the Mode section of the control panel.
 
 ### The control panel
 
@@ -29,8 +29,8 @@ A floating panel in the upper-left corner gives you all controls:
 
 | Section | What it does |
 |---------|-------------|
-| **Mode** | Switch between the three demo modes (see below). Switching reseeds the simulation cleanly. |
-| **Playback** | **Run / Pause** — toggle real-time playback. **Step →** — advance one frame at a time while paused. **Reset** — clear the simulation and return to the start screen. |
+| **Mode** | Switch between the three demo modes (see below). Switching reseeds the simulation cleanly. **← Start screen** — return to the mode-picker panel and reset all settings to defaults (including c). |
+| **Playback** | **Run / Pause** — toggle real-time playback. **Step →** — advance one frame at a time while paused. **Reset** — restart the current mode from t=0, keeping your field layer and overlay choices. |
 | **Speed of light** | Drag the slider to change c (max 3.0). The lower bound is mode-dependent: 0.62 in Oscillating, 0.72 in Moving charge (the GPU history buffer must cover the causal horizon), and 0.65 in Charge at rest. Lowering c slows all field propagation, making retarded-time effects dramatically visible. |
 | **Field** | Toggle which component of E you see: **Total E** (default), **Velocity E** (Coulomb-like term), or **Accel E** (radiation term only). |
 | **Overlays** | See the Overlays section below. |
@@ -64,8 +64,7 @@ A charge moves at constant velocity. While moving, its field shows relativistic 
 - Enable the **Radiation heatmap** to see where the radiated energy is concentrated.
 - Toggle **Ghost charge** in the mini panel — a marker appears at the would-have-been position so the outside-of-shell field makes sense.
 - Enable **Field lines** (while paused) and then **Ghost field lines** in the mini panel to compare the inside and outside field geometries side by side.
-
-> **Note:** The **Wavefront contours** toggle is greyed out in this mode — the envelope contour is coming in a future update (M8).
+- Enable **Wavefront contours** to see the envelope contour marking the shell boundary.
 
 ### Oscillating charge
 
@@ -87,7 +86,7 @@ All overlays are off by default. They stack freely — you can enable any combin
 |---------|-------|---------------|
 | **Field lines** | All modes, when paused | Instantaneous streamlines of the total electric field at the paused frame. Not material lines that move with the charge — they are a snapshot of the field at that moment. |
 | **Radiation heatmap** | Moving charge, Oscillating | Color map of the radiation magnetic field (Bz from the acceleration term). Warm/orange = positive phase, cool/blue = negative phase in oscillating; envelope intensity in moving charge. |
-| **Wavefront contours** | Oscillating only | Zero-crossing lines of the radiation field, computed directly in the GPU shader. Stays aligned with the heatmap at all zoom levels. |
+| **Wavefront contours** | Moving charge, Oscillating | Contour lines computed directly in the GPU shader, always aligned with the heatmap. In Oscillating: zero-crossing lines tracking wave phase. In Moving charge: envelope threshold contour marking the shell boundary. |
 | **Ghost charge** (mini panel) | Moving charge | A marker at the extrapolated would-have-been position after the stop. Shows why the field outside the shell still points toward a charge that is no longer there. |
 | **Ghost field lines** (mini panel) | Moving charge, paused | Streamlines of the extrapolated constant-velocity field — shows what the field would look like if the charge had never stopped. |
 

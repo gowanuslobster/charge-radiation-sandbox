@@ -296,12 +296,27 @@ void main() {
                           : envelopeColor(bZAccel, u_peak);
   }
 
-  if (u_showContour && u_isSigned) {
-    float norm         = bZAccel / u_peak;
-    float contourWidth = fwidth(norm) * 1.5;
-    float contourMask  = 1.0 - smoothstep(0.0, contourWidth, abs(norm));
-    vec4 contourColor  = vec4(0.88, 0.88, 0.88, 0.85);
-    outColor = mix(outColor, contourColor, contourMask);
+  if (u_showContour) {
+    if (u_isSigned) {
+      // oscillating: zero-crossing contour
+      float norm         = bZAccel / u_peak;
+      float contourWidth = fwidth(norm) * 1.5;
+      float contourMask  = 1.0 - smoothstep(0.0, contourWidth, abs(norm));
+      vec4 contourColor  = vec4(0.88, 0.88, 0.88, 0.85);
+      outColor = mix(outColor, contourColor, contourMask);
+    } else {
+      // moving_charge: envelope threshold contour.
+      // Draws where |bZAccel| / peak ≈ CONTOUR_FRAC — traces the shell band edge(s).
+      // Threshold is derived from the CPU-probed u_peak (same value used by the heatmap),
+      // so the contour stays aligned with the heatmap normalization under zoom and pan.
+      const float CONTOUR_FRAC = 0.03;
+      float norm         = abs(bZAccel) / u_peak;
+      float contourWidth = fwidth(norm) * 2.0;
+      float dist         = abs(norm - CONTOUR_FRAC);
+      float contourMask  = 1.0 - smoothstep(0.0, contourWidth, dist);
+      vec4 contourColor  = vec4(0.88, 0.88, 0.88, 0.85);
+      outColor = mix(outColor, contourColor, contourMask);
+    }
   }
 
   if (outColor.a < 0.01) { discard; return; }
@@ -496,9 +511,8 @@ export function WavefrontWebGLCanvas({
         gl.uniform1i(uniforms['u_showHeatmap'], doHeatmap ? 1 : 0);
       }
       if (uniforms['u_showContour'] !== undefined) {
-        // Contour only available for oscillating (moving_charge envelope contour deferred to M8)
-        gl.uniform1i(uniforms['u_showContour'],
-          (doContour && mode === 'oscillating') ? 1 : 0);
+        // Contour active for both modes: oscillating (zero-crossing) and moving_charge (envelope threshold)
+        gl.uniform1i(uniforms['u_showContour'], doContour ? 1 : 0);
       }
       if (uniforms['u_softening'] !== undefined) {
         gl.uniform1f(uniforms['u_softening'], config.softening ?? 0.01);

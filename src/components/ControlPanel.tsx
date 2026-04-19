@@ -41,12 +41,6 @@ type Props = {
   onWavefrontContoursToggle: () => void;
   onStreamlinesToggle: () => void;
   /**
-   * When true, the Wavefront contours toggle is visually disabled (greyed out)
-   * and ignores clicks. Used when the WebGL path is active in moving_charge mode
-   * — the envelope contour is deferred to M8.
-   */
-  contoursDisabled?: boolean;
-  /**
    * Lower bound for the c slider. Defaults to 0.65.
    * Set to minCForMode(demoMode) when the WebGL path is active so the
    * slider UI matches the per-mode c minimum enforced in handleCChange.
@@ -74,7 +68,6 @@ export function ControlPanel({
   onResetView, onZoomIn, onZoomOut,
   onPanLeft, onPanRight, onPanUp, onPanDown,
   onRadiationHeatmapToggle, onWavefrontContoursToggle, onStreamlinesToggle,
-  contoursDisabled = false,
   cMin = 0.65,
   noModeActive = false,
 }: Props) {
@@ -219,15 +212,10 @@ export function ControlPanel({
             </button>
             <button
               type="button"
-              onClick={contoursDisabled ? undefined : onWavefrontContoursToggle}
-              title={contoursDisabled ? 'Contour lines available in a future update' : undefined}
-              className={`${TOGGLE_BASE} ${
-                contoursDisabled
-                  ? 'opacity-35 cursor-not-allowed bg-violet-400/10 text-violet-400/50'
-                  : showWavefrontContours
-                    ? 'bg-violet-400/90 text-black shadow-[0_0_12px_rgba(192,132,250,0.4)]'
-                    : 'bg-violet-400/15 text-violet-200 hover:bg-violet-400/28'
-              }`}>
+              onClick={onWavefrontContoursToggle}
+              className={`${TOGGLE_BASE} ${showWavefrontContours
+                ? 'bg-violet-400/90 text-black shadow-[0_0_12px_rgba(192,132,250,0.4)]'
+                : 'bg-violet-400/15 text-violet-200 hover:bg-violet-400/28'}`}>
               Wavefront contours
             </button>
           </>)}

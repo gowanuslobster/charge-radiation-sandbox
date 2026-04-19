@@ -12,6 +12,24 @@ dist
 dist-ssr
 *.local
 
+# Local AI/tooling metadata
+.codex
+.claude/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Test/build caches
+coverage/
+.vite/
+*.tsbuildinfo
+
+# Browser test artifacts
+playwright-report/
+test-results/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -21,7 +21,7 @@ After a few minutes of exploration you should be able to see and understand:
 
 ### Starting up
 
-When you open the app you will see a **start panel** with three mode cards. Click any card to begin — the simulation seeds immediately and the panel clears. You can return to this screen at any time with the **← Start screen** button in the Mode section of the control panel.
+When you open the app you will see a **start panel** with four mode cards. Click any card to begin — the simulation seeds immediately and the panel clears. You can return to this screen at any time with the **← Start screen** button in the Mode section of the control panel.
 
 ### The control panel
 
@@ -29,9 +29,9 @@ A floating panel in the upper-left corner gives you all controls:
 
 | Section | What it does |
 |---------|-------------|
-| **Mode** | Switch between the three demo modes (see below). Switching reseeds the simulation cleanly. **← Start screen** — return to the mode-picker panel and reset all settings to defaults (including c). |
+| **Mode** | Switch between the four demo modes (see below). Switching reseeds the simulation cleanly. **← Start screen** — return to the mode-picker panel and reset all settings to defaults (including c). |
 | **Playback** | **Run / Pause** — toggle real-time playback. **Step →** — advance one frame at a time while paused. **Reset** — restart the current mode from t=0, keeping your field layer and overlay choices. |
-| **Speed of light** | Drag the slider to change c (max 3.0). The lower bound is mode-dependent: 0.62 in Oscillating, 0.72 in Moving charge (the GPU history buffer must cover the causal horizon), and 0.65 in Charge at rest. Lowering c slows all field propagation, making retarded-time effects dramatically visible. |
+| **Speed of light** | Drag the slider to change c (max 3.0). The lower bound is mode-dependent: 0.62 in Oscillating and Dipole, 0.72 in Moving charge (the GPU history buffer must cover the causal horizon), and 0.65 in Charge at rest. Lowering c slows all field propagation, making retarded-time effects dramatically visible. |
 | **Field** | Toggle which component of E you see: **Total E** (default), **Velocity E** (Coulomb-like term), or **Accel E** (radiation term only). |
 | **Overlays** | See the Overlays section below. |
 | **Camera** | Reset view, zoom ±, and pan arrows. You can also scroll-to-zoom and right/middle-drag to pan directly on the canvas. |
@@ -76,6 +76,18 @@ A charge oscillates sinusoidally along one axis, radiating continuously. The fie
 - Lower c until you can see the wavefronts expanding in real time.
 - Pause and enable **Field lines** to see the instantaneous field geometry.
 
+### Dipole
+
+Two opposite charges (one positive, one negative) oscillate in antiphase along a shared axis — a collinear electric dipole. Their individual Liénard-Wiechert fields are evaluated separately at every pixel and added by superposition. The result is the classic dipole radiation pattern: intensity peaks perpendicular to the axis and falls to zero along it.
+
+This mode demonstrates that the simulator is not restricted to a single charge. Each charge has its own history buffer and retarded-time solve; the total field is the exact sum with no approximation.
+
+**To try:**
+- Enable **Radiation heatmap** and pause — the lobed pattern is most vivid on a frozen frame.
+- Zoom out to see several wavefront rings and the angular variation in brightness.
+- Switch to **Accel E** to isolate just the radiation contribution from each charge.
+- Compare with **Oscillating** (single charge): the dipole pattern looks similar but the field from the two charges partially cancels near the axis, sharpening the lobes.
+
 ---
 
 ## Teaching overlays
@@ -85,8 +97,8 @@ All overlays are off by default. They stack freely — you can enable any combin
 | Overlay | Where | What it shows |
 |---------|-------|---------------|
 | **Field lines** | All modes, when paused | Instantaneous streamlines of the total electric field at the paused frame. Not material lines that move with the charge — they are a snapshot of the field at that moment. |
-| **Radiation heatmap** | Moving charge, Oscillating | Color map of the radiation magnetic field (Bz from the acceleration term). Warm/orange = positive, cool/blue = negative — the sign encodes the field direction. Both modes use the same signed dual-hue convention. |
-| **Wavefront contours** | Moving charge, Oscillating | Contour lines computed directly in the GPU shader, always aligned with the heatmap. In Oscillating: zero-crossing lines tracking wave phase. In Moving charge: envelope threshold contour marking the shell boundary. |
+| **Radiation heatmap** | Moving charge, Oscillating, Dipole | Color map of the radiation magnetic field (Bz from the acceleration term). Warm/orange = positive, cool/blue = negative — the sign encodes the field direction. All three modes use the same signed dual-hue convention. In Dipole, the contributions from both charges are superposed before rendering. |
+| **Wavefront contours** | Moving charge, Oscillating, Dipole | Contour lines always aligned with the heatmap. In Oscillating and Dipole: zero-crossing lines tracking wave phase. In Moving charge: envelope threshold contour marking the shell boundary. |
 | **Ghost charge** (mini panel) | Moving charge | A marker at the extrapolated would-have-been position after the stop. Shows why the field outside the shell still points toward a charge that is no longer there. |
 | **Ghost field lines** (mini panel) | Moving charge, paused | Streamlines of the extrapolated constant-velocity field — shows what the field would look like if the charge had never stopped. |
 
@@ -97,7 +109,7 @@ All overlays are off by default. They stack freely — you can enable any combin
 ```bash
 npm install
 npm run dev      # start dev server with hot reload at http://localhost:5173
-npm test         # run physics unit tests (Vitest) — 169 tests across 10 suites
+npm test         # run physics unit tests (Vitest) — 175 tests across 11 suites
 npm run lint     # ESLint on all source files
 npm run build    # TypeScript strict type-check + Vite production build
 ```
@@ -128,9 +140,10 @@ Key design decisions:
 | `types.ts` | Core types: `Vec2`, `KinematicState`, `SimConfig`, `RetardedSolveResult`, `LWFieldResult` |
 | `vec2.ts` | 2D vector math helpers |
 | `chargeHistory.ts` | Per-charge kinematic history buffer: circular storage, binary-search interpolation, time-window pruning |
+| `chargeRuntime.ts` | `ChargeRuntime` type: groups a `ChargeHistory` with its signed charge value; the unit of multi-charge arrays |
 | `retardedTime.ts` | Retarded-time root-finder: fixed-point iteration (max 15 steps), graceful fallback |
-| `lienardWiechert.ts` | Exact LW field evaluator: velocity term (1/R²) + acceleration term (1/R) + B field decomposition |
-| `demoModes.ts` | Analytical kinematics for each demo mode; `sampleSuddenStopState` for interactive braking; braking substep helper for radiation-shell sharpness |
+| `lienardWiechert.ts` | Exact LW field evaluator: velocity term (1/R²) + acceleration term (1/R) + B field decomposition; `evaluateSuperposedLienardWiechertField` sums contributions from an arbitrary `ChargeRuntime[]` |
+| `demoModes.ts` | Analytical kinematics for each demo mode; `sampleDemoChargeStates` returns per-charge specs for all modes including dipole; `sampleSuddenStopState` for interactive braking; braking substep helper for radiation-shell sharpness |
 | `dragKinematics.ts` | Tick-owned drag kinematics: EMA smoothing, zero-motion guard, speed cap |
 | `wavefrontSampler.ts` | Coarse scalar sampler for `bZAccel` with per-cell retarded-time warm-starting (CPU fallback path) |
 | `streamlineTracer.ts` | RK4 streamline tracer for paused-frame field-line overlays; ghost-angle numeric solver for moving-charge ghost lines |

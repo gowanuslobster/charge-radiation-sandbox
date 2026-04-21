@@ -32,7 +32,7 @@ import {
   buildGhostHistory,
   deriveGhostSeedAnglesFromRealLines,
 } from '@/physics/streamlineTracer';
-import type { ChargeHistory } from '@/physics/chargeHistory';
+import type { ChargeRuntime } from '@/physics/chargeRuntime';
 import {
   getWorldToScreenTransform,
   transformWorldPoint,
@@ -43,9 +43,8 @@ import type { SimConfig, Vec2 } from '@/physics/types';
 import { magnitude } from '@/physics/vec2';
 
 type Props = {
-  historyRef: RefObject<ChargeHistory>;
+  chargeRuntimesRef: RefObject<ChargeRuntime[]>;
   simulationTimeRef: RefObject<number>;
-  chargeRef: RefObject<number>;
   configRef: RefObject<SimConfig>;
   simEpochRef?: RefObject<number>;
   isPausedRef: RefObject<boolean>;
@@ -157,9 +156,8 @@ function drawStreamline(
 }
 
 export function StreamlineCanvas({
-  historyRef,
+  chargeRuntimesRef,
   simulationTimeRef,
-  chargeRef,
   configRef,
   simEpochRef,
   isPausedRef,
@@ -199,16 +197,16 @@ export function StreamlineCanvas({
     // Cache keys: retrace when any physics input changes.
     // Bounds span is also tracked: a significant zoom-out invalidates the cache
     // because the padded clip region at trace-time may no longer extend far enough.
-    let lastEpoch   = -1;
-    let lastSimTime = NaN;
-    let lastShowSL  = false;
-    let lastShowGSL = false;
-    let lastGhostX  = NaN;
-    let lastGhostY  = NaN;
-    let lastSpanX   = 0;
-    let lastSpanY   = 0;
-    let lastC       = NaN;
-    let lastCharge  = NaN;
+    let lastEpoch       = -1;
+    let lastSimTime     = NaN;
+    let lastShowSL      = false;
+    let lastShowGSL     = false;
+    let lastGhostX      = NaN;
+    let lastGhostY      = NaN;
+    let lastSpanX       = 0;
+    let lastSpanY       = 0;
+    let lastC           = NaN;
+    let lastChargeCount = 0;
 
     // DPR-aware canvas sizing.
     const ro = new ResizeObserver(() => {
@@ -243,16 +241,16 @@ export function StreamlineCanvas({
         return;
       }
 
-      const simTime  = simulationTimeRef.current;
-      const epoch    = simEpochRef?.current ?? 0;
-      const ghostPos = ghostPosRef?.current ?? null;
+      const simTime        = simulationTimeRef.current;
+      const epoch          = simEpochRef?.current ?? 0;
+      const ghostPos       = ghostPosRef?.current ?? null;
       const gx = ghostPos?.x ?? NaN;
       const gy = ghostPos?.y ?? NaN;
-      const currentBounds = boundsRef.current;
+      const currentBounds  = boundsRef.current;
       const spanX = currentBounds.maxX - currentBounds.minX;
       const spanY = currentBounds.maxY - currentBounds.minY;
-      const config  = configRef.current;
-      const charge  = chargeRef.current;
+      const config         = configRef.current;
+      const chargeRuntimes = chargeRuntimesRef.current;
 
       // Retrace when the physics snapshot or visibility changes.
       // Also retrace on significant zoom-out (>30% span increase) so lines
@@ -272,36 +270,53 @@ export function StreamlineCanvas({
         gy !== lastGhostY       ||
         spanExpandedLarge       ||
         config.c !== lastC      ||
-        charge   !== lastCharge;
+        chargeRuntimes.length !== lastChargeCount;
 
       if (needsRetrace) {
-        const history = historyRef.current;
-
         let realLinesForGhost: Vec2[][] = [];
-        const newest = history.isEmpty() ? null : history.newest()!;
 
-        // Main streamlines — total LW E field at the paused frame.
-        // When ghost lines are requested, also trace the real total-field lines
-        // even if they are hidden. The ghost-line correspondence is derived from
-        // the settled outer branch of those real streamlines.
-        if ((showSL || showGSL) && newest !== null) {
-          const computedMainLines = buildStreamlines(
-            newest.pos,
-            simTime,
-            history,
-            charge,
-            config,
-            currentBounds,
-          );
-          tracedLines = showSL ? computedMainLines : [];
-          realLinesForGhost = computedMainLines;
+        // Main streamlines — combined LW E field at the paused frame.
+        // For single-charge modes: seed from one position (existing behavior).
+        // For multi-charge (dipole): seed from each charge's position, combined field.
+        // Ghost lines are only supported for single-charge (moving_charge mode).
+        if (showSL || (showGSL && chargeRuntimes.length === 1)) {
+          if (chargeRuntimes.length === 1) {
+            const history = chargeRuntimes[0].history;
+            const newest = history.isEmpty() ? null : history.newest()!;
+            if (newest !== null) {
+              const computedMainLines = buildStreamlines(
+                newest.pos, simTime, chargeRuntimes, config, currentBounds,
+              );
+              tracedLines = showSL ? computedMainLines : [];
+              realLinesForGhost = computedMainLines;
+            } else {
+              tracedLines = [];
+            }
+          } else {
+            // Multi-charge: trace from each charge's position in the combined field.
+            const allLines: Vec2[][] = [];
+            for (const runtime of chargeRuntimes) {
+              if (runtime.history.isEmpty()) continue;
+              const newest = runtime.history.newest()!;
+              const dirSign = runtime.charge >= 0 ? 1 : -1;
+              allLines.push(...buildStreamlines(
+                newest.pos, simTime, chargeRuntimes, config, currentBounds,
+                undefined, false, undefined, dirSign,
+              ));
+            }
+            tracedLines = showSL ? allLines : [];
+          }
         } else {
           tracedLines = [];
         }
 
         // Ghost streamlines — velocity field of the extrapolated constant-velocity charge.
+        // Single-charge (moving_charge) only.
         const gVel = ghostVelRef.current;
-        if (showGSL && ghostPos !== null && gVel !== undefined) {
+        if (showGSL && ghostPos !== null && gVel !== undefined && chargeRuntimes.length === 1) {
+          const history = chargeRuntimes[0].history;
+          const charge  = chargeRuntimes[0].charge;
+          const newest  = history.isEmpty() ? null : history.newest()!;
           // History window: worst-case retarded-time horizon for the ghost, accounting
           // for its speed. Ghost speed is always < c (contract from demoModes).
           const ghostSpeed  = magnitude(gVel);
@@ -311,9 +326,6 @@ export function StreamlineCanvas({
 
           // Match each ghost line to the settled outer branch of a traced real
           // streamline, not to the idealized zero-thickness shell crossing.
-          // The stop is finite-width in this sandbox, so anchoring at the shell
-          // crossing makes the ghost lines lock on too early while the real line
-          // is still turning through the acceleration band.
           const ghostAngles = newest !== null
             ? deriveGhostSeedAnglesFromRealLines(
                 realLinesForGhost,
@@ -333,12 +345,9 @@ export function StreamlineCanvas({
             tracedGhostLines = [];
           } else {
             tracedGhostLines = buildStreamlines(
-              ghostPos,
-              simTime,
-              ghostHistory,
-              charge,
-              config,
-              currentBounds,
+              ghostPos, simTime,
+              [{ history: ghostHistory, charge }], // ghost's single runtime
+              config, currentBounds,
               undefined,
               true, // velocityOnly — ghost represents constant-velocity, no radiation term
               ghostAngles,
@@ -348,16 +357,16 @@ export function StreamlineCanvas({
           tracedGhostLines = [];
         }
 
-        lastEpoch   = epoch;
-        lastSimTime = simTime;
-        lastShowSL  = showSL;
-        lastShowGSL = showGSL;
-        lastGhostX  = gx;
-        lastGhostY  = gy;
-        lastSpanX   = spanX;
-        lastSpanY   = spanY;
-        lastC       = config.c;
-        lastCharge  = charge;
+        lastEpoch       = epoch;
+        lastSimTime     = simTime;
+        lastShowSL      = showSL;
+        lastShowGSL     = showGSL;
+        lastGhostX      = gx;
+        lastGhostY      = gy;
+        lastSpanX       = spanX;
+        lastSpanY       = spanY;
+        lastC           = config.c;
+        lastChargeCount = chargeRuntimes.length;
       }
 
       // Draw to the DPR-scaled canvas.

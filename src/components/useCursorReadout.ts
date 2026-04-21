@@ -13,19 +13,18 @@
 // at the same screen coordinates while paused triggers a fresh solve instead of staying blank.
 
 import { useState, useRef, useEffect, type RefObject, type MutableRefObject } from 'react';
-import type { ChargeHistory } from '@/physics/chargeHistory';
+import type { ChargeRuntime } from '@/physics/chargeRuntime';
 import type { SimConfig, Vec2 } from '@/physics/types';
 import type { WorldBounds } from '@/rendering/worldSpace';
-import { evaluateLienardWiechertField } from '@/physics/lienardWiechert';
+import { evaluateSuperposedLienardWiechertField } from '@/physics/lienardWiechert';
 
 export type CursorReadout = { eTotal: number; eVel: number; eAccel: number; bZ: number } | null;
 
 interface UseCursorReadoutOptions {
   canvasRef:               RefObject<HTMLCanvasElement | null>;
-  historyRef:              RefObject<ChargeHistory>;
+  chargeRuntimesRef:       RefObject<ChargeRuntime[]>;
   simTimeRef:              RefObject<number>;
   simEpochRef:             RefObject<number>;
-  chargeRef:               RefObject<number>;
   configRef:               RefObject<SimConfig>;
   viewBoundsRef:           RefObject<WorldBounds>;
   getWorldFromClientPoint: (cx: number, cy: number) => Vec2 | null;
@@ -33,10 +32,9 @@ interface UseCursorReadoutOptions {
 
 export function useCursorReadout({
   canvasRef,
-  historyRef,
+  chargeRuntimesRef,
   simTimeRef,
   simEpochRef,
-  chargeRef,
   configRef,
   viewBoundsRef,
   getWorldFromClientPoint,
@@ -122,11 +120,10 @@ export function useCursorReadout({
       const worldPos = getWorldFromClientPoint(pending.x, pending.y);
       if (worldPos === null) return;
 
-      const result = evaluateLienardWiechertField({
+      const result = evaluateSuperposedLienardWiechertField({
         observationPos:  worldPos,
         observationTime: simTimeRef.current,
-        history:         historyRef.current,
-        charge:          chargeRef.current,
+        chargeRuntimes:  chargeRuntimesRef.current,
         config:          configRef.current,
       });
 

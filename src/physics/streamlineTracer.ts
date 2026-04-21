@@ -13,8 +13,9 @@
 // Algorithm: 4th-order Runge-Kutta integration along the normalized E-field
 // direction, seeded radially around the charge position.
 
-import { evaluateLienardWiechertField } from './lienardWiechert';
+import { evaluateLienardWiechertField, evaluateSuperposedLienardWiechertField } from './lienardWiechert';
 import { ChargeHistory } from './chargeHistory';
+import type { ChargeRuntime } from './chargeRuntime';
 import type { SimConfig, Vec2 } from './types';
 import { magnitude } from './vec2';
 
@@ -73,17 +74,15 @@ function inBounds(pt: Vec2, b: TraceBounds): boolean {
 function evalNormalizedField(
   pos: Vec2,
   observationTime: number,
-  history: ChargeHistory,
-  charge: number,
+  chargeRuntimes: ChargeRuntime[],
   config: SimConfig,
   velocityOnly: boolean,
   minFieldMagnitude: number,
 ): Vec2 | null {
-  const result = evaluateLienardWiechertField({
+  const result = evaluateSuperposedLienardWiechertField({
     observationPos: pos,
     observationTime,
-    history,
-    charge,
+    chargeRuntimes,
     config,
   });
   if (!result) return null;
@@ -105,8 +104,7 @@ function evalNormalizedField(
 function rk4Step(
   pos: Vec2,
   observationTime: number,
-  history: ChargeHistory,
-  charge: number,
+  chargeRuntimes: ChargeRuntime[],
   config: SimConfig,
   velocityOnly: boolean,
   stepSize: number,
@@ -114,7 +112,7 @@ function rk4Step(
   minFieldMagnitude: number,
 ): Vec2 | null {
   const eval_ = (p: Vec2) =>
-    evalNormalizedField(p, observationTime, history, charge, config, velocityOnly, minFieldMagnitude);
+    evalNormalizedField(p, observationTime, chargeRuntimes, config, velocityOnly, minFieldMagnitude);
 
   const k1 = eval_(pos);
   if (!k1) return null;
@@ -151,8 +149,7 @@ function rk4Step(
 function traceSingleLine(
   seed: Vec2,
   observationTime: number,
-  history: ChargeHistory,
-  charge: number,
+  chargeRuntimes: ChargeRuntime[],
   config: SimConfig,
   bounds: TraceBounds,
   directionSign: number,
@@ -173,7 +170,7 @@ function traceSingleLine(
     }
 
     const next = rk4Step(
-      current, observationTime, history, charge, config,
+      current, observationTime, chargeRuntimes, config,
       velocityOnly, opts.stepSize, directionSign, opts.minFieldMagnitude,
     );
     if (!next) break;
@@ -212,13 +209,15 @@ function traceSingleLine(
 export function buildStreamlines(
   chargePos: Vec2,
   observationTime: number,
-  history: ChargeHistory,
-  charge: number,
+  chargeRuntimes: ChargeRuntime[],
   config: SimConfig,
   bounds: TraceBounds,
   opts?: Partial<StreamlineOptions>,
   velocityOnly = false,
   customSeedAngles?: number[],
+  /** Direction sign for tracing: +1 = outward (positive charge), −1 = inward (negative charge).
+   *  Defaults to the sign of chargeRuntimes[0].charge. */
+  directionSign?: number,
 ): Vec2[][] {
   const options: StreamlineOptions = { ...DEFAULT_STREAMLINE_OPTIONS, ...opts };
 
@@ -234,8 +233,8 @@ export function buildStreamlines(
   };
 
   const lines: Vec2[][] = [];
-  // Positive charge: trace in field direction (+1). Negative: reverse (−1).
-  const dirSign = charge >= 0 ? 1 : -1;
+  // Default direction: outward from positive charge, inward toward negative charge.
+  const dirSign = directionSign ?? ((chargeRuntimes[0]?.charge ?? 1) >= 0 ? 1 : -1);
 
   const seedAngles: number[] = customSeedAngles
     ?? Array.from({ length: options.seedCount }, (_, i) => (i / options.seedCount) * Math.PI * 2);
@@ -246,7 +245,7 @@ export function buildStreamlines(
       y: chargePos.y + options.seedOffsetRadius * Math.sin(angle),
     };
     const line = traceSingleLine(
-      seed, observationTime, history, charge, config,
+      seed, observationTime, chargeRuntimes, config,
       paddedBounds, dirSign, options, velocityOnly,
     );
     if (line.length >= 4) {
@@ -379,13 +378,14 @@ function solveGhostSeedAngle(
   const searchOpts: StreamlineOptions = { ...opts, maxSteps: GHOST_SEED_MAX_STEPS };
   const dirSign = charge >= 0 ? 1 : -1;
 
+  const ghostRuntime: ChargeRuntime[] = [{ history: ghostHistory, charge }];
   const traceAndMeasure = (theta: number): number => {
     const seed: Vec2 = {
       x: ghostPos.x + opts.seedOffsetRadius * Math.cos(theta),
       y: ghostPos.y + opts.seedOffsetRadius * Math.sin(theta),
     };
     const line = traceSingleLine(
-      seed, observationTime, ghostHistory, charge, config,
+      seed, observationTime, ghostRuntime, config,
       paddedBounds, dirSign, searchOpts, true,
     );
     return line.length >= 2 ? minDistSquaredToPolyline(anchor, line) : Infinity;

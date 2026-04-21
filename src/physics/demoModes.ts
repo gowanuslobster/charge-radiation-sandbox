@@ -6,7 +6,7 @@
 
 import type { KinematicState } from './types';
 
-export type DemoMode = 'moving_charge' | 'oscillating' | 'draggable';
+export type DemoMode = 'moving_charge' | 'oscillating' | 'draggable' | 'dipole';
 
 // ─── sudden_stop constants ───────────────────────────────────────────────────
 
@@ -27,6 +27,21 @@ export const SUDDEN_STOP_X_STOP =
 
 export const OSCILLATING_AMPLITUDE = 0.125; // world units
 export const OSCILLATING_OMEGA     = 4.0;   // rad/s — peak speed = A·ω = 0.5, peak accel = A·ω² = 2.0
+
+// ─── dipole constants ────────────────────────────────────────────────────────
+//
+// Collinear oscillating electric dipole: two opposite charges on the x-axis,
+// each oscillating in opposite x-directions so the dipole moment p(t) is purely
+// along x with no static offset.
+//
+// Charge 0 (+q): x = +DIPOLE_SEPARATION/2 + A·sin(ω·t),  y = 0
+// Charge 1 (−q): x = −DIPOLE_SEPARATION/2 − A·sin(ω·t),  y = 0
+//
+// Separation constraint: DIPOLE_SEPARATION > 2·DIPOLE_AMPLITUDE (charges never cross).
+// Peak speed per charge = DIPOLE_AMPLITUDE·DIPOLE_OMEGA = 0.5, same as oscillating.
+export const DIPOLE_SEPARATION = 1.0;   // world units (equilibrium separation)
+export const DIPOLE_AMPLITUDE  = OSCILLATING_AMPLITUDE; // 0.125 world units
+export const DIPOLE_OMEGA      = OSCILLATING_OMEGA;     // 4.0 rad/s
 
 // ─── sampleSuddenStopState ───────────────────────────────────────────────────
 
@@ -93,8 +108,10 @@ export function sampleSuddenStopState(t: number, brakeStartTime: number): Kinema
  * sudden_stop delegates to sampleSuddenStopState with the scripted brakeStartTime
  * (SUDDEN_STOP_T_STOP). The interactive tick path calls sampleSuddenStopState
  * directly with the user-supplied trigger time.
+ *
+ * 'dipole' is excluded: it has two charges and must be accessed via sampleDemoChargeStates.
  */
-export function sampleSourceState(mode: DemoMode, t: number): KinematicState {
+export function sampleSourceState(mode: Exclude<DemoMode, 'dipole'>, t: number): KinematicState {
   // draggable: live tick bypasses sampleSourceState entirely and reads from drag refs.
   // This branch exists only to satisfy exhaustiveness and provides the zeroed at-rest
   // baseline (Coulomb field) used when the simulation is paused or freshly seeded.
@@ -121,6 +138,49 @@ export function sampleSourceState(mode: DemoMode, t: number): KinematicState {
   return { t, pos: { x, y: 0 }, vel: { x: vx, y: 0 }, accel: { x: ax, y: 0 } };
 }
 
+// ─── sampleDemoChargeStates ──────────────────────────────────────────────────
+
+/** One charge's spec: signed charge value + kinematic state at a given time. */
+export type DemoChargeSpec = {
+  charge: number;
+  state: KinematicState;
+};
+
+/**
+ * Exact kinematic state for one dipole charge at simulation time t.
+ * chargeIndex 0 = positive (+q), chargeIndex 1 = negative (−q).
+ * Both closed-form for any t, including negative t (history seeding).
+ */
+function sampleDipoleState(chargeIndex: 0 | 1, t: number): KinematicState {
+  const sign = chargeIndex === 0 ? 1 : -1;
+  const half = DIPOLE_SEPARATION / 2;
+  const x   = sign * half + sign * DIPOLE_AMPLITUDE * Math.sin(DIPOLE_OMEGA * t);
+  const vx  = sign * DIPOLE_AMPLITUDE * DIPOLE_OMEGA * Math.cos(DIPOLE_OMEGA * t);
+  const ax  = -sign * DIPOLE_AMPLITUDE * DIPOLE_OMEGA ** 2 * Math.sin(DIPOLE_OMEGA * t);
+  return { t, pos: { x, y: 0 }, vel: { x: vx, y: 0 }, accel: { x: ax, y: 0 } };
+}
+
+/**
+ * Return the charge specs for all charges in `mode` at simulation time t.
+ *
+ * Single-charge modes return a length-1 array. Dipole returns a length-2 array
+ * with charge values +1 (index 0) and −1 (index 1).
+ *
+ * For `draggable` and `moving_charge`, the kinematic state is the analytic
+ * baseline — the tick loop overrides it with drag refs / stop-trigger logic
+ * respectively. Callers that need the live tick state should read from the
+ * history refs, not from this function.
+ */
+export function sampleDemoChargeStates(mode: DemoMode, t: number): DemoChargeSpec[] {
+  if (mode === 'dipole') {
+    return [
+      { charge: +1, state: sampleDipoleState(0, t) },
+      { charge: -1, state: sampleDipoleState(1, t) },
+    ];
+  }
+  return [{ charge: 1, state: sampleSourceState(mode, t) }];
+}
+
 // ─── maxHistorySpeed ─────────────────────────────────────────────────────────
 
 /**
@@ -140,7 +200,7 @@ export function maxHistorySpeed(mode: DemoMode): number {
   // draggable: speed is dynamic and tracked via dragPeakSpeedRef in the sandbox.
   // Return 0 here; the tick uses dragPeakSpeedRef directly for the horizon calculation.
   if (mode === 'draggable') return 0;
-  if (mode === 'oscillating') return OSCILLATING_AMPLITUDE * OSCILLATING_OMEGA; // 0.5
+  if (mode === 'oscillating' || mode === 'dipole') return OSCILLATING_AMPLITUDE * OSCILLATING_OMEGA; // 0.5
   return SUDDEN_STOP_V; // moving_charge peaks at SUDDEN_STOP_V (pre- and post-stop history)
 }
 

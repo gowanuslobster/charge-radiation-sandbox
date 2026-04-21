@@ -39,6 +39,12 @@ const MODE_CARDS: ModeCard[] = [
     desc: 'Continuous sinusoidal acceleration radiates outward as an expanding wave train.',
     hint: 'Enable the Radiation heatmap and Wavefront contours. Lower c so the fronts slow down and separate clearly.',
   },
+  {
+    mode: 'dipole',
+    title: 'Dipole',
+    desc: 'Two opposite charges oscillate in antiphase. Their combined field shows the classic dipole radiation pattern.',
+    hint: 'Enable the Radiation heatmap to see the characteristic lobed pattern — radiation is strongest perpendicular to the dipole axis.',
+  },
 ];
 
 export function StartPanel({ onSelectMode }: Props) {
@@ -81,7 +87,7 @@ export function StartPanel({ onSelectMode }: Props) {
         <p className="mt-5 text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400">
           Choose a mode to begin
         </p>
-        <div className="mt-2 grid gap-2.5 text-left text-sm sm:grid-cols-3">
+        <div className="mt-2 grid gap-2.5 text-left text-sm sm:grid-cols-2">
           {MODE_CARDS.map(({ mode, title, desc, hint }) => (
             <button
               key={mode}

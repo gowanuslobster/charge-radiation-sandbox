@@ -22,6 +22,8 @@ After 10–15 minutes with this tool, a student should understand:
 - **Radiation shell:** when a charge suddenly stops (or starts), a thin shell of radiation expands outward at `c`, separating the "old" field from the "new" field.
 - **Relativistic beaming:** a fast-moving charge concentrates its field in the forward direction due to the `(1 - beta . n_hat)^3` denominator.
 - **Superposition:** the total field from multiple charges is the vector sum of each charge's independent LW contribution.
+- **Dipole radiation:** opposite charges with prescribed motion radiate through
+  the superposition of their independent retarded fields.
 
 ## Success Criteria
 
@@ -52,8 +54,8 @@ The current official scope does not include:
 - Poynting vector or energy flow visualization
 - time-averaged field displays
 
-M1–M7 and M9 are complete. The remaining milestone work is M8 and M10 as
-defined in the Milestones section.
+M1–M10 are complete. Remaining work is tracked as future directions rather than
+official v1 milestone scope.
 
 ## Canonical Demo Modes
 
@@ -74,6 +76,19 @@ A charge moves at constant velocity until the student clicks "Stop now," at whic
 A single charge oscillates sinusoidally along one axis. Continuous radiation waves propagate outward. The radiation pattern shows the characteristic dipole angular dependence — strongest perpendicular to the motion, zero along the axis of motion.
 
 **What the student learns:** periodic acceleration produces periodic radiation (this is how antennas work). The radiation field falls off as 1/R, not 1/R^2, so it dominates at large distances.
+
+### Dipole
+
+Two opposite charges oscillate in antiphase along a shared axis, forming a
+collinear electric dipole with a time-varying dipole moment. Each charge keeps
+its own history buffer and contributes its own LW field; the displayed field is
+the linear superposition of both contributions. This first multi-charge mode
+uses the CPU wavefront overlay path for radiation heatmap and contours.
+
+**What the student learns:** radiation from a dipole is not a new field law — it
+is the superposition of retarded fields from multiple charges. The pattern is
+strongest perpendicular to the dipole axis and weak along the axis, connecting
+the sandbox to antenna and molecular-vibration intuition.
 
 ## Milestones
 
@@ -127,7 +142,7 @@ Extend the existing camera/control-panel system with the remaining controls and 
 **Acceptance criteria:**
 - Floating control panel includes: mode selector, play/pause/step/reset, `c` slider, field layer toggles (total field, velocity only, acceleration only)
 - Cursor readout shows local field values at hover position (RAF-batched)
-- All three canonical demo modes are functional and selectable
+- The original three single-charge canonical demo modes are functional and selectable
 - `c` slider works: lowering `c` visibly exaggerates causality delays; history buffer adjusts pruning window; graceful clamping if history underruns
 - In `moving_charge` mode, the student can trigger the stop event interactively via a draggable mini panel (`Stop now` button); the charge begins constant-velocity motion and the stop can be triggered at any point
 - The `moving_charge` stop keeps its finite braking ramp and shell-thickness physics; the interactive control changes only when the braking phase begins, not the braking duration or the radiation-shell model
@@ -149,7 +164,9 @@ available in `moving_charge` and `oscillating` modes only.
 **Acceptance criteria:**
 - `LWFieldResult` exposes `bZVel`, `bZAccel`, and `bZ`; the identity `bZ = bZVel + bZAccel` holds numerically; existing `bZ` callers are unaffected
 - In `oscillating`, the signed heatmap shows alternating outward radiation fronts with legible wavelength spacing
-- In `moving_charge`, the envelope heatmap shows a clear outward bremsstrahlung shell / pulse band
+- In `moving_charge`, the radiation heatmap shows the signed `bZAccel` pulse
+  band with warm/cool colors indicating opposite out-of-plane magnetic-field
+  directions
 - Heatmap contrast remains readable across the visible domain without a saturated near-source blob; a display-only dynamic-range compression step (not a physics change) is applied
 - Contours derive from the same sampled scalar buffer as the heatmap; heatmap and contours stay spatially aligned when both are enabled
 - The scalar sampler uses temporal warm-starting for tRet solves when the sample lattice is unchanged; cache is invalidated on bounds change, `c` change, mode switch, or reseed
@@ -163,9 +180,9 @@ available in `moving_charge` and `oscillating` modes only.
 Replace the CPU `WavefrontOverlayCanvas` with a WebGL fragment-shader renderer
 that evaluates the LW field per-pixel. This milestone covers the radiation
 heatmap for `moving_charge` and `oscillating` modes and the zero-crossing
-contour for `oscillating`. The `draggable` mode heatmap and the `moving_charge`
-envelope contour are deferred to M8. See `IDEAS-webGL.md` for the full design
-rationale, data model, and solver specification.
+contour for `oscillating`. The `draggable` mode heatmap remains deferred. The
+`moving_charge` envelope contour was restored in M8. See `IDEAS-webGL.md` for
+the full design rationale, data model, and solver specification.
 
 **Implementation notes:**
 - `WavefrontOverlayCanvas` is replaced by a new `WavefrontWebGLCanvas` component
@@ -189,12 +206,12 @@ rationale, data model, and solver specification.
   inline student-friendly banner
 
 **Acceptance criteria:**
-- `WavefrontWebGLCanvas` renders the signed `bZAccel` heatmap in `oscillating`
-  mode and the envelope `abs(bZAccel)` heatmap in `moving_charge` mode at full
-  screen resolution
+- `WavefrontWebGLCanvas` renders the signed `bZAccel` heatmap in both
+  `oscillating` and `moving_charge` modes at full screen resolution; warm/cool
+  colors indicate opposite signs of the out-of-plane magnetic radiation field
 - The `oscillating` zero-crossing contour is shader-native and spatially aligned
   with the continuous heatmap field (no marching-squares offset artifact)
-- No contour is drawn in `moving_charge` (deferred to M8)
+- The `moving_charge` contour is outside the M7 scope and is restored in M8
 - `draggable` mode has no heatmap overlay in M7; M6 did not add one, and a
   `draggable` shader path remains a future consideration (see `IDEAS-webGL.md` §3)
 - GPU and CPU probe-point field values agree within
@@ -213,29 +230,33 @@ rationale, data model, and solver specification.
   banner and all other app functionality remains intact
 - Existing tests (M1–M6) continue to pass
 
-### M8: Shader-native envelope contour for `moving_charge`
+### M8: Shader-native envelope contour for `moving_charge` — complete
 
-Add the envelope threshold contour to the `moving_charge` heatmap. This
-requires resolving the normalization-coupling problem: the contour threshold is
-currently derived from the CPU grid's global field maximum, which is not
-available in a single-pass GPU render. The design decision — two-pass GPU
-reduction, lightweight CPU probe pass, or fixed physical threshold — is made as
-part of this milestone's planning. See `IDEAS-webGL.md` §8 for the three options.
+Restore the `moving_charge` wavefront contour on the WebGL path. The heatmap
+itself remains signed `bZAccel`, matching `oscillating` mode. The contour is a
+separate envelope annotation: it is drawn where `abs(bZAccel) / peak` crosses a
+small threshold, so it marks the radiation shell boundary without changing the
+signed heatmap semantics.
 
-Optionally extend the GPU heatmap to `draggable` mode (envelope colormap) as
-part of this milestone if the normalization design makes it straightforward.
+M8 chose the lightweight CPU-probe strategy from `IDEAS-webGL.md` §8: the
+existing normalization probe estimates `peak` and uploads it as `u_peak`, while
+the fragment shader draws the contour geometry per pixel from the same GPU
+field used for the heatmap. The primary WebGL path uses
+`CONTOUR_FRAC = 0.03`. The CPU fallback keeps its sampled contour extraction
+path and uses its existing fallback contour level.
 
 **Acceptance criteria:**
 - An envelope threshold contour is rendered in `moving_charge` mode, derived
   from the same GPU field as the heatmap (not from the coarse CPU sample grid)
 - The contour is spatially aligned with the GPU heatmap under zoom and pan
-- The normalization approach (two-pass GPU reduction, lightweight CPU probe pass,
-  or fixed physical threshold) is chosen during M8 planning and consistently
-  implemented; the chosen approach does not regress to the coarse CPU sample grid
-  used in M6 (see `IDEAS-webGL.md` §8 for the three options)
+- The normalization approach is the lightweight CPU probe pass: CPU supplies only
+  the scalar `u_peak`; contour geometry is shader-native and does not regress to
+  the coarse M6 CPU marching-squares path on WebGL-capable hardware
+- The `moving_charge` heatmap remains signed warm/cool `bZAccel`; only the
+  contour threshold uses `abs(bZAccel)`
 - Visual quality is at least as good as the M6 CPU contour for the standard
   sudden-stop scenario
-- Existing tests (M1–M7) continue to pass
+- Existing tests continue to pass
 
 ### M9: Paused streamline overlays — complete
 
@@ -249,15 +270,36 @@ Add optional field-line / streamline overlays for single-charge scenes when the 
 - Streamline overlays are labeled and documented as an instantaneous visualization aid for a time-dependent field, not as material lines that physically move with the charge
 - Performance remains acceptable because streamline tracing is restricted to paused / stepped frames and initially scoped to single-charge scenes
 
-### M10: Multiple charges
+### M10: Multiple charges — complete
 
-Support two or more charges with independent history buffers. Fields superpose linearly.
+Generalize the runtime architecture from a single charge to an array of
+independent charge runtimes, then ship the first multi-charge teaching mode as a
+two-charge collinear vibrating dipole.
+
+Implementation notes:
+- Each runtime owns its own `ChargeHistory` and signed charge value
+- `sampleDemoChargeStates()` returns the prescribed per-charge kinematic states
+  for each demo mode
+- `evaluateSuperposedLienardWiechertField()` sums the independent LW
+  contributions from all active runtimes
+- The CPU vector field, cursor readout, paused streamline overlay, and CPU
+  wavefront overlay use the superposed field
+- The dipole mode uses two opposite charges on the x-axis with antiphase
+  sinusoidal motion; charges never cross
+- The WebGL heatmap remains single-charge for M10; dipole routes to the CPU
+  wavefront overlay pending a follow-up multi-charge WebGL renderer
 
 **Acceptance criteria:**
 - Each charge maintains its own history buffer
 - The field at each grid point is the vector sum of each charge's LW contribution
-- A two-charge demo (e.g., dipole with both charges oscillating) produces a recognizable dipole radiation pattern
-- Performance remains usable for 2–4 charges on a 40x40 grid
+- The dipole demo produces a recognizable dipole radiation pattern
+- Streamlines and cursor readout use the combined field in multi-charge mode
+- Radiation heatmap and wavefront contours are available in dipole mode via the
+  CPU overlay path
+- Superposition tests prove the multi-charge helper equals the manual sum of
+  individual one-charge field evaluations
+- Performance remains usable for the two-charge dipole on the default 40x40
+  vector grid
 
 ## UI and Interaction Spec
 
@@ -306,27 +348,35 @@ Support two or more charges with independent history buffers. Fields superpose l
 
 The v1 renderer iterates over a grid of observation points, solves the retarded time for each, evaluates the LW field, and draws arrows on a 2D Canvas. This is CPU-bound but straightforward to implement and debug.
 
-### Next: M8 envelope contour and GPU follow-on work
+### WebGL heatmap and GPU follow-on work
 
-The WebGL renderer transition is now shipped for the M7 scope. The design is
-specified in full in `IDEAS-webGL.md`. M7 delivered a fragment-shader heatmap
-for `moving_charge` and `oscillating` modes plus a shader-native zero-crossing
-contour for `oscillating`. The next rendering milestone is M8, which adds the
-envelope contour for `moving_charge` and resolves the normalization coupling.
+The WebGL renderer transition is shipped for the M7–M8 single-charge scope. The
+design is specified in full in `IDEAS-webGL.md`. M7 delivered the fragment-shader
+radiation heatmap for `moving_charge` and `oscillating` modes plus the
+shader-native zero-crossing contour for `oscillating`. M8 restored the
+shader-native `moving_charge` envelope contour while keeping the heatmap itself
+signed.
 
-The CPU arrow renderer (Path A) is retained alongside the WebGL heatmap through
-these milestones. The CPU physics implementation remains the validation oracle
-for all GPU field values.
+The M10 dipole mode currently uses the CPU wavefront overlay because the WebGL
+shader still packs and solves one charge history. The CPU physics
+implementation remains the validation oracle for all GPU field values.
 
 ## Deferred Work and Future Directions
 
-- **Remaining GPU rendering work:** M7 is shipped. M8 adds the
-  `moving_charge` envelope contour and resolves its normalization coupling. See
-  `IDEAS-webGL.md` for the full design.
+- **Multi-charge WebGL heatmap:** extend the M7/M8 WebGL renderer from one
+  charge history to N histories so dipole and later molecular demos can use the
+  high-fidelity per-pixel radiation heatmap. This likely requires explicit
+  history packing for multiple runtimes, a shader loop over charges, and
+  normalization over the combined field.
 - **WebGL efficiency tuning:** future work may add a manual heatmap quality
   control for lower-tier hardware, first by reducing internal WebGL render scale
   and then, if needed, by lowering CPU normalization-probe density/cadence. See
   `IDEAS-webGL-efficiency.md`.
+- **Additional multi-charge demos:** hydrogen-like oscillator and molecular
+  geometries such as water stretch/bend modes are natural follow-ons now that
+  the N-charge architecture exists. These should wait until the multi-charge
+  WebGL path is available so their radiation structure is not limited by the CPU
+  sampled heatmap.
 - **Vector-grid density control:** an optional low / medium / high selector for
   the CPU arrow field may be added in a future pass if teaching needs or
   performance tuning justify it. This was removed from the v1 control-panel
@@ -335,11 +385,14 @@ for all GPU field values.
   CPU cost on weaker hardware or during interaction.
 - **Full magnetic-field visualization:** a future expansion may add signed
   `Total B`, `Velocity B`, and `Accel B` heatmap modes, analogous to the
-  existing `E` decomposition controls, while preserving the existing
-  radiation-intensity overlay and keeping wavefront contours tied to `bZAccel`
-  only. See `IDEAS-full-B-field-visualization.md`.
+  existing `E` decomposition controls. The current radiation heatmap is already
+  a signed `Accel B` / `bZAccel` view; wavefront contours remain tied to
+  `bZAccel` as a radiation annotation. See
+  `IDEAS-full-B-field-visualization.md`.
 - **Self-consistent dynamics:** charges responding to each other's fields via Lorentz force integration. Architecturally possible but physically subtle (radiation reaction, Abraham-Lorentz force). Treat as a separate deliberate expansion.
-- **Magnetic field visualization:** B is computed for free from the LW equations. The M6 radiation heatmap uses `bZAccel` as a measure of radiation intensity. A dedicated B-field vector arrow layer remains deferred.
+- **Magnetic field visualization:** B is computed from the LW equations. The
+  current radiation heatmap visualizes signed `bZAccel`; broader `B` controls
+  and any dedicated magnetic-vector layer remain deferred.
 - **Poynting vector / energy flow:** plausible later as a derived overlay. Requires both E and B, which are already computed.
 - **Continuous live field-line tracing:** continuously recomputed field lines during normal playback remain deferred because time-dependent LW fields would require expensive re-tracing every frame. Paused-frame streamline overlays are covered by M9 instead.
 - **Potential visualization:** scalar potential heatmap is less natural for the LW framework than for electrostatics. Deferred.
@@ -359,12 +412,16 @@ for all GPU field values.
 - **Retarded-time convergence:** solver converges within iteration cap for typical observation points; returns usable fallback for degenerate cases (R ≈ 0, edge of history buffer)
 - **History buffer:** interpolation accuracy, pruning correctness, graceful clamping when lookup exceeds buffer range
 - **Superposition:** field from two charges equals sum of individual fields at sampled points
+- **Dipole kinematics:** the two dipole charges keep opposite signs, remain
+  separated, and oscillate in antiphase along the shared axis
 - **`c` parameter:** changing `c` at runtime correctly affects retarded-time delays and history pruning window
 
 ### Regression discipline
 
 - Prior milestone tests must pass after every new milestone.
-- New demo modes must not introduce physics forks outside the source/charge configuration layer.
+- New demo modes must not introduce physics forks outside the source/charge
+  configuration layer; multi-charge modes should use the shared superposition
+  helper rather than duplicating summation logic.
 
 ## Assumptions and Defaults
 
@@ -382,7 +439,10 @@ for all GPU field values.
 - `SPEC.md` (this file) defines the project intent, scope, milestones, and success criteria. It is authoritative for "what to build" and "when it's done."
 - `IDEAS.md` is the physics and mathematics reference. It documents the LW framework, the FDTD failure analysis, and implementation skeletons. It is authoritative for "how the physics works."
 - `IDEAS-wavefronts.md` is the design rationale and extended specification for the M6 sampled wavefront overlay. It documents the `bZVel`/`bZAccel` decomposition, the warm-start tRet cache design, rendering architecture, and pedagogical positioning for that feature.
-- `IDEAS-webGL.md` is the design specification for the WebGL renderer transition (M7–M8). It documents the data model, texture packing layout, solver design, c-slider policy, canvas architecture, fallback behavior, and acceptance criteria for the GPU rendering path.
+- `IDEAS-webGL.md` is the design specification for the single-charge WebGL
+  renderer transition (M7–M8). It documents the data model, texture packing
+  layout, solver design, c-slider policy, canvas architecture, fallback
+  behavior, and acceptance criteria for the GPU rendering path.
 - `IDEAS-webGL-efficiency.md` records future performance ideas for the WebGL
   heatmap path on lower-tier hardware, including render-scale controls and
   normalization-probe cost reduction.

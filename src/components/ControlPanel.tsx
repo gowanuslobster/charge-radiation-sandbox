@@ -22,6 +22,7 @@ type Props = {
   showRadiationHeatmap: boolean;
   showWavefrontContours: boolean;
   showStreamlines: boolean;
+  showVelocityVectors: boolean;
   onDemoModeChange: (mode: DemoMode) => void;
   onFieldLayerChange: (layer: FieldLayer) => void;
   onPauseToggle: () => void;
@@ -40,6 +41,7 @@ type Props = {
   onRadiationHeatmapToggle: () => void;
   onWavefrontContoursToggle: () => void;
   onStreamlinesToggle: () => void;
+  onVelocityVectorsToggle: () => void;
   /**
    * Lower bound for the c slider. Defaults to 0.65.
    * Set to minCForMode(demoMode) when the WebGL path is active so the
@@ -61,18 +63,18 @@ const ICON_BASE = 'flex h-7 w-7 items-center justify-center rounded-md text-sm t
 
 export function ControlPanel({
   demoMode, fieldLayer, isPaused, c, stopTriggered, readout,
-  showRadiationHeatmap, showWavefrontContours, showStreamlines,
+  showRadiationHeatmap, showWavefrontContours, showStreamlines, showVelocityVectors,
   onDemoModeChange, onFieldLayerChange,
   onPauseToggle, onStepForward, onReset, onGoToStartScreen,
   onCChange,
   onResetView, onZoomIn, onZoomOut,
   onPanLeft, onPanRight, onPanUp, onPanDown,
-  onRadiationHeatmapToggle, onWavefrontContoursToggle, onStreamlinesToggle,
+  onRadiationHeatmapToggle, onWavefrontContoursToggle, onStreamlinesToggle, onVelocityVectorsToggle,
   cMin = 0.65,
   noModeActive = false,
 }: Props) {
   return (
-    <div className="absolute left-4 top-4 z-20 flex flex-col gap-3 rounded-2xl border border-orange-400/20 bg-black/65 p-4 text-sm text-zinc-200 backdrop-blur-md select-none pointer-events-auto">
+    <div className="absolute left-4 top-4 z-20 flex flex-col gap-3 rounded-2xl border border-orange-400/20 bg-black/65 p-4 text-sm text-zinc-200 backdrop-blur-md select-none pointer-events-auto max-w-xs">
 
       {/* Mode */}
       <div>
@@ -95,6 +97,12 @@ export function ControlPanel({
               ? 'bg-orange-400 text-black shadow-[0_0_16px_rgba(251,146,60,0.5)]'
               : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
             Oscillating
+          </button>
+          <button type="button" onClick={() => onDemoModeChange('dipole')}
+            className={`${TOGGLE_BASE} ${!noModeActive && demoMode === 'dipole'
+              ? 'bg-orange-400 text-black shadow-[0_0_16px_rgba(251,146,60,0.5)]'
+              : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
+            Dipole
           </button>
         </div>
         {/* Start Screen button — hidden while no mode is active (already on start screen) */}
@@ -123,6 +131,9 @@ export function ControlPanel({
         )}
         {!noModeActive && demoMode === 'oscillating' && (
           <p className="mt-1.5 text-[11px] text-zinc-400">The charge oscillates sinusoidally. Continuous dipole radiation propagates outward.</p>
+        )}
+        {!noModeActive && demoMode === 'dipole' && (
+          <p className="mt-1.5 text-[11px] text-zinc-400">Two opposite charges oscillate in antiphase, forming an electric dipole. The combined radiation field shows the characteristic dipole pattern.</p>
         )}
       </div>
 
@@ -196,14 +207,20 @@ export function ControlPanel({
       <div>
         <p className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400">Overlays</p>
         <div className="flex flex-wrap gap-1.5">
+          <button type="button" onClick={onVelocityVectorsToggle}
+            className={`${TOGGLE_BASE} ${showVelocityVectors
+              ? 'bg-teal-400/90 text-black shadow-[0_0_12px_rgba(45,212,191,0.4)]'
+              : 'bg-teal-400/15 text-teal-200 hover:bg-teal-400/28'}`}>
+            Velocity vectors
+          </button>
           <button type="button" onClick={onStreamlinesToggle}
             className={`${TOGGLE_BASE} ${showStreamlines
               ? 'bg-sky-400/90 text-black shadow-[0_0_12px_rgba(56,189,248,0.4)]'
               : 'bg-sky-400/15 text-sky-200 hover:bg-sky-400/28'}`}>
             Field lines
           </button>
-          {/* M6 radiation overlays — moving_charge and oscillating only */}
-          {(demoMode === 'moving_charge' || demoMode === 'oscillating') && (<>
+          {/* M6 radiation overlays — moving_charge, oscillating, and dipole */}
+          {(demoMode === 'moving_charge' || demoMode === 'oscillating' || demoMode === 'dipole') && (<>
             <button type="button" onClick={onRadiationHeatmapToggle}
               className={`${TOGGLE_BASE} ${showRadiationHeatmap
                 ? 'bg-amber-400/90 text-black shadow-[0_0_12px_rgba(251,191,36,0.4)]'

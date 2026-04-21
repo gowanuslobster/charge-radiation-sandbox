@@ -93,9 +93,9 @@ export function ChargeRadiationSandbox() {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 1, 1, 0, gl.RGBA, gl.FLOAT, null);
     const floatOk = gl.getError() === gl.NO_ERROR;
     gl.deleteTexture(tex);
-    // Verify MAX_TEXTURE_SIZE supports the 2D history texture layout (TEX_WIDTH=512, TEX_HEIGHT=16)
+    // Verify MAX_TEXTURE_SIZE supports the 2D history texture layout (TEX_WIDTH=512, TEX_HEIGHT=32)
     const maxTexSize = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number;
-    const sizeOk = maxTexSize >= 512;
+    const sizeOk = maxTexSize >= 512;  // 512 is the binding constraint; TEX_HEIGHT=32 ≪ 2048
     setWebGLReady(floatOk && sizeOk);
   }, []);
 
@@ -744,9 +744,11 @@ export function ChargeRadiationSandbox() {
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
-  // c-slider lower bound. Dipole always uses CPU path but has the same physics lower
-  // bound (c > peak charge speed). For moving_charge and oscillating, only enforce the
-  // stricter GPU-history bound when WebGL is active.
+  // c-slider lower bound.
+  // Dipole's physics lower bound (c > peak charge speed = 0.5) equals the GPU-history
+  // lower bound, so minCForMode('dipole') applies regardless of whether WebGL is active.
+  // For moving_charge and oscillating the GPU bound is stricter than the physics bound,
+  // so it only applies when WebGL is active.
   const cMin =
     demoMode === 'dipole' ? minCForMode('dipole') :
     webGLReady === true && (demoMode === 'moving_charge' || demoMode === 'oscillating') ? minCForMode(demoMode) :
@@ -774,21 +776,10 @@ export function ChargeRadiationSandbox() {
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 17 }}
       />
       {(demoMode === 'moving_charge' || demoMode === 'oscillating' || demoMode === 'dipole') && (
-        demoMode === 'dipole' ? (
-          // Dipole always uses CPU overlay — WebGL shader is single-charge only.
-          <WavefrontOverlayCanvas
-            chargeRuntimesRef={chargeRuntimesRef}
-            simulationTimeRef={simTimeRef}
-            configRef={configRef}
-            simEpochRef={simEpochRef}
-            bounds={viewBounds}
-            demoMode={demoMode}
-            showHeatmap={showRadiationHeatmap}
-            showContours={showWavefrontContours}
-            isPausedRef={isPausedRef}
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 10 }}
-          />
-        ) : webGLReady === true ? (
+        webGLReady === true ? (
+          // WebGL path: per-pixel retarded-time solve for all three modes.
+          // WavefrontWebGLCanvas supports up to MAX_CHARGES=2 independent histories,
+          // so dipole (two charges) now routes here alongside single-charge modes.
           <WavefrontWebGLCanvas
             chargeRuntimesRef={chargeRuntimesRef}
             simulationTimeRef={simTimeRef}

@@ -45,6 +45,12 @@ const MODE_CARDS: ModeCard[] = [
     desc: 'Two opposite charges oscillate in antiphase. Their combined field shows the classic dipole radiation pattern.',
     hint: 'Enable the Radiation heatmap to see the characteristic lobed pattern — radiation is strongest perpendicular to the dipole axis.',
   },
+  {
+    mode: 'hydrogen',
+    title: 'Hydrogen atom',
+    desc: 'A negative charge follows a circular orbit around a fixed positive center, creating a rotating dipole source.',
+    hint: 'Turn on the Radiation heatmap and contours to watch the signed magnetic radiation pattern rotate outward.',
+  },
 ];
 
 export function StartPanel({ onSelectMode }: Props) {

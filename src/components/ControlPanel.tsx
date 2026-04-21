@@ -104,6 +104,12 @@ export function ControlPanel({
               : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
             Dipole
           </button>
+          <button type="button" onClick={() => onDemoModeChange('hydrogen')}
+            className={`${TOGGLE_BASE} ${!noModeActive && demoMode === 'hydrogen'
+              ? 'bg-orange-400 text-black shadow-[0_0_16px_rgba(251,146,60,0.5)]'
+              : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
+            Hydrogen
+          </button>
         </div>
         {/* Start Screen button — hidden while no mode is active (already on start screen) */}
         {!noModeActive && (
@@ -134,6 +140,9 @@ export function ControlPanel({
         )}
         {!noModeActive && demoMode === 'dipole' && (
           <p className="mt-1.5 text-[11px] text-zinc-400">Two opposite charges oscillate in antiphase, forming an electric dipole. The combined radiation field shows the characteristic dipole pattern.</p>
+        )}
+        {!noModeActive && demoMode === 'hydrogen' && (
+          <p className="mt-1.5 text-[11px] text-zinc-400">A negative charge orbits a fixed positive center. This scripted atom acts like a rotating dipole source.</p>
         )}
       </div>
 
@@ -219,8 +228,8 @@ export function ControlPanel({
               : 'bg-sky-400/15 text-sky-200 hover:bg-sky-400/28'}`}>
             Field lines
           </button>
-          {/* M6 radiation overlays — moving_charge, oscillating, and dipole */}
-          {(demoMode === 'moving_charge' || demoMode === 'oscillating' || demoMode === 'dipole') && (<>
+          {/* Radiation overlays — moving_charge and periodic analytic modes. */}
+          {(demoMode === 'moving_charge' || demoMode === 'oscillating' || demoMode === 'dipole' || demoMode === 'hydrogen') && (<>
             <button type="button" onClick={onRadiationHeatmapToggle}
               className={`${TOGGLE_BASE} ${showRadiationHeatmap
                 ? 'bg-amber-400/90 text-black shadow-[0_0_12px_rgba(251,191,36,0.4)]'

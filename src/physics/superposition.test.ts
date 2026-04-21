@@ -5,6 +5,7 @@
 //   2. Dipole charges are out of phase: charge 0 accel.x = -charge 1 accel.x.
 //   3. Dipole initial positions are correct (at ±sep/2, separation > 2A).
 //   4. sampleDemoChargeStates('dipole', t) returns two entries with charges +1 and -1.
+//   5. Hydrogen mode has a fixed positive center and orbiting negative charge.
 
 import { describe, it, expect } from 'vitest';
 import { ChargeHistory } from './chargeHistory';
@@ -13,6 +14,8 @@ import {
   sampleDemoChargeStates,
   DIPOLE_SEPARATION,
   DIPOLE_AMPLITUDE,
+  HYDROGEN_ORBIT_RADIUS,
+  HYDROGEN_OMEGA,
 } from './demoModes';
 import type { ChargeRuntime } from './chargeRuntime';
 import type { SimConfig } from './types';
@@ -145,5 +148,40 @@ describe('sampleDemoChargeStates dipole kinematics', () => {
     expect(specs).toHaveLength(2);
     expect(specs[0].charge).toBe(+1);
     expect(specs[1].charge).toBe(-1);
+  });
+});
+
+// ── Test 5: hydrogen-like circular orbit ──────────────────────────────────────
+
+describe('sampleDemoChargeStates hydrogen kinematics', () => {
+  it('returns fixed positive center and orbiting negative charge', () => {
+    const specs = sampleDemoChargeStates('hydrogen', 0);
+    expect(specs).toHaveLength(2);
+    expect(specs[0].charge).toBe(+1);
+    expect(specs[1].charge).toBe(-1);
+
+    expect(specs[0].state.pos.x).toBe(0);
+    expect(specs[0].state.pos.y).toBe(0);
+    expect(specs[0].state.vel.x).toBe(0);
+    expect(specs[0].state.vel.y).toBe(0);
+    expect(specs[0].state.accel.x).toBe(0);
+    expect(specs[0].state.accel.y).toBe(0);
+
+    expect(specs[1].state.pos.x).toBeCloseTo(HYDROGEN_ORBIT_RADIUS, 10);
+    expect(specs[1].state.pos.y).toBeCloseTo(0, 10);
+    expect(specs[1].state.vel.x).toBeCloseTo(0, 10);
+    expect(specs[1].state.vel.y).toBeCloseTo(HYDROGEN_ORBIT_RADIUS * HYDROGEN_OMEGA, 10);
+    expect(specs[1].state.accel.x).toBeCloseTo(-HYDROGEN_ORBIT_RADIUS * HYDROGEN_OMEGA ** 2, 10);
+    expect(specs[1].state.accel.y).toBeCloseTo(0, 10);
+  });
+
+  it('keeps the orbit radius constant', () => {
+    for (const t of [0, 0.25, 1.0, Math.PI]) {
+      const electron = sampleDemoChargeStates('hydrogen', t)[1].state;
+      const r = Math.hypot(electron.pos.x, electron.pos.y);
+      const v = Math.hypot(electron.vel.x, electron.vel.y);
+      expect(r).toBeCloseTo(HYDROGEN_ORBIT_RADIUS, 10);
+      expect(v).toBeCloseTo(HYDROGEN_ORBIT_RADIUS * HYDROGEN_OMEGA, 10);
+    }
   });
 });

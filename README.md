@@ -29,9 +29,9 @@ A floating panel in the upper-left corner gives you all controls:
 
 | Section | What it does |
 |---------|-------------|
-| **Mode** | Switch between the four demo modes (see below). Switching reseeds the simulation cleanly. **← Start screen** — return to the mode-picker panel and reset all settings to defaults (including c). |
+| **Mode** | Switch between the five demo modes (see below). Switching reseeds the simulation cleanly. **← Start screen** — return to the mode-picker panel and reset all settings to defaults (including c). |
 | **Playback** | **Run / Pause** — toggle real-time playback. **Step →** — advance one frame at a time while paused. **Reset** — restart the current mode from t=0, keeping your field layer and overlay choices. |
-| **Speed of light** | Drag the slider to change c (max 3.0). The lower bound is mode-dependent: 0.62 in Oscillating and Dipole, 0.72 in Moving charge (the GPU history buffer must cover the causal horizon), and 0.65 in Charge at rest. Lowering c slows all field propagation, making retarded-time effects dramatically visible. |
+| **Speed of light** | Drag the slider to change c (max 3.0). The lower bound is mode-dependent: 0.62 in Oscillating and Dipole, 0.72 in Moving charge and Hydrogen (the GPU history buffer must cover the causal horizon), and 0.65 in Charge at rest. Lowering c slows all field propagation, making retarded-time effects dramatically visible. |
 | **Field** | Toggle which component of E you see: **Total E** (default), **Velocity E** (Coulomb-like term), or **Accel E** (radiation term only). |
 | **Overlays** | See the Overlays section below. |
 | **Camera** | Reset view, zoom ±, and pan arrows. You can also scroll-to-zoom and right/middle-drag to pan directly on the canvas. |
@@ -88,6 +88,15 @@ This mode demonstrates that the simulator is not restricted to a single charge. 
 - Switch to **Accel E** to isolate just the radiation contribution from each charge.
 - Compare with **Oscillating** (single charge): the dipole pattern looks similar but the field from the two charges partially cancels near the axis, sharpening the lobes.
 
+### Hydrogen atom
+
+A fixed positive charge sits at the center while a negative charge follows a prescribed circular orbit. This is a teaching model, not self-consistent orbital dynamics: the trajectory is scripted so the sandbox can focus on retarded fields, superposition, and radiation from a rotating dipole-like source.
+
+**To try:**
+- Enable **Radiation heatmap** and **Wavefront contours** to see the signed magnetic radiation pattern rotate outward.
+- Pause and enable **Field lines** to compare the near-field geometry with the radiation heatmap.
+- Lower c to exaggerate the causal delay between the orbiting charge and the fields far from the atom.
+
 ---
 
 ## Teaching overlays
@@ -97,8 +106,8 @@ All overlays are off by default. They stack freely — you can enable any combin
 | Overlay | Where | What it shows |
 |---------|-------|---------------|
 | **Field lines** | All modes, when paused | Instantaneous streamlines of the total electric field at the paused frame. Not material lines that move with the charge — they are a snapshot of the field at that moment. |
-| **Radiation heatmap** | Moving charge, Oscillating, Dipole | Color map of the radiation magnetic field (Bz from the acceleration term). Warm/orange = positive, cool/blue = negative — the sign encodes the field direction. All three modes use the same signed dual-hue convention. In Dipole, the contributions from both charges are superposed before rendering. |
-| **Wavefront contours** | Moving charge, Oscillating, Dipole | Contour lines always aligned with the heatmap. In Oscillating and Dipole: zero-crossing lines tracking wave phase. In Moving charge: envelope threshold contour marking the shell boundary. |
+| **Radiation heatmap** | Moving charge, Oscillating, Dipole, Hydrogen | Color map of the radiation magnetic field (Bz from the acceleration term). Warm/orange = positive, cool/blue = negative — the sign encodes the field direction. Contributions from all active charges are superposed before rendering. |
+| **Wavefront contours** | Moving charge, Oscillating, Dipole, Hydrogen | Contour lines always aligned with the heatmap. In Oscillating, Dipole, and Hydrogen: zero-crossing lines tracking wave phase. In Moving charge: envelope threshold contour marking the shell boundary. |
 | **Ghost charge** (mini panel) | Moving charge | A marker at the extrapolated would-have-been position after the stop. Shows why the field outside the shell still points toward a charge that is no longer there. |
 | **Ghost field lines** (mini panel) | Moving charge, paused | Streamlines of the extrapolated constant-velocity field — shows what the field would look like if the charge had never stopped. |
 
@@ -143,7 +152,7 @@ Key design decisions:
 | `chargeRuntime.ts` | `ChargeRuntime` type: groups a `ChargeHistory` with its signed charge value; the unit of multi-charge arrays |
 | `retardedTime.ts` | Retarded-time root-finder: fixed-point iteration (max 15 steps), graceful fallback |
 | `lienardWiechert.ts` | Exact LW field evaluator: velocity term (1/R²) + acceleration term (1/R) + B field decomposition; `evaluateSuperposedLienardWiechertField` sums contributions from an arbitrary `ChargeRuntime[]` |
-| `demoModes.ts` | Analytical kinematics for each demo mode; `sampleDemoChargeStates` returns per-charge specs for all modes including dipole; `sampleSuddenStopState` for interactive braking; braking substep helper for radiation-shell sharpness |
+| `demoModes.ts` | Analytical kinematics for each demo mode; `sampleDemoChargeStates` returns per-charge specs for all modes including dipole and hydrogen; `sampleSuddenStopState` for interactive braking; braking substep helper for radiation-shell sharpness |
 | `dragKinematics.ts` | Tick-owned drag kinematics: EMA smoothing, zero-motion guard, speed cap |
 | `wavefrontSampler.ts` | Coarse scalar sampler for `bZAccel` with per-cell retarded-time warm-starting (CPU fallback path) |
 | `streamlineTracer.ts` | RK4 streamline tracer for paused-frame field-line overlays; ghost-angle numeric solver for moving-charge ghost lines |

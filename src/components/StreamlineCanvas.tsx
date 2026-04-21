@@ -277,7 +277,7 @@ export function StreamlineCanvas({
 
         // Main streamlines — combined LW E field at the paused frame.
         // For single-charge modes: seed from one position (existing behavior).
-        // For multi-charge (dipole): seed from each charge's position, combined field.
+        // For multi-charge modes: seed from each charge's position in the combined field.
         // Ghost lines are only supported for single-charge (moving_charge mode).
         if (showSL || (showGSL && chargeRuntimes.length === 1)) {
           if (chargeRuntimes.length === 1) {

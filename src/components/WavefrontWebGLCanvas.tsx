@@ -71,7 +71,7 @@ type Props = {
   configRef:         MutableRefObject<SimConfig>;
   simEpochRef:       MutableRefObject<number>;
   bounds:            WorldBounds;
-  demoMode:          'moving_charge' | 'oscillating' | 'dipole';
+  demoMode:          'moving_charge' | 'oscillating' | 'dipole' | 'hydrogen';
   showHeatmap:       boolean;
   showContours:      boolean;
   isPausedRef:       MutableRefObject<boolean>;
@@ -117,7 +117,7 @@ uniform float     u_charges[2];         // per-charge signed charge value
 uniform float     u_c;
 uniform vec4      u_worldBounds;        // (minX, maxX, minY, maxY) in world space
 uniform vec2      u_resolution;         // canvas physical pixel size (post-DPR)
-uniform bool      u_isSigned;           // true = zero-crossing contour (oscillating, dipole)
+uniform bool      u_isSigned;           // true = zero-crossing contour (oscillating, dipole, hydrogen)
                                         // false = envelope contour (moving_charge)
 uniform float     u_peak;              // normalization ceiling (EMA-smoothed CPU probe)
 uniform bool      u_showHeatmap;
@@ -316,7 +316,7 @@ void main() {
 
   if (u_showContour) {
     if (u_isSigned) {
-      // oscillating and dipole: zero-crossing contour on summed bZAccel
+      // oscillating, dipole, and hydrogen: zero-crossing contour on summed bZAccel
       float norm         = bZAccel / u_peak;
       float contourWidth = fwidth(norm) * 1.5;
       float contourMask  = 1.0 - smoothstep(0.0, contourWidth, abs(norm));
@@ -568,8 +568,8 @@ export function WavefrontWebGLCanvas({
         gl.uniform2f(uniforms['u_resolution'], canvas.width, canvas.height);
       }
       if (uniforms['u_isSigned'] !== undefined) {
-        // Signed zero-crossing contour for oscillating and dipole; envelope for moving_charge.
-        gl.uniform1i(uniforms['u_isSigned'], (mode === 'oscillating' || mode === 'dipole') ? 1 : 0);
+        // Signed zero-crossing contour for periodic modes; envelope for moving_charge.
+        gl.uniform1i(uniforms['u_isSigned'], (mode === 'oscillating' || mode === 'dipole' || mode === 'hydrogen') ? 1 : 0);
       }
       if (uniforms['u_peak']        !== undefined) gl.uniform1f(uniforms['u_peak'], peak);
       if (uniforms['u_showHeatmap'] !== undefined) gl.uniform1i(uniforms['u_showHeatmap'], doHeatmap ? 1 : 0);

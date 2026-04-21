@@ -30,6 +30,7 @@ import {
   bilinearUpsample,
   computeContrastPeak,
   getDefaultContourLevels,
+  type HeatmapMode,
   type WavefrontRenderWorkspace,
 } from '@/rendering/wavefrontRender';
 
@@ -44,10 +45,8 @@ const MAX_GRID_CELLS = 16384;
 const RENDER_SCALE     = 3;
 const MAX_RENDER_CELLS = 200_000; // fallback reduces scale to 2, then 1, if exceeded
 
-// Smoothing passes per mode. 1 is the correct starting point for both.
-// Increase SMOOTH_PASSES_ENVELOPE to 2 only if manual visual review warrants it.
-const SMOOTH_PASSES_SIGNED   = 1;
-const SMOOTH_PASSES_ENVELOPE = 1;
+// Smoothing passes. 1 is the correct starting point; increase only if visual review warrants it.
+const SMOOTH_PASSES_SIGNED = 1;
 
 type Props = {
   historyRef: RefObject<ChargeHistory>;
@@ -216,7 +215,6 @@ export function WavefrontOverlayCanvas({
       // Heatmap always uses signed coloring (warm/cool dual-hue) for both modes.
       // Contour logic is independent: oscillating uses zero-crossing on the signed field;
       // moving_charge uses an envelope threshold on the abs field.
-      const mode: HeatmapMode = 'signed';
       const contourMode: HeatmapMode = demoModeRef.current === 'oscillating' ? 'signed' : 'envelope';
 
       const currentSimTime = simulationTimeRef.current;
@@ -330,9 +328,6 @@ export function WavefrontOverlayCanvas({
         lastRenderW      = renderW;
         lastRenderH      = renderH;
       }
-
-      // Heatmap always draws the signed buffer.
-      const displayBuffer = upscaledSignedBuffer;
 
       if (wantHeatmap && cachedHeatmapImageData) {
         drawHeatmap(ctx, cachedHeatmapImageData, renderW, renderH, cssW, cssH, renderWorkspace, 0.6);

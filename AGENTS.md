@@ -227,9 +227,24 @@ Global design tokens (background, foreground) live in the `@theme inline` block 
 
 ## Verification habits
 
-- Prefer targeted checks first after focused changes:
-  - `npx eslint <touched-files>`
-  - `npm test`
+### Required checks after any TypeScript change
+
+After touching any TypeScript file, run **in this order**:
+
+```bash
+npm run build        # REQUIRED — tsc -b + vite build (see note below)
+npm test -- --run    # full test suite
+npx eslint <touched-files>
+```
+
+**Critical: always use `npm run build`, never `tsc --noEmit` alone.**
+
+This project uses TypeScript project references (`tsconfig.json` → `tsconfig.app.json`). The root `tsconfig.json` has `"files": []`, so `tsc --noEmit` without the `-b` flag type-checks **nothing** and always exits clean — it is a silent no-op. The flags that catch real errors (`noUnusedLocals`, `noUnusedParameters`, etc.) live in `tsconfig.app.json` and are only reached via `tsc -b`, which `npm run build` calls.
+
+Similarly, **the Vite dev server (`npm run dev`) does not type-check**. Code that breaks the build can run fine on localhost. Never treat a passing dev server as evidence that the build is clean.
+
+### Other verification habits
+
 - Prefer targeted lint on touched files before full lint when repo-wide issues are possible.
 - Treat automated tests as milestone-gating work, not as end-of-project cleanup.
 - Add or extend tests in the same pass as each new milestone or subsystem.

@@ -292,8 +292,7 @@ void main() {
   vec4 outColor = vec4(0.0);
 
   if (u_showHeatmap) {
-    outColor = u_isSigned ? signedColor(bZAccel, u_peak)
-                          : envelopeColor(bZAccel, u_peak);
+    outColor = signedColor(bZAccel, u_peak);
   }
 
   if (u_showContour) {
@@ -458,7 +457,7 @@ export function WavefrontWebGLCanvas({
       const hardReset = epochChanged || modeChanged || cChanged || chargeChanged;
 
       if (hardReset || (!paused || boundsChanged)) {
-        const heatmapMode: HeatmapMode = mode === 'oscillating' ? 'signed' : 'envelope';
+        const heatmapMode: HeatmapMode = 'signed';
         const scalars = sampleWavefront(normSamplerState, {
           history,
           simTime: tCurrent,

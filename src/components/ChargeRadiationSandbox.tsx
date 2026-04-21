@@ -78,6 +78,7 @@ export function ChargeRadiationSandbox() {
   // M6 overlay state.
   const [showRadiationHeatmap, setShowRadiationHeatmap] = useState(false);
   const [showWavefrontContours, setShowWavefrontContours] = useState(false);
+  const [showVelocityVectors, setShowVelocityVectors] = useState(true);
 
   // WebGL capability detection. null = detecting, true = WebGL2+RGBA32F ready, false = fallback.
   const [webGLReady, setWebGLReady] = useState<boolean | null>(null);
@@ -829,6 +830,7 @@ export function ChargeRadiationSandbox() {
         simEpochRef={simEpochRef}
         bounds={viewBounds}
         fieldLayer={fieldLayer}
+        showVelocityVectors={showVelocityVectors}
         isPanning={isPanning}
         isPausedRef={isPausedRef}
         ghostPosRef={ghostPosRef}
@@ -870,6 +872,8 @@ export function ChargeRadiationSandbox() {
         onWavefrontContoursToggle={() => setShowWavefrontContours(v => !v)}
         showStreamlines={showStreamlines}
         onStreamlinesToggle={() => setShowStreamlines(v => !v)}
+        showVelocityVectors={showVelocityVectors}
+        onVelocityVectorsToggle={() => setShowVelocityVectors(v => !v)}
         cMin={cMin}
         noModeActive={showStartPanel}
       />

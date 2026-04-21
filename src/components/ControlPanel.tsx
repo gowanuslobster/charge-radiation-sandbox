@@ -22,6 +22,7 @@ type Props = {
   showRadiationHeatmap: boolean;
   showWavefrontContours: boolean;
   showStreamlines: boolean;
+  showVelocityVectors: boolean;
   onDemoModeChange: (mode: DemoMode) => void;
   onFieldLayerChange: (layer: FieldLayer) => void;
   onPauseToggle: () => void;
@@ -40,6 +41,7 @@ type Props = {
   onRadiationHeatmapToggle: () => void;
   onWavefrontContoursToggle: () => void;
   onStreamlinesToggle: () => void;
+  onVelocityVectorsToggle: () => void;
   /**
    * Lower bound for the c slider. Defaults to 0.65.
    * Set to minCForMode(demoMode) when the WebGL path is active so the
@@ -61,13 +63,13 @@ const ICON_BASE = 'flex h-7 w-7 items-center justify-center rounded-md text-sm t
 
 export function ControlPanel({
   demoMode, fieldLayer, isPaused, c, stopTriggered, readout,
-  showRadiationHeatmap, showWavefrontContours, showStreamlines,
+  showRadiationHeatmap, showWavefrontContours, showStreamlines, showVelocityVectors,
   onDemoModeChange, onFieldLayerChange,
   onPauseToggle, onStepForward, onReset, onGoToStartScreen,
   onCChange,
   onResetView, onZoomIn, onZoomOut,
   onPanLeft, onPanRight, onPanUp, onPanDown,
-  onRadiationHeatmapToggle, onWavefrontContoursToggle, onStreamlinesToggle,
+  onRadiationHeatmapToggle, onWavefrontContoursToggle, onStreamlinesToggle, onVelocityVectorsToggle,
   cMin = 0.65,
   noModeActive = false,
 }: Props) {
@@ -205,6 +207,12 @@ export function ControlPanel({
       <div>
         <p className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400">Overlays</p>
         <div className="flex flex-wrap gap-1.5">
+          <button type="button" onClick={onVelocityVectorsToggle}
+            className={`${TOGGLE_BASE} ${showVelocityVectors
+              ? 'bg-teal-400/90 text-black shadow-[0_0_12px_rgba(45,212,191,0.4)]'
+              : 'bg-teal-400/15 text-teal-200 hover:bg-teal-400/28'}`}>
+            Velocity vectors
+          </button>
           <button type="button" onClick={onStreamlinesToggle}
             className={`${TOGGLE_BASE} ${showStreamlines
               ? 'bg-sky-400/90 text-black shadow-[0_0_12px_rgba(56,189,248,0.4)]'

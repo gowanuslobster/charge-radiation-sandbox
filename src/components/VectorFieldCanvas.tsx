@@ -23,6 +23,8 @@ type Props = {
   gridW?: number; // default 40
   gridH?: number; // default 40
   fieldLayer: 'total' | 'vel' | 'accel';
+  /** When false, velocity arrows on charge markers are hidden. Defaults to true. */
+  showVelocityVectors?: boolean;
   /** True while the user is panning — halves grid density for responsiveness. */
   isPanning?: boolean;
   isPausedRef?: RefObject<boolean>;
@@ -127,6 +129,7 @@ export function VectorFieldCanvas({
   gridW = 40,
   gridH = 40,
   fieldLayer,
+  showVelocityVectors = true,
   isPanning = false,
   isPausedRef,
   simEpochRef,
@@ -141,9 +144,11 @@ export function VectorFieldCanvas({
   const boundsRef = useRef(bounds);
   const fieldLayerRef = useRef(fieldLayer);
   const isPanningRef = useRef(isPanning);
+  const showVelocityVectorsRef = useRef(showVelocityVectors);
   useEffect(() => { boundsRef.current = bounds; }, [bounds]);
   useEffect(() => { fieldLayerRef.current = fieldLayer; }, [fieldLayer]);
   useEffect(() => { isPanningRef.current = isPanning; }, [isPanning]);
+  useEffect(() => { showVelocityVectorsRef.current = showVelocityVectors; }, [showVelocityVectors]);
 
   // Main RAF loop. Restarts only if grid dimensions change (rare).
   useEffect(() => {
@@ -352,11 +357,11 @@ export function VectorFieldCanvas({
         ctx.save();
 
         // Velocity arrow — drawn first so the charge circle renders on top of its base.
-        // Only shown for β > 0.005; hidden for stationary charges.
+        // Only shown for β > 0.005 and when the velocity vectors overlay is enabled.
         const vel = newest.vel;
         const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
         const beta = speed / configRef.current.c;
-        if (beta > 0.005) {
+        if (beta > 0.005 && showVelocityVectorsRef.current) {
           const MAX_VEL_ARROW_PX = cssW * 0.20;
           const BETA_FLOOR = 0.15;
           const HEAD_LEN = 10;

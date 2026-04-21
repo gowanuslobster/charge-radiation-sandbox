@@ -12,7 +12,7 @@
 
 import { useEffect, useRef, type CSSProperties, type RefObject, type MutableRefObject } from 'react';
 import type { SimConfig } from '@/physics/types';
-import type { ChargeHistory } from '@/physics/chargeHistory';
+import type { ChargeRuntime } from '@/physics/chargeRuntime';
 import type { WorldBounds } from '@/rendering/worldSpace';
 import { createSamplerState, sampleWavefront } from '@/physics/wavefrontSampler';
 import { computeContrastPeak, type HeatmapMode } from '@/rendering/wavefrontRender';
@@ -51,11 +51,14 @@ const NORM_EMA_ALPHA = 0.12;       // temporal smoothing; tune if flicker observ
 const WEBGL_MAX_DPR = 1.5;
 
 // ── Props — identical to WavefrontOverlayCanvas ───────────────────────────────
+//
+// Single-charge WebGL path reads chargeRuntimes[0] only.
+// Dipole mode never routes here — ChargeRadiationSandbox always sends dipole
+// to WavefrontOverlayCanvas (CPU path).
 
 type Props = {
-  historyRef:        RefObject<ChargeHistory>;
+  chargeRuntimesRef: RefObject<ChargeRuntime[]>;
   simulationTimeRef: MutableRefObject<number>;
-  chargeRef:         MutableRefObject<number>;
   configRef:         MutableRefObject<SimConfig>;
   simEpochRef:       MutableRefObject<number>;
   bounds:            WorldBounds;
@@ -326,9 +329,8 @@ void main() {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function WavefrontWebGLCanvas({
-  historyRef,
+  chargeRuntimesRef,
   simulationTimeRef,
-  chargeRef,
   configRef,
   simEpochRef,
   bounds,
@@ -398,9 +400,11 @@ export function WavefrontWebGLCanvas({
     const tick = () => {
       if (!glAlive) return;
 
-      const history   = historyRef.current;
+      // Single-charge WebGL path: reads index 0 only. Dipole never reaches here.
+      const runtime0  = chargeRuntimesRef.current[0];
+      const history   = runtime0?.history;
+      const charge    = runtime0?.charge ?? 1;
       const tCurrent  = simulationTimeRef.current;
-      const charge    = chargeRef.current;
       const config    = configRef.current;
       const epoch     = simEpochRef.current;
       const mode      = demoModeRef.current;
@@ -415,12 +419,12 @@ export function WavefrontWebGLCanvas({
         return;
       }
 
-      const historyCount = history.isEmpty() ? 0 : history.count;
+      const historyCount = (!history || history.isEmpty()) ? 0 : history.count;
 
       // ── Pack history into staging buffer ──────────────────────────────────
       // Zero out the staging buffer to avoid stale data beyond historyCount.
       staging.fill(0);
-      for (let i = 0; i < historyCount; i++) {
+      for (let i = 0; i < historyCount && history; i++) {
         const s  = history.stateAt(i);
         // Timestamp offset computed in float64 precision before cast to float32.
         const tOff = s.t - tCurrent;
@@ -458,7 +462,7 @@ export function WavefrontWebGLCanvas({
 
       if (hardReset || (!paused || boundsChanged)) {
         const heatmapMode: HeatmapMode = 'signed';
-        const scalars = sampleWavefront(normSamplerState, {
+        const scalars = history ? sampleWavefront(normSamplerState, {
           history,
           simTime: tCurrent,
           charge,
@@ -467,7 +471,7 @@ export function WavefrontWebGLCanvas({
           gridW: NORM_PROBE_W,
           gridH: NORM_PROBE_H,
           simEpoch: epoch,
-        });
+        }) : new Float32Array(NORM_PROBE_W * NORM_PROBE_H);
         const rawPeak = computeContrastPeak(scalars, heatmapMode);
 
         if (hardReset || smoothedPeak === 0) {

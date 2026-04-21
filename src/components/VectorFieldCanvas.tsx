@@ -9,16 +9,15 @@
 
 import { useEffect, useRef, type CSSProperties, type RefObject, type MutableRefObject } from 'react';
 import type { SimConfig, Vec2 } from '@/physics/types';
-import type { ChargeHistory } from '@/physics/chargeHistory';
-import { evaluateLienardWiechertField } from '@/physics/lienardWiechert';
+import type { ChargeRuntime } from '@/physics/chargeRuntime';
+import { evaluateSuperposedLienardWiechertField } from '@/physics/lienardWiechert';
 import { getWorldToScreenTransform, transformWorldPoint, type WorldBounds } from '@/rendering/worldSpace';
 import { fillArrowSpec, type ArrowSpec } from '@/rendering/arrows';
 import { CHARGE_MARKER_RADIUS_PX } from '@/rendering/chargeMarker';
 
 type Props = {
-  historyRef: RefObject<ChargeHistory>;
+  chargeRuntimesRef: RefObject<ChargeRuntime[]>;
   simulationTimeRef: RefObject<number>;
-  chargeRef: RefObject<number>;
   configRef: RefObject<SimConfig>;
   bounds: WorldBounds;
   gridW?: number; // default 40
@@ -38,7 +37,7 @@ type Props = {
    * Optional external MutableRefObject to receive the canvas element.
    * Used by useCursorReadout to attach canvas-scoped pointer listeners.
    */
-  canvasRefProp?: MutableRefObject<HTMLCanvasElement | null>;
+  externalCanvasRef?: MutableRefObject<HTMLCanvasElement | null>;
   /** Forwarded to the canvas element. Caller uses position:absolute inset:0. */
   style?: CSSProperties;
 };
@@ -121,9 +120,8 @@ function drawArrowGlowShape(ctx: CanvasRenderingContext2D, spec: ArrowSpec): voi
 }
 
 export function VectorFieldCanvas({
-  historyRef,
+  chargeRuntimesRef,
   simulationTimeRef,
-  chargeRef,
   configRef,
   bounds,
   gridW = 40,
@@ -133,7 +131,7 @@ export function VectorFieldCanvas({
   isPausedRef,
   simEpochRef,
   ghostPosRef,
-  canvasRefProp,
+  externalCanvasRef,
   style,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -196,6 +194,7 @@ export function VectorFieldCanvas({
     let lastSolvedMaxY = NaN;
     let lastSolvedLayer = '';
     let lastSolvedC = NaN;
+    let lastChargeCount = -1;
 
     // DPR-aware sizing via ResizeObserver.
     // Setting canvas.width/height resets the ctx transform, so we re-apply DPR scale here.
@@ -245,7 +244,8 @@ export function VectorFieldCanvas({
         currentBounds.minY !== lastSolvedMinY ||
         currentBounds.maxY !== lastSolvedMaxY ||
         layer !== lastSolvedLayer ||
-        configRef.current.c !== lastSolvedC;
+        configRef.current.c !== lastSolvedC ||
+        chargeRuntimesRef.current.length !== lastChargeCount;
 
       ctx.clearRect(0, 0, cssW, cssH);
       ctx.globalAlpha = 1;
@@ -266,12 +266,11 @@ export function VectorFieldCanvas({
       if (needsSolve) {
         const spanX = currentBounds.maxX - currentBounds.minX;
         const spanY = currentBounds.maxY - currentBounds.minY;
-        const history = historyRef.current;
+        const chargeRuntimes = chargeRuntimesRef.current;
         const simTime = simulationTimeRef.current;
-        const charge = chargeRef.current;
         const config = configRef.current;
 
-        // Evaluate LW field at each grid point and fill the pre-allocated pool.
+        // Evaluate superposed LW field at each grid point and fill the pre-allocated pool.
         // obsPos is mutated in place — no per-grid-point allocation.
         // transformWorldPoint is inlined to avoid a Vec2 allocation per point.
         let arrowCount = 0;
@@ -280,11 +279,10 @@ export function VectorFieldCanvas({
             obsPos.x = currentBounds.minX + (i + 0.5) * spanX / activeGridW;
             obsPos.y = currentBounds.minY + (j + 0.5) * spanY / activeGridH;
 
-            const result = evaluateLienardWiechertField({
+            const result = evaluateSuperposedLienardWiechertField({
               observationPos: obsPos,
               observationTime: simTime,
-              history,
-              charge,
+              chargeRuntimes,
               config,
             });
             if (!result) continue;
@@ -312,6 +310,7 @@ export function VectorFieldCanvas({
         lastSolvedMaxY = currentBounds.maxY;
         lastSolvedLayer = layer;
         lastSolvedC = configRef.current.c;
+        lastChargeCount = chargeRuntimes.length;
       }
 
       // Two-pass draw: core arrows first (no shadow state), then glow-only pass.
@@ -340,45 +339,40 @@ export function VectorFieldCanvas({
       ctx.drawImage(glowCanvas, 0, 0);
       ctx.restore();
 
-      // Draw source charge marker from newest recorded state.
+      // Draw one charge marker per runtime.
       // newest() is null before the first reseed completes (brief window during mount).
-      const newest = historyRef.current.newest();
-      if (newest !== null) {
+      for (const runtime of chargeRuntimesRef.current) {
+        const newest = runtime.history.newest();
+        if (newest === null) continue;
+
         const mp = transformWorldPoint(newest.pos, transform);
         const radius = CHARGE_MARKER_RADIUS_PX;
+        const isPositive = runtime.charge >= 0;
 
         ctx.save();
 
         // Velocity arrow — drawn first so the charge circle renders on top of its base.
         // Only shown for β > 0.005; hidden for stationary charges.
-        // Arrow length: max(β, 0.15) × (cssW × 0.20) — floors at β=0.15 visual size
-        // so slow charges still show a legible arrow. At β=1 the arrow is ~1/5 screen width.
-        // Direction is transformed to canvas space (transform.d < 0 applies the Y-flip).
         const vel = newest.vel;
         const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
         const beta = speed / configRef.current.c;
         if (beta > 0.005) {
           const MAX_VEL_ARROW_PX = cssW * 0.20;
-          const BETA_FLOOR = 0.15; // visual minimum — arrow never smaller than this fraction
+          const BETA_FLOOR = 0.15;
           const HEAD_LEN = 10;
 
-          // Unit vector in canvas space: scale world components by transform diagonal.
           const cdx = vel.x * transform.a;
-          const cdy = vel.y * transform.d; // d < 0 → Y-axis flip
+          const cdy = vel.y * transform.d;
           const cMag = Math.sqrt(cdx * cdx + cdy * cdy);
           const nx = cdx / cMag;
           const ny = cdy / cMag;
 
-          // Arrow starts at circle edge; length floored at BETA_FLOOR × MAX.
           const arrowLen = Math.max(beta, BETA_FLOOR) * MAX_VEL_ARROW_PX;
           const stemStartX = mp.x + nx * radius;
           const stemStartY = mp.y + ny * radius;
           const tipX = stemStartX + nx * arrowLen;
           const tipY = stemStartY + ny * arrowLen;
 
-          // Open V arrowhead — field-sandbox style: two strokes, not a filled triangle.
-          // Wings: 10px back from tip, ±5.5px perpendicular. No trig needed.
-          // Perpendicular to (nx, ny): left = (−ny, nx), right = (ny, −nx).
           const w1x = tipX - nx * HEAD_LEN - ny * 5.5;
           const w1y = tipY - ny * HEAD_LEN + nx * 5.5;
           const w2x = tipX - nx * HEAD_LEN + ny * 5.5;
@@ -388,7 +382,6 @@ export function VectorFieldCanvas({
           ctx.lineJoin = 'round';
           ctx.globalAlpha = 1;
 
-          // Glow underlay — solid, wide, low alpha (field-sandbox pattern).
           ctx.strokeStyle = 'rgba(159,247,255,0.18)';
           ctx.lineWidth = 5;
           ctx.setLineDash([]);
@@ -397,7 +390,6 @@ export function VectorFieldCanvas({
           ctx.lineTo(tipX, tipY);
           ctx.stroke();
 
-          // Dashed stem — matches field-sandbox strokeDasharray="8 7".
           ctx.strokeStyle = 'rgba(159,247,255,0.85)';
           ctx.lineWidth = 2.4;
           ctx.setLineDash([8, 7]);
@@ -406,7 +398,6 @@ export function VectorFieldCanvas({
           ctx.lineTo(tipX, tipY);
           ctx.stroke();
 
-          // Solid open V arrowhead (no dash on wings).
           ctx.setLineDash([]);
           ctx.lineWidth = 2.4;
           ctx.beginPath();
@@ -416,8 +407,6 @@ export function VectorFieldCanvas({
           ctx.lineTo(w2x, w2y);
           ctx.stroke();
 
-          // Speed label — anchored just past the arrowhead tip in the arrow direction.
-          // Dark shadow ensures legibility over bright field arrows.
           const label = `${beta.toFixed(2)}c`;
           const labelDist = HEAD_LEN + 10;
           const labelX = tipX + nx * labelDist;
@@ -434,13 +423,13 @@ export function VectorFieldCanvas({
           ctx.shadowBlur = 0;
         }
 
-        // Charge circle and sign label.
+        // Charge circle and sign label — orange for positive, blue for negative.
         ctx.globalAlpha = 1;
         ctx.beginPath();
         ctx.arc(mp.x, mp.y, radius, 0, Math.PI * 2);
-        ctx.fillStyle = '#ff7a3f';
+        ctx.fillStyle = isPositive ? '#ff7a3f' : '#4a9eff';
         ctx.fill();
-        ctx.strokeStyle = 'rgba(255,200,120,0.8)';
+        ctx.strokeStyle = isPositive ? 'rgba(255,200,120,0.8)' : 'rgba(120,180,255,0.8)';
         ctx.lineWidth = 1.5;
         ctx.stroke();
 
@@ -449,7 +438,7 @@ export function VectorFieldCanvas({
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.globalAlpha = 1;
-        ctx.fillText('+', mp.x, mp.y);
+        ctx.fillText(isPositive ? '+' : '−', mp.x, mp.y);
 
         ctx.restore();
       }
@@ -482,13 +471,13 @@ export function VectorFieldCanvas({
   // and reseed, which would reset the glow canvas and pool. The ref pattern is the
   // correct idiom for values that must be readable from a long-lived RAF loop.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [historyRef, simulationTimeRef, chargeRef, configRef, gridW, gridH]);
+  }, [chargeRuntimesRef, simulationTimeRef, configRef, gridW, gridH]);
 
   return (
     <canvas
       ref={(el) => {
         canvasRef.current = el;
-        if (canvasRefProp) canvasRefProp.current = el;
+        if (externalCanvasRef) externalCanvasRef.current = el;
       }}
       style={style}
     />

@@ -13,7 +13,7 @@
 
 import { useEffect, useRef, type CSSProperties, type RefObject, type MutableRefObject } from 'react';
 import type { SimConfig } from '@/physics/types';
-import type { ChargeHistory } from '@/physics/chargeHistory';
+import type { ChargeRuntime } from '@/physics/chargeRuntime';
 import type { WorldBounds } from '@/rendering/worldSpace';
 import {
   createSamplerState,
@@ -49,13 +49,12 @@ const MAX_RENDER_CELLS = 200_000; // fallback reduces scale to 2, then 1, if exc
 const SMOOTH_PASSES_SIGNED = 1;
 
 type Props = {
-  historyRef: RefObject<ChargeHistory>;
+  chargeRuntimesRef: RefObject<ChargeRuntime[]>;
   simulationTimeRef: MutableRefObject<number>;
-  chargeRef: MutableRefObject<number>;
   configRef: MutableRefObject<SimConfig>;
   simEpochRef: MutableRefObject<number>;
   bounds: WorldBounds;
-  demoMode: 'moving_charge' | 'oscillating';
+  demoMode: 'moving_charge' | 'oscillating' | 'dipole';
   showHeatmap: boolean;
   showContours: boolean;
   isPausedRef: MutableRefObject<boolean>;
@@ -95,9 +94,8 @@ function strokeChains(
 }
 
 export function WavefrontOverlayCanvas({
-  historyRef,
+  chargeRuntimesRef,
   simulationTimeRef,
-  chargeRef,
   configRef,
   simEpochRef,
   bounds,
@@ -126,8 +124,9 @@ export function WavefrontOverlayCanvas({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Persistent physics + render state held in closed-over locals (not React state).
-    const samplerState: WavefrontSamplerState = createSamplerState();
+    // Per-charge sampler states — one entry per charge in chargeRuntimesRef.current.
+    // Resized inside the frame function when charge count changes (dipole ↔ single).
+    let samplerStates: WavefrontSamplerState[] = [];
     const renderWorkspace: WavefrontRenderWorkspace = createRenderWorkspace();
 
     // Last-rendered scalar buffer — reused when paused so we don't re-solve every frame.
@@ -159,6 +158,7 @@ export function WavefrontOverlayCanvas({
     let lastSolvedC = NaN;
     let lastGridW = -1;
     let lastGridH = -1;
+    let lastChargeCount = -1;
 
     let rafId: number;
 
@@ -212,14 +212,21 @@ export function WavefrontOverlayCanvas({
       const renderW = renderDim(gridW, renderScale);
       const renderH = renderDim(gridH, renderScale);
 
-      // Heatmap always uses signed coloring (warm/cool dual-hue) for both modes.
-      // Contour logic is independent: oscillating uses zero-crossing on the signed field;
+      // Heatmap always uses signed coloring (warm/cool dual-hue) for all modes.
+      // Contour logic: oscillating and dipole use zero-crossing on the signed field;
       // moving_charge uses an envelope threshold on the abs field.
-      const contourMode: HeatmapMode = demoModeRef.current === 'oscillating' ? 'signed' : 'envelope';
+      const contourMode: HeatmapMode =
+        (demoModeRef.current === 'oscillating' || demoModeRef.current === 'dipole')
+          ? 'signed' : 'envelope';
 
-      const currentSimTime = simulationTimeRef.current;
-      const currentEpoch   = simEpochRef.current;
-      const paused = isPausedRef.current;
+      const currentSimTime   = simulationTimeRef.current;
+      const currentEpoch     = simEpochRef.current;
+      const paused           = isPausedRef.current;
+      const chargeRuntimes   = chargeRuntimesRef.current;
+
+      // Keep samplerStates array in sync with current charge count.
+      while (samplerStates.length < chargeRuntimes.length) samplerStates.push(createSamplerState());
+      if (samplerStates.length > chargeRuntimes.length) samplerStates = samplerStates.slice(0, chargeRuntimes.length);
 
       const needsSolve =
         !paused ||
@@ -232,27 +239,38 @@ export function WavefrontOverlayCanvas({
         currentBounds.maxY !== lastSolvedMaxY ||
         configRef.current.c !== lastSolvedC    ||
         gridW !== lastGridW ||
-        gridH !== lastGridH;
+        gridH !== lastGridH ||
+        chargeRuntimes.length !== lastChargeCount;
 
       let scalars: Float32Array;
 
       if (needsSolve) {
-        scalars = sampleWavefront(samplerState, {
-          history:   historyRef.current,
-          simTime:   currentSimTime,
-          charge:    chargeRef.current,
-          config:    configRef.current,
-          bounds:    {
-            minX: currentBounds.minX,
-            maxX: currentBounds.maxX,
-            minY: currentBounds.minY,
-            maxY: currentBounds.maxY,
-          },
-          gridW,
-          gridH,
-          simEpoch: currentEpoch,
-        });
-        cachedScalars = scalars;
+        const sampleBounds = {
+          minX: currentBounds.minX,
+          maxX: currentBounds.maxX,
+          minY: currentBounds.minY,
+          maxY: currentBounds.maxY,
+        };
+        const n = gridW * gridH;
+        scalars = new Float32Array(n);
+
+        // Sample each charge's bZAccel contribution and sum elementwise.
+        for (let ci = 0; ci < chargeRuntimes.length; ci++) {
+          const { history, charge } = chargeRuntimes[ci];
+          const contribution = sampleWavefront(samplerStates[ci], {
+            history,
+            simTime:  currentSimTime,
+            charge,
+            config:   configRef.current,
+            bounds:   sampleBounds,
+            gridW,
+            gridH,
+            simEpoch: currentEpoch,
+          });
+          for (let k = 0; k < n; k++) scalars[k] += contribution[k];
+        }
+
+        cachedScalars     = scalars;
         lastSolvedSimTime = currentSimTime;
         lastSolvedEpoch   = currentEpoch;
         lastSolvedMinX    = currentBounds.minX;
@@ -262,6 +280,7 @@ export function WavefrontOverlayCanvas({
         lastSolvedC       = configRef.current.c;
         lastGridW         = gridW;
         lastGridH         = gridH;
+        lastChargeCount   = chargeRuntimes.length;
       } else {
         scalars = cachedScalars!;
       }
@@ -376,7 +395,7 @@ export function WavefrontOverlayCanvas({
     };
   // isPausedRef and simEpochRef are read via refs inside the RAF closure.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [historyRef, simulationTimeRef, chargeRef, configRef, simEpochRef]);
+  }, [chargeRuntimesRef, simulationTimeRef, configRef, simEpochRef]);
 
   return <canvas ref={canvasRef} style={style} />;
 }

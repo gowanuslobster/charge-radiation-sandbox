@@ -17,6 +17,7 @@
 
 import type { LWFieldResult, RetardedSolveResult, SimConfig, Vec2 } from './types';
 import { ChargeHistory } from './chargeHistory';
+import type { ChargeRuntime } from './chargeRuntime';
 import { solveRetardedState } from './retardedTime';
 import { add, cross2D, dot, magnitude, scale, subtract } from './vec2';
 
@@ -123,4 +124,48 @@ export function evaluateLienardWiechertField(params: EvaluateLWParams): LWFieldR
   if (solveResult === null) return null;
 
   return evaluateLWFieldFromState(solveResult, observationPos, q, config);
+}
+
+// ─── Superposition helper ─────────────────────────────────────────────────────
+
+function addLWFieldResult(a: LWFieldResult, b: LWFieldResult): LWFieldResult {
+  return {
+    eVel:   add(a.eVel,   b.eVel),
+    eAccel: add(a.eAccel, b.eAccel),
+    eTotal: add(a.eTotal, b.eTotal),
+    bZ:     a.bZ     + b.bZ,
+    bZVel:  a.bZVel  + b.bZVel,
+    bZAccel: a.bZAccel + b.bZAccel,
+  };
+}
+
+/**
+ * Evaluate and sum the Liénard-Wiechert fields from all charges in `chargeRuntimes`.
+ *
+ * Returns the superposed field, accumulating contributions from charges whose
+ * retarded-time solve succeeded. Returns null only when every charge returns null
+ * (e.g. all histories are empty on the first frame).
+ */
+export function evaluateSuperposedLienardWiechertField(params: {
+  observationPos: Vec2;
+  observationTime: number;
+  chargeRuntimes: ChargeRuntime[];
+  config: SimConfig;
+}): LWFieldResult | null {
+  const { observationPos, observationTime, chargeRuntimes, config } = params;
+  let sum: LWFieldResult | null = null;
+
+  for (const { history, charge } of chargeRuntimes) {
+    const result = evaluateLienardWiechertField({
+      observationPos,
+      observationTime,
+      history,
+      charge,
+      config,
+    });
+    if (result === null) continue;
+    sum = sum === null ? result : addLWFieldResult(sum, result);
+  }
+
+  return sum;
 }

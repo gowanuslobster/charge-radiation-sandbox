@@ -20,6 +20,7 @@
 const CMIN_MOVING_CHARGE = 0.72;   // 0.6 + 0.119 ≈ 0.72
 const CMIN_OSCILLATING   = 0.62;   // 0.5 + 0.119 ≈ 0.62
 
-export function minCForMode(mode: 'moving_charge' | 'oscillating'): number {
+// Dipole shares oscillating's peak speed (same A·ω = 0.5), so same c minimum.
+export function minCForMode(mode: 'moving_charge' | 'oscillating' | 'dipole'): number {
   return mode === 'moving_charge' ? CMIN_MOVING_CHARGE : CMIN_OSCILLATING;
 }

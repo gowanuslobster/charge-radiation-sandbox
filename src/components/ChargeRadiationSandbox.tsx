@@ -27,11 +27,13 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { ChargeHistory } from '@/physics/chargeHistory';
+import type { ChargeRuntime } from '@/physics/chargeRuntime';
 import { magnitude } from '@/physics/vec2';
 import type { SimConfig, Vec2 } from '@/physics/types';
 import {
   type DemoMode,
   sampleSourceState,
+  sampleDemoChargeStates,
   sampleSuddenStopState,
   maxHistorySpeed,
   brakingSubstepTimes,
@@ -130,12 +132,13 @@ export function ChargeRadiationSandbox() {
 
   const PAN_STEP_PX = 80;
 
-  // Simulation refs — written by the RAF tick, read by VectorFieldCanvas.
-  const historyRef = useRef(new ChargeHistory());
+  // Simulation refs — written by the RAF tick, read by child canvases.
+  // chargeRuntimesRef holds one entry per charge: single-charge modes use length-1,
+  // dipole uses length-2 (charges +1 and -1).
+  const chargeRuntimesRef = useRef<ChargeRuntime[]>([{ history: new ChargeHistory(), charge: 1 }]);
   const simTimeRef = useRef(0);
-  // Incremented on every reseed so VectorFieldCanvas re-solves even when paused.
+  // Incremented on every reseed so paused canvases re-solve the current frame.
   const simEpochRef = useRef(0);
-  const chargeRef = useRef(1);
   const configRef = useRef<SimConfig>({ c: 1.0, softening: 0.01 });
   const rafRef = useRef(0);
   const lastWallTimeRef = useRef(0);
@@ -216,11 +219,9 @@ export function ChargeRadiationSandbox() {
     // Reset camera so reseedBoundsRef is always source-centered.
     resetCamera();
 
-    historyRef.current = new ChargeHistory();
     simTimeRef.current = 0;
     lastWallTimeRef.current = performance.now();
     simEpochRef.current += 1;
-
     reseedBoundsRef.current = db;
 
     // ── Draggable mode: single stationary history entry at center.
@@ -230,24 +231,36 @@ export function ChargeRadiationSandbox() {
       rawDragPosRef.current = null;
       isDraggingRef.current = false;
       dragPeakSpeedRef.current = 0;
-      historyRef.current.recordState({
-        pos: center, vel: { x: 0, y: 0 }, accel: { x: 0, y: 0 }, t: 0,
-      });
+      const h = new ChargeHistory();
+      h.recordState({ pos: center, vel: { x: 0, y: 0 }, accel: { x: 0, y: 0 }, t: 0 });
+      chargeRuntimesRef.current = [{ history: h, charge: 1 }];
       hasSeededRef.current = true;
       return;
     }
 
     // Seed history with analytically computed past states.
-    const seedState = sampleSourceState(mode, 0);
-    const seedSpeed = magnitude(seedState.vel);
+    // sampleDemoChargeStates handles all modes — single-charge returns length-1 array,
+    // dipole returns length-2 array with charges +1 and -1.
+    const chargeSpecs0 = sampleDemoChargeStates(mode, 0);
     const config = configRef.current;
-    const historyWindow = maxCornerDist(seedState.pos, db) / (config.c - seedSpeed);
+    const horizonSpeed = maxHistorySpeed(mode);
+    // Use first charge's position for the horizon (dipole charges are near origin).
+    const seedPos = chargeSpecs0[0].state.pos;
+    const historyWindow = maxCornerDist(seedPos, db) / (config.c - horizonSpeed);
     const n = Math.ceil(historyWindow / 0.05);
-    const history = historyRef.current;
+
+    const runtimes: ChargeRuntime[] = chargeSpecs0.map(({ charge }) => ({
+      history: new ChargeHistory(),
+      charge,
+    }));
     for (let i = -n; i <= 0; i++) {
-      history.recordState(sampleSourceState(mode, i * 0.05));
+      const states = sampleDemoChargeStates(mode, i * 0.05);
+      for (let ci = 0; ci < runtimes.length; ci++) {
+        runtimes[ci].history.recordState(states[ci].state);
+      }
     }
 
+    chargeRuntimesRef.current = runtimes;
     hasSeededRef.current = true;
   }, [resetCamera]);
 
@@ -272,9 +285,7 @@ export function ChargeRadiationSandbox() {
     reseed(demoMode, db);
     ghostPosRef.current = null;
     // Resetting derived UI state after a mode-change reseed is a one-way update
-    // (mode → reset) with no loop risk. Disable the set-state-in-effect lint rule
-    // for these idempotent calls.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    // (mode → reset) with no loop risk.
     setStopTriggered(false);
     setShowGhost(false);
     setShowRadiationHeatmap(false);
@@ -319,9 +330,35 @@ export function ChargeRadiationSandbox() {
   // Replaces:  historyRef.current (fresh ChargeHistory with correct window).
   // Increments: simEpochRef.current so paused canvases re-solve the current frame.
   const rebuildAnalyticHistoryAtCurrentTime = useCallback(
-    (mode: 'moving_charge' | 'oscillating') => {
+    (mode: 'moving_charge' | 'oscillating' | 'dipole') => {
       const T      = simTimeRef.current;
       const config = configRef.current;     // already updated before this call
+      const DT     = 0.05;                  // step spacing matches initial reseed
+
+      // ── Dipole: rebuild both charge histories simultaneously.
+      if (mode === 'dipole') {
+        const horizonSpeed = maxHistorySpeed('dipole');
+        const chargeStates0 = sampleDemoChargeStates('dipole', T);
+        const historyWindow = Math.max(
+          ...chargeStates0.map(({ state }) => maxCornerDist(state.pos, viewBoundsRef.current)),
+        ) / (config.c - horizonSpeed);
+        const n = Math.ceil(historyWindow / DT);
+        const newRuntimes: ChargeRuntime[] = chargeStates0.map(({ charge }) => ({
+          charge,
+          history: new ChargeHistory(),
+        }));
+        for (let i = -n; i <= 0; i++) {
+          const states = sampleDemoChargeStates('dipole', T + i * DT);
+          for (let ci = 0; ci < newRuntimes.length; ci++) {
+            newRuntimes[ci].history.recordState(states[ci].state);
+          }
+        }
+        chargeRuntimesRef.current = newRuntimes;
+        simEpochRef.current += 1;
+        return;
+      }
+
+      // ── Single-charge (moving_charge, oscillating).
       const T_trig = stopTriggerTimeRef.current;
 
       // Current source position at T used to calculate the corner-to-source horizon.
@@ -332,7 +369,6 @@ export function ChargeRadiationSandbox() {
       // Use peak speed (conservative mode-level bound) — same as the tick.
       const horizonSpeed  = maxHistorySpeed(mode);
       const historyWindow = maxCornerDist(currentPos, viewBoundsRef.current) / (config.c - horizonSpeed);
-      const DT            = 0.05;  // step spacing matches initial reseed
       const n             = Math.ceil(historyWindow / DT);
 
       const newHistory = new ChargeHistory();
@@ -355,7 +391,7 @@ export function ChargeRadiationSandbox() {
         }
       }
 
-      historyRef.current   = newHistory;
+      chargeRuntimesRef.current = [{ history: newHistory, charge: chargeRuntimesRef.current[0]?.charge ?? 1 }];
       simEpochRef.current += 1;
     },
     [], // stable: reads only from refs, no React state
@@ -364,8 +400,9 @@ export function ChargeRadiationSandbox() {
   const handleCChange = useCallback((rawC: number) => {
     // Enforce per-mode c minimum (Policy A conservative global minimum).
     // Prevents the causal horizon from exceeding the GPU history buffer for visible pixels.
+    // Dipole always uses CPU path but has the same physics lower bound.
     const mode = demoModeRef.current;
-    const cMin = (mode === 'moving_charge' || mode === 'oscillating')
+    const cMin = (mode === 'moving_charge' || mode === 'oscillating' || mode === 'dipole')
       ? minCForMode(mode)
       : 0.15;
     const newC = Math.max(cMin, rawC);
@@ -379,14 +416,14 @@ export function ChargeRadiationSandbox() {
     // Draggable history is accumulated from live drag events and is not analytically
     // reconstructible; it is left as-is and the tick adjusts the window on subsequent
     // frames via setMaxHistoryTime / pruneToWindow.
-    if (mode === 'moving_charge' || mode === 'oscillating') {
+    if (mode === 'moving_charge' || mode === 'oscillating' || mode === 'dipole') {
       rebuildAnalyticHistoryAtCurrentTime(mode);
     }
   }, [rebuildAnalyticHistoryAtCurrentTime]);
 
   const handleDemoModeChange = useCallback((newMode: DemoMode) => {
     // When switching to a mode with a higher c minimum, bump c up before the reseed.
-    if (newMode === 'moving_charge' || newMode === 'oscillating') {
+    if (newMode === 'moving_charge' || newMode === 'oscillating' || newMode === 'dipole') {
       const cMin = minCForMode(newMode);
       if (configRef.current.c < cMin) {
         configRef.current = { ...configRef.current, c: cMin };
@@ -463,7 +500,7 @@ export function ChargeRadiationSandbox() {
     }
 
     // Clear simulation state — mode selection from the start panel will reseed.
-    historyRef.current = new ChargeHistory();
+    chargeRuntimesRef.current = [{ history: new ChargeHistory(), charge: 1 }];
     simTimeRef.current = 0;
     lastWallTimeRef.current = performance.now();
     simEpochRef.current += 1;
@@ -518,7 +555,7 @@ export function ChargeRadiationSandbox() {
 
       // ── Draggable branch: tick owns kinematics; returns early.
       if (mode === 'draggable') {
-        const history = historyRef.current;
+        const history = chargeRuntimesRef.current[0].history;
         const config = configRef.current;
 
         if (isDraggingRef.current && rawDragPosRef.current !== null) {
@@ -549,9 +586,26 @@ export function ChargeRadiationSandbox() {
         return;
       }
 
-      // ── Compute source state (all non-draggable modes).
+      // ── Dipole branch: record state for both charges simultaneously; returns early.
+      if (mode === 'dipole') {
+        const config = configRef.current;
+        const runtimes = chargeRuntimesRef.current;
+        const horizonSpeed = maxHistorySpeed('dipole');
+        const chargeStates = sampleDemoChargeStates('dipole', simTimeRef.current);
+        for (let ci = 0; ci < runtimes.length; ci++) {
+          const { state } = chargeStates[ci];
+          runtimes[ci].history.recordState(state);
+          runtimes[ci].history.setMaxHistoryTime(
+            maxCornerDist(state.pos, viewBoundsRef.current) / (config.c - horizonSpeed),
+          );
+          runtimes[ci].history.pruneToWindow(simTimeRef.current);
+        }
+        return;
+      }
+
+      // ── Compute source state (moving_charge and oscillating).
       // moving_charge records substeps for every transition ramp overlapping this frame.
-      const history = historyRef.current;
+      const history = chargeRuntimesRef.current[0].history;
       const config = configRef.current;
       let sourceState;
 
@@ -679,10 +733,9 @@ export function ChargeRadiationSandbox() {
 
   const readout = useCursorReadout({
     canvasRef,
-    historyRef,
+    chargeRuntimesRef,
     simTimeRef,
     simEpochRef,
-    chargeRef,
     configRef,
     viewBoundsRef,
     getWorldFromClientPoint,
@@ -690,11 +743,13 @@ export function ChargeRadiationSandbox() {
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
-  // c-slider lower bound matches the per-mode history-buffer constraint.
-  // Only applied when WebGL is active; CPU fallback has no buffer limit.
-  const cMin = webGLReady === true && (demoMode === 'moving_charge' || demoMode === 'oscillating')
-    ? minCForMode(demoMode)
-    : 0.65;
+  // c-slider lower bound. Dipole always uses CPU path but has the same physics lower
+  // bound (c > peak charge speed). For moving_charge and oscillating, only enforce the
+  // stricter GPU-history bound when WebGL is active.
+  const cMin =
+    demoMode === 'dipole' ? minCForMode('dipole') :
+    webGLReady === true && (demoMode === 'moving_charge' || demoMode === 'oscillating') ? minCForMode(demoMode) :
+    0.65;
 
   return (
     <div
@@ -705,9 +760,8 @@ export function ChargeRadiationSandbox() {
       onContextMenu={e => e.preventDefault()}
     >
       <StreamlineCanvas
-        historyRef={historyRef}
+        chargeRuntimesRef={chargeRuntimesRef}
         simulationTimeRef={simTimeRef}
-        chargeRef={chargeRef}
         configRef={configRef}
         simEpochRef={simEpochRef}
         isPausedRef={isPausedRef}
@@ -718,12 +772,25 @@ export function ChargeRadiationSandbox() {
         ghostVel={demoMode === 'moving_charge' ? { x: SUDDEN_STOP_V, y: 0 } : undefined}
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 17 }}
       />
-      {(demoMode === 'moving_charge' || demoMode === 'oscillating') && (
-        webGLReady === true ? (
-          <WavefrontWebGLCanvas
-            historyRef={historyRef}
+      {(demoMode === 'moving_charge' || demoMode === 'oscillating' || demoMode === 'dipole') && (
+        demoMode === 'dipole' ? (
+          // Dipole always uses CPU overlay — WebGL shader is single-charge only.
+          <WavefrontOverlayCanvas
+            chargeRuntimesRef={chargeRuntimesRef}
             simulationTimeRef={simTimeRef}
-            chargeRef={chargeRef}
+            configRef={configRef}
+            simEpochRef={simEpochRef}
+            bounds={viewBounds}
+            demoMode={demoMode}
+            showHeatmap={showRadiationHeatmap}
+            showContours={showWavefrontContours}
+            isPausedRef={isPausedRef}
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 10 }}
+          />
+        ) : webGLReady === true ? (
+          <WavefrontWebGLCanvas
+            chargeRuntimesRef={chargeRuntimesRef}
+            simulationTimeRef={simTimeRef}
             configRef={configRef}
             simEpochRef={simEpochRef}
             bounds={viewBounds}
@@ -741,9 +808,8 @@ export function ChargeRadiationSandbox() {
               High-fidelity heatmap requires GPU acceleration — running in lower-fidelity mode.
             </div>
             <WavefrontOverlayCanvas
-              historyRef={historyRef}
+              chargeRuntimesRef={chargeRuntimesRef}
               simulationTimeRef={simTimeRef}
-              chargeRef={chargeRef}
               configRef={configRef}
               simEpochRef={simEpochRef}
               bounds={viewBounds}
@@ -757,9 +823,8 @@ export function ChargeRadiationSandbox() {
         ) : null  /* detecting */
       )}
       <VectorFieldCanvas
-        historyRef={historyRef}
+        chargeRuntimesRef={chargeRuntimesRef}
         simulationTimeRef={simTimeRef}
-        chargeRef={chargeRef}
         configRef={configRef}
         simEpochRef={simEpochRef}
         bounds={viewBounds}
@@ -767,7 +832,7 @@ export function ChargeRadiationSandbox() {
         isPanning={isPanning}
         isPausedRef={isPausedRef}
         ghostPosRef={ghostPosRef}
-        canvasRefProp={canvasRef}
+        externalCanvasRef={canvasRef}
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', zIndex: 15 }}
       />
       {dragCalloutPos !== null && (

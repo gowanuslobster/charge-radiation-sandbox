@@ -63,12 +63,8 @@ type Props = {
   style?: CSSProperties;
 };
 
-// Contour stroke colors.
-// Phase boundary (signed / oscillating): neutral so it reads as a zero-crossing,
-// not as belonging to either the warm or cool lobe.
+// Contour stroke color: near-white for both modes, matching the GPU shader path.
 const CONTOUR_PHASE    = 'rgba(220, 220, 220, 0.85)';
-// Pulse boundary (envelope / moving_charge): warm to match the heatmap palette.
-const CONTOUR_ENVELOPE = 'rgba(255, 140, 30, 0.85)';
 const CONTOUR_LINE_WIDTH = 1.5;
 
 /**
@@ -143,11 +139,13 @@ export function WavefrontOverlayCanvas({
     let smoothPingBuffer: Float32Array = new Float32Array(0);
     // Bilinearly upscaled signed field (renderW × renderH).
     let upscaledSignedBuffer: Float32Array = new Float32Array(0);
-    // Abs-mapped upscaled field for envelope mode.
+    // Abs-mapped upscaled field — used for moving_charge contour threshold detection.
     let upscaledDisplayBuffer: Float32Array = new Float32Array(0);
     // Derived-render cache — reused across frames when physics, mode, and render dims are unchanged.
     let cachedHeatmapImageData: ImageData | null = null;
     let cachedContrastPeak = 0;
+    // Peak of the abs buffer — used for moving_charge contour level computation.
+    let cachedContourPeak = 0;
     let lastRenderedMode = '';
     let lastRenderW = -1;
     let lastRenderH = -1;
@@ -215,8 +213,11 @@ export function WavefrontOverlayCanvas({
       const renderW = renderDim(gridW, renderScale);
       const renderH = renderDim(gridH, renderScale);
 
-      // Mode must be determined before needsRender so the lazy-rebuild check works.
-      const mode = demoModeRef.current === 'oscillating' ? 'signed' : 'envelope';
+      // Heatmap always uses signed coloring (warm/cool dual-hue) for both modes.
+      // Contour logic is independent: oscillating uses zero-crossing on the signed field;
+      // moving_charge uses an envelope threshold on the abs field.
+      const mode: HeatmapMode = 'signed';
+      const contourMode: HeatmapMode = demoModeRef.current === 'oscillating' ? 'signed' : 'envelope';
 
       const currentSimTime = simulationTimeRef.current;
       const currentEpoch   = simEpochRef.current;
@@ -284,7 +285,7 @@ export function WavefrontOverlayCanvas({
       // is missing and must be lazily rebuilt after an overlay toggle while paused.
       const needsRender =
         needsSolve ||
-        mode !== lastRenderedMode ||
+        contourMode !== lastRenderedMode ||
         renderW !== lastRenderW ||
         renderH !== lastRenderH ||
         cachedHeatmapImageData === null ||
@@ -292,10 +293,9 @@ export function WavefrontOverlayCanvas({
 
       if (needsRender) {
         // ── Stage 1: smooth the signed coarse field ────────────────────────────
-        const passes = mode === 'signed' ? SMOOTH_PASSES_SIGNED : SMOOTH_PASSES_ENVELOPE;
         smoothScalars(scalars, smoothedScalarsBuffer, gridW, gridH);
         let smoothedSigned: Float32Array = smoothedScalarsBuffer;
-        for (let p = 1; p < passes; p++) {
+        for (let p = 1; p < SMOOTH_PASSES_SIGNED; p++) {
           const dst = smoothedSigned === smoothedScalarsBuffer ? smoothPingBuffer : smoothedScalarsBuffer;
           smoothScalars(smoothedSigned, dst, gridW, gridH);
           smoothedSigned = dst;
@@ -304,41 +304,46 @@ export function WavefrontOverlayCanvas({
         // ── Stage 2: bilinear upsample into render lattice (signed) ───────────
         bilinearUpsample(smoothedSigned, gridW, gridH, upscaledSignedBuffer, renderW, renderH);
 
-        // ── Stage 3: mode-specific display buffer (abs only AFTER upscaling) ──
+        // ── Stage 3: fill abs buffer for moving_charge contour threshold ───────
         // abs() after scalar-space upscaling ensures zero crossings interpolate
         // toward zero rather than blending between warm and cool colors.
-        if (mode === 'envelope') {
+        // The heatmap always uses the signed buffer; abs is only for contour detection.
+        if (contourMode === 'envelope') {
           for (let k = 0; k < renderN; k++) {
             upscaledDisplayBuffer[k] = Math.abs(upscaledSignedBuffer[k]);
           }
+          cachedContourPeak = computeContrastPeak(upscaledDisplayBuffer, 'envelope');
+        } else {
+          cachedContourPeak = 0; // unused for oscillating (zero-crossing needs no peak)
         }
 
-        // Persistent buffer alias — valid even on future cache-hit frames.
-        const displayBuffer = mode === 'envelope' ? upscaledDisplayBuffer : upscaledSignedBuffer;
+        // ── Stage 4: heatmap contrast peak (signed) ────────────────────────────
+        cachedContrastPeak = computeContrastPeak(upscaledSignedBuffer, 'signed');
 
-        // ── Stage 4: compute shared contrast peak once ─────────────────────────
-        cachedContrastPeak = computeContrastPeak(displayBuffer, mode);
-
-        // ── Stage 5: build heatmap ImageData (cached; drawn every frame) ───────
+        // ── Stage 5: build heatmap ImageData — always signed dual-hue ──────────
         cachedHeatmapImageData = buildHeatmapImageData(
-          displayBuffer, renderW, renderH, mode, renderWorkspace, cachedContrastPeak,
+          upscaledSignedBuffer, renderW, renderH, 'signed', renderWorkspace, cachedContrastPeak,
         );
 
         cachedChains.clear();
-        lastRenderedMode = mode;
+        lastRenderedMode = contourMode;
         lastRenderW      = renderW;
         lastRenderH      = renderH;
       }
 
-      // Persistent buffer alias — correct on cache-hit frames too.
-      const displayBuffer = mode === 'envelope' ? upscaledDisplayBuffer : upscaledSignedBuffer;
+      // Heatmap always draws the signed buffer.
+      const displayBuffer = upscaledSignedBuffer;
 
       if (wantHeatmap && cachedHeatmapImageData) {
         drawHeatmap(ctx, cachedHeatmapImageData, renderW, renderH, cssW, cssH, renderWorkspace, 0.6);
       }
 
       if (wantContours) {
-        const levels = getDefaultContourLevels(mode, displayBuffer, cachedContrastPeak);
+        // Contour buffer and peak are mode-dependent:
+        // oscillating → signed buffer + zero-crossing (no peak needed)
+        // moving_charge → abs buffer + envelope threshold (0.20 × abs peak)
+        const contourBuffer = contourMode === 'signed' ? upscaledSignedBuffer : upscaledDisplayBuffer;
+        const levels = getDefaultContourLevels(contourMode, contourBuffer, cachedContourPeak || cachedContrastPeak);
 
         // Map fractional render-lattice coords to canvas pixel coords.
         const toScreenX = (rx: number) => (rx / Math.max(renderW - 1, 1)) * cssW;
@@ -349,7 +354,7 @@ export function WavefrontOverlayCanvas({
           let chains = cachedChains.get(isoValue);
           if (!chains) {
             chains = chainContourSegments(
-              extractContourSegments(displayBuffer, renderW, renderH, isoValue),
+              extractContourSegments(contourBuffer, renderW, renderH, isoValue),
             );
             cachedChains.set(isoValue, chains);
           }
@@ -362,7 +367,7 @@ export function WavefrontOverlayCanvas({
         ctx.lineJoin = 'round';
 
         const [threshold] = levels;
-        ctx.strokeStyle = mode === 'signed' ? CONTOUR_PHASE : CONTOUR_ENVELOPE;
+        ctx.strokeStyle = CONTOUR_PHASE; // near-white for both modes, matches GPU path
         strokeChains(ctx, getChains(threshold), toScreenX, toScreenY);
 
         ctx.restore();

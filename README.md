@@ -85,7 +85,7 @@ All overlays are off by default. They stack freely — you can enable any combin
 | Overlay | Where | What it shows |
 |---------|-------|---------------|
 | **Field lines** | All modes, when paused | Instantaneous streamlines of the total electric field at the paused frame. Not material lines that move with the charge — they are a snapshot of the field at that moment. |
-| **Radiation heatmap** | Moving charge, Oscillating | Color map of the radiation magnetic field (Bz from the acceleration term). Warm/orange = positive phase, cool/blue = negative phase in oscillating; envelope intensity in moving charge. |
+| **Radiation heatmap** | Moving charge, Oscillating | Color map of the radiation magnetic field (Bz from the acceleration term). Warm/orange = positive, cool/blue = negative — the sign encodes the field direction. Both modes use the same signed dual-hue convention. |
 | **Wavefront contours** | Moving charge, Oscillating | Contour lines computed directly in the GPU shader, always aligned with the heatmap. In Oscillating: zero-crossing lines tracking wave phase. In Moving charge: envelope threshold contour marking the shell boundary. |
 | **Ghost charge** (mini panel) | Moving charge | A marker at the extrapolated would-have-been position after the stop. Shows why the field outside the shell still points toward a charge that is no longer there. |
 | **Ghost field lines** (mini panel) | Moving charge, paused | Streamlines of the extrapolated constant-velocity field — shows what the field would look like if the charge had never stopped. |

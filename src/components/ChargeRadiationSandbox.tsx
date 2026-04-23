@@ -134,8 +134,8 @@ export function ChargeRadiationSandbox() {
   const PAN_STEP_PX = 80;
 
   // Simulation refs — written by the RAF tick, read by child canvases.
-  // chargeRuntimesRef holds one entry per charge: single-charge modes use length-1,
-  // dipole uses length-2 (charges +1 and -1).
+  // chargeRuntimesRef holds one entry per charge: single-charge modes use length-1;
+  // dipole and hydrogen use length-2 (charges +1 and -1).
   const chargeRuntimesRef = useRef<ChargeRuntime[]>([{ history: new ChargeHistory(), charge: 1 }]);
   const simTimeRef = useRef(0);
   // Incremented on every reseed so paused canvases re-solve the current frame.
@@ -241,13 +241,17 @@ export function ChargeRadiationSandbox() {
 
     // Seed history with analytically computed past states.
     // sampleDemoChargeStates handles all modes — single-charge returns length-1 array,
-    // dipole returns length-2 array with charges +1 and -1.
+    // multi-charge modes return length-2 arrays with charges +1 and -1.
     const chargeSpecs0 = sampleDemoChargeStates(mode, 0);
     const config = configRef.current;
     const horizonSpeed = maxHistorySpeed(mode);
-    // Use first charge's position for the horizon (dipole charges are near origin).
+    // Use the furthest charge position for the horizon so two-charge modes keep
+    // enough history for both sources.
     const seedPos = chargeSpecs0[0].state.pos;
-    const historyWindow = maxCornerDist(seedPos, db) / (config.c - horizonSpeed);
+    const historyWindow = Math.max(
+      ...chargeSpecs0.map(({ state }) => maxCornerDist(state.pos, db)),
+      maxCornerDist(seedPos, db),
+    ) / (config.c - horizonSpeed);
     const n = Math.ceil(historyWindow / 0.05);
 
     const runtimes: ChargeRuntime[] = chargeSpecs0.map(({ charge }) => ({
@@ -324,22 +328,22 @@ export function ChargeRadiationSandbox() {
 
   // Rebuild the source history window from the current sim time after a c change.
   //
-  // Only valid for analytic modes (moving_charge, oscillating) — the entire past
+  // Only valid for analytic modes — the entire past
   // trajectory is closed-form, so any history window can be reconstructed exactly.
   //
   // Preserves: simTimeRef.current, stopTriggerTimeRef.current, demoMode.
   // Replaces:  historyRef.current (fresh ChargeHistory with correct window).
   // Increments: simEpochRef.current so paused canvases re-solve the current frame.
   const rebuildAnalyticHistoryAtCurrentTime = useCallback(
-    (mode: 'moving_charge' | 'oscillating' | 'dipole') => {
+    (mode: 'moving_charge' | 'oscillating' | 'dipole' | 'hydrogen') => {
       const T      = simTimeRef.current;
       const config = configRef.current;     // already updated before this call
       const DT     = 0.05;                  // step spacing matches initial reseed
 
-      // ── Dipole: rebuild both charge histories simultaneously.
-      if (mode === 'dipole') {
-        const horizonSpeed = maxHistorySpeed('dipole');
-        const chargeStates0 = sampleDemoChargeStates('dipole', T);
+      // ── Multi-charge analytic modes: rebuild all charge histories simultaneously.
+      if (mode === 'dipole' || mode === 'hydrogen') {
+        const horizonSpeed = maxHistorySpeed(mode);
+        const chargeStates0 = sampleDemoChargeStates(mode, T);
         const historyWindow = Math.max(
           ...chargeStates0.map(({ state }) => maxCornerDist(state.pos, viewBoundsRef.current)),
         ) / (config.c - horizonSpeed);
@@ -349,7 +353,7 @@ export function ChargeRadiationSandbox() {
           history: new ChargeHistory(),
         }));
         for (let i = -n; i <= 0; i++) {
-          const states = sampleDemoChargeStates('dipole', T + i * DT);
+          const states = sampleDemoChargeStates(mode, T + i * DT);
           for (let ci = 0; ci < newRuntimes.length; ci++) {
             newRuntimes[ci].history.recordState(states[ci].state);
           }
@@ -401,9 +405,8 @@ export function ChargeRadiationSandbox() {
   const handleCChange = useCallback((rawC: number) => {
     // Enforce per-mode c minimum (Policy A conservative global minimum).
     // Prevents the causal horizon from exceeding the GPU history buffer for visible pixels.
-    // Dipole always uses CPU path but has the same physics lower bound.
     const mode = demoModeRef.current;
-    const cMin = (mode === 'moving_charge' || mode === 'oscillating' || mode === 'dipole')
+    const cMin = (mode === 'moving_charge' || mode === 'oscillating' || mode === 'dipole' || mode === 'hydrogen')
       ? minCForMode(mode)
       : 0.15;
     const newC = Math.max(cMin, rawC);
@@ -417,14 +420,14 @@ export function ChargeRadiationSandbox() {
     // Draggable history is accumulated from live drag events and is not analytically
     // reconstructible; it is left as-is and the tick adjusts the window on subsequent
     // frames via setMaxHistoryTime / pruneToWindow.
-    if (mode === 'moving_charge' || mode === 'oscillating' || mode === 'dipole') {
+    if (mode === 'moving_charge' || mode === 'oscillating' || mode === 'dipole' || mode === 'hydrogen') {
       rebuildAnalyticHistoryAtCurrentTime(mode);
     }
   }, [rebuildAnalyticHistoryAtCurrentTime]);
 
   const handleDemoModeChange = useCallback((newMode: DemoMode) => {
     // When switching to a mode with a higher c minimum, bump c up before the reseed.
-    if (newMode === 'moving_charge' || newMode === 'oscillating' || newMode === 'dipole') {
+    if (newMode === 'moving_charge' || newMode === 'oscillating' || newMode === 'dipole' || newMode === 'hydrogen') {
       const cMin = minCForMode(newMode);
       if (configRef.current.c < cMin) {
         configRef.current = { ...configRef.current, c: cMin };
@@ -587,12 +590,12 @@ export function ChargeRadiationSandbox() {
         return;
       }
 
-      // ── Dipole branch: record state for both charges simultaneously; returns early.
-      if (mode === 'dipole') {
+      // ── Multi-charge analytic branch: record all charge states simultaneously.
+      if (mode === 'dipole' || mode === 'hydrogen') {
         const config = configRef.current;
         const runtimes = chargeRuntimesRef.current;
-        const horizonSpeed = maxHistorySpeed('dipole');
-        const chargeStates = sampleDemoChargeStates('dipole', simTimeRef.current);
+        const horizonSpeed = maxHistorySpeed(mode);
+        const chargeStates = sampleDemoChargeStates(mode, simTimeRef.current);
         for (let ci = 0; ci < runtimes.length; ci++) {
           const { state } = chargeStates[ci];
           runtimes[ci].history.recordState(state);
@@ -745,12 +748,11 @@ export function ChargeRadiationSandbox() {
   // ─── Render ─────────────────────────────────────────────────────────────────
 
   // c-slider lower bound.
-  // Dipole's physics lower bound (c > peak charge speed = 0.5) equals the GPU-history
-  // lower bound, so minCForMode('dipole') applies regardless of whether WebGL is active.
+  // Multi-charge modes use the GPU-history bound regardless of WebGL availability.
   // For moving_charge and oscillating the GPU bound is stricter than the physics bound,
   // so it only applies when WebGL is active.
   const cMin =
-    demoMode === 'dipole' ? minCForMode('dipole') :
+    (demoMode === 'dipole' || demoMode === 'hydrogen') ? minCForMode(demoMode) :
     webGLReady === true && (demoMode === 'moving_charge' || demoMode === 'oscillating') ? minCForMode(demoMode) :
     0.65;
 
@@ -775,11 +777,11 @@ export function ChargeRadiationSandbox() {
         ghostVel={demoMode === 'moving_charge' ? { x: SUDDEN_STOP_V, y: 0 } : undefined}
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 17 }}
       />
-      {(demoMode === 'moving_charge' || demoMode === 'oscillating' || demoMode === 'dipole') && (
+      {(demoMode === 'moving_charge' || demoMode === 'oscillating' || demoMode === 'dipole' || demoMode === 'hydrogen') && (
         webGLReady === true ? (
-          // WebGL path: per-pixel retarded-time solve for all three modes.
+          // WebGL path: per-pixel retarded-time solve for heatmap-capable modes.
           // WavefrontWebGLCanvas supports up to MAX_CHARGES=2 independent histories,
-          // so dipole (two charges) now routes here alongside single-charge modes.
+          // so the two-charge scripted modes route here alongside single-charge modes.
           <WavefrontWebGLCanvas
             chargeRuntimesRef={chargeRuntimesRef}
             simulationTimeRef={simTimeRef}

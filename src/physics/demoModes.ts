@@ -6,7 +6,7 @@
 
 import type { KinematicState } from './types';
 
-export type DemoMode = 'moving_charge' | 'oscillating' | 'draggable' | 'dipole';
+export type DemoMode = 'moving_charge' | 'oscillating' | 'draggable' | 'dipole' | 'hydrogen';
 
 // ─── sudden_stop constants ───────────────────────────────────────────────────
 
@@ -42,6 +42,20 @@ export const OSCILLATING_OMEGA     = 4.0;   // rad/s — peak speed = A·ω = 0.
 export const DIPOLE_SEPARATION = 1.0;   // world units (equilibrium separation)
 export const DIPOLE_AMPLITUDE  = OSCILLATING_AMPLITUDE; // 0.125 world units
 export const DIPOLE_OMEGA      = OSCILLATING_OMEGA;     // 4.0 rad/s
+
+// ─── hydrogen constants ──────────────────────────────────────────────────────
+//
+// Toy hydrogen-like atom: a fixed central positive charge and a negative charge
+// in prescribed circular motion. This is not self-consistent orbital dynamics;
+// it is an analytic source motion that lets students see radiation from a
+// rotating electric dipole without introducing many-body forces.
+//
+// Charge 0 (+q): fixed at origin.
+// Charge 1 (−q): r(t) = R·(cos(ωt), sin(ωt)).
+//
+// Peak speed = R·ω = 0.6, matching moving_charge's c-slider lower-bound regime.
+export const HYDROGEN_ORBIT_RADIUS = 0.75; // world units
+export const HYDROGEN_OMEGA        = 0.8;  // rad/s; peak speed = 0.6
 
 // ─── sampleSuddenStopState ───────────────────────────────────────────────────
 
@@ -109,9 +123,9 @@ export function sampleSuddenStopState(t: number, brakeStartTime: number): Kinema
  * (SUDDEN_STOP_T_STOP). The interactive tick path calls sampleSuddenStopState
  * directly with the user-supplied trigger time.
  *
- * 'dipole' is excluded: it has two charges and must be accessed via sampleDemoChargeStates.
+ * Multi-charge modes are excluded and must be accessed via sampleDemoChargeStates.
  */
-export function sampleSourceState(mode: Exclude<DemoMode, 'dipole'>, t: number): KinematicState {
+export function sampleSourceState(mode: Exclude<DemoMode, 'dipole' | 'hydrogen'>, t: number): KinematicState {
   // draggable: live tick bypasses sampleSourceState entirely and reads from drag refs.
   // This branch exists only to satisfy exhaustiveness and provides the zeroed at-rest
   // baseline (Coulomb field) used when the simulation is paused or freshly seeded.
@@ -161,10 +175,33 @@ function sampleDipoleState(chargeIndex: 0 | 1, t: number): KinematicState {
 }
 
 /**
+ * Exact kinematic state for the hydrogen-like two-charge toy model.
+ * chargeIndex 0 = central positive charge, chargeIndex 1 = orbiting negative charge.
+ */
+function sampleHydrogenState(chargeIndex: 0 | 1, t: number): KinematicState {
+  if (chargeIndex === 0) {
+    return { t, pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 }, accel: { x: 0, y: 0 } };
+  }
+
+  const theta = HYDROGEN_OMEGA * t;
+  const cos = Math.cos(theta);
+  const sin = Math.sin(theta);
+  const r = HYDROGEN_ORBIT_RADIUS;
+  const omega = HYDROGEN_OMEGA;
+
+  return {
+    t,
+    pos: { x: r * cos, y: r * sin },
+    vel: { x: -r * omega * sin, y: r * omega * cos },
+    accel: { x: -r * omega * omega * cos, y: -r * omega * omega * sin },
+  };
+}
+
+/**
  * Return the charge specs for all charges in `mode` at simulation time t.
  *
- * Single-charge modes return a length-1 array. Dipole returns a length-2 array
- * with charge values +1 (index 0) and −1 (index 1).
+ * Single-charge modes return a length-1 array. Multi-charge modes return a
+ * length-2 array with charge values +1 (index 0) and −1 (index 1).
  *
  * For `draggable` and `moving_charge`, the kinematic state is the analytic
  * baseline — the tick loop overrides it with drag refs / stop-trigger logic
@@ -176,6 +213,12 @@ export function sampleDemoChargeStates(mode: DemoMode, t: number): DemoChargeSpe
     return [
       { charge: +1, state: sampleDipoleState(0, t) },
       { charge: -1, state: sampleDipoleState(1, t) },
+    ];
+  }
+  if (mode === 'hydrogen') {
+    return [
+      { charge: +1, state: sampleHydrogenState(0, t) },
+      { charge: -1, state: sampleHydrogenState(1, t) },
     ];
   }
   return [{ charge: 1, state: sampleSourceState(mode, t) }];
@@ -201,6 +244,7 @@ export function maxHistorySpeed(mode: DemoMode): number {
   // Return 0 here; the tick uses dragPeakSpeedRef directly for the horizon calculation.
   if (mode === 'draggable') return 0;
   if (mode === 'oscillating' || mode === 'dipole') return OSCILLATING_AMPLITUDE * OSCILLATING_OMEGA; // 0.5
+  if (mode === 'hydrogen') return HYDROGEN_ORBIT_RADIUS * HYDROGEN_OMEGA; // 0.6
   return SUDDEN_STOP_V; // moving_charge peaks at SUDDEN_STOP_V (pre- and post-stop history)
 }
 

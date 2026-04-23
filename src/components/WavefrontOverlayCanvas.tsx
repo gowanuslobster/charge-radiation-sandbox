@@ -54,7 +54,7 @@ type Props = {
   configRef: MutableRefObject<SimConfig>;
   simEpochRef: MutableRefObject<number>;
   bounds: WorldBounds;
-  demoMode: 'moving_charge' | 'oscillating' | 'dipole';
+  demoMode: 'moving_charge' | 'oscillating' | 'dipole' | 'hydrogen';
   showHeatmap: boolean;
   showContours: boolean;
   isPausedRef: MutableRefObject<boolean>;
@@ -125,7 +125,7 @@ export function WavefrontOverlayCanvas({
     if (!ctx) return;
 
     // Per-charge sampler states — one entry per charge in chargeRuntimesRef.current.
-    // Resized inside the frame function when charge count changes (dipole ↔ single).
+    // Resized inside the frame function when charge count changes (multi-charge ↔ single).
     let samplerStates: WavefrontSamplerState[] = [];
     const renderWorkspace: WavefrontRenderWorkspace = createRenderWorkspace();
 
@@ -213,10 +213,10 @@ export function WavefrontOverlayCanvas({
       const renderH = renderDim(gridH, renderScale);
 
       // Heatmap always uses signed coloring (warm/cool dual-hue) for all modes.
-      // Contour logic: oscillating and dipole use zero-crossing on the signed field;
+      // Contour logic: periodic modes use zero-crossing on the signed field;
       // moving_charge uses an envelope threshold on the abs field.
       const contourMode: HeatmapMode =
-        (demoModeRef.current === 'oscillating' || demoModeRef.current === 'dipole')
+        (demoModeRef.current === 'oscillating' || demoModeRef.current === 'dipole' || demoModeRef.current === 'hydrogen')
           ? 'signed' : 'envelope';
 
       const currentSimTime   = simulationTimeRef.current;

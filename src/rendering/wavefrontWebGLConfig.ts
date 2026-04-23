@@ -13,6 +13,7 @@
 //   MAX_HISTORY_SAMPLES = 4096
 //   v_peak(moving_charge) = SUDDEN_STOP_V = 0.6
 //   v_peak(oscillating)   = OSCILLATING_AMPLITUDE × OSCILLATING_OMEGA = 0.5
+//   v_peak(hydrogen)      = HYDROGEN_ORBIT_RADIUS × HYDROGEN_OMEGA = 0.6
 //
 // c_min = v_peak + 8.1 × 60 / 4096  =  v_peak + 0.119
 //
@@ -21,6 +22,9 @@ const CMIN_MOVING_CHARGE = 0.72;   // 0.6 + 0.119 ≈ 0.72
 const CMIN_OSCILLATING   = 0.62;   // 0.5 + 0.119 ≈ 0.62
 
 // Dipole shares oscillating's peak speed (same A·ω = 0.5), so same c minimum.
-export function minCForMode(mode: 'moving_charge' | 'oscillating' | 'dipole'): number {
-  return mode === 'moving_charge' ? CMIN_MOVING_CHARGE : CMIN_OSCILLATING;
+// Hydrogen's orbiting charge peaks at 0.6, so it shares moving_charge's minimum.
+export function minCForMode(mode: 'moving_charge' | 'oscillating' | 'dipole' | 'hydrogen'): number {
+  return mode === 'moving_charge' || mode === 'hydrogen'
+    ? CMIN_MOVING_CHARGE
+    : CMIN_OSCILLATING;
 }

@@ -45,12 +45,18 @@ const MODE_CARDS: ModeCard[] = [
     desc: 'Two opposite charges oscillate in antiphase. Their combined field shows the classic dipole radiation pattern.',
     hint: 'Enable the Radiation heatmap to see the characteristic lobed pattern — radiation is strongest perpendicular to the dipole axis.',
   },
+  {
+    mode: 'hydrogen',
+    title: 'Hydrogen atom',
+    desc: 'A negative charge follows a circular orbit around a fixed positive center, creating a rotating dipole source.',
+    hint: 'Turn on the Radiation heatmap and contours to watch the signed magnetic radiation pattern rotate outward.',
+  },
 ];
 
 export function StartPanel({ onSelectMode }: Props) {
   return (
     <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center px-6">
-      <div className="pointer-events-auto w-full max-w-2xl select-none rounded-3xl border border-orange-400/20 bg-black/65 px-8 py-7 text-center shadow-[0_0_48px_rgba(251,146,60,0.1)] backdrop-blur-md">
+      <div className="pointer-events-auto w-full max-w-5xl select-none rounded-3xl border border-orange-400/20 bg-black/65 px-8 py-7 text-center shadow-[0_0_48px_rgba(251,146,60,0.1)] backdrop-blur-md">
 
         {/* Header */}
         <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-orange-200/70">
@@ -87,7 +93,7 @@ export function StartPanel({ onSelectMode }: Props) {
         <p className="mt-5 text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400">
           Choose a mode to begin
         </p>
-        <div className="mt-2 grid gap-2.5 text-left text-sm sm:grid-cols-2">
+        <div className="mt-2 grid gap-2.5 text-left text-sm sm:grid-cols-2 lg:grid-cols-3">
           {MODE_CARDS.map(({ mode, title, desc, hint }) => (
             <button
               key={mode}

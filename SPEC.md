@@ -83,12 +83,25 @@ Two opposite charges oscillate in antiphase along a shared axis, forming a
 collinear electric dipole with a time-varying dipole moment. Each charge keeps
 its own history buffer and contributes its own LW field; the displayed field is
 the linear superposition of both contributions. This first multi-charge mode
-uses the CPU wavefront overlay path for radiation heatmap and contours.
+uses the same multi-charge WebGL radiation heatmap path as the single-charge
+modes, with CPU fallback where WebGL is unavailable.
 
 **What the student learns:** radiation from a dipole is not a new field law — it
 is the superposition of retarded fields from multiple charges. The pattern is
 strongest perpendicular to the dipole axis and weak along the axis, connecting
 the sandbox to antenna and molecular-vibration intuition.
+
+### Hydrogen Atom
+
+A fixed central positive charge and an orbiting negative charge form a scripted
+hydrogen-like teaching model. The electron trajectory is prescribed circular
+motion, not a self-consistent Coulomb orbit, so the mode stays within the same
+analytic-history architecture as the other demos.
+
+**What the student learns:** a rotating charge distribution radiates through the
+same LW superposition machinery. This connects the sandbox to atomic and
+molecular intuition while keeping the physics model explicit: the source motion
+is imposed, and the emitted fields are computed from that history.
 
 ## Milestones
 
@@ -260,21 +273,23 @@ path and uses its existing fallback contour level.
 
 ### M9: Paused streamline overlays — complete
 
-Add optional field-line / streamline overlays for single-charge scenes when the simulation is paused or stepped to a fixed frame.
+Add optional field-line / streamline overlays when the simulation is paused or stepped to a fixed frame.
 
 **Acceptance criteria:**
-- When playback is paused, the student can toggle a streamline overlay that traces the instantaneous electric field of the current single-charge frame
+- When playback is paused, the student can toggle a streamline overlay that traces the instantaneous electric field of the current frame
 - The streamline overlay is computed on demand for the paused frame and reused until the frame or relevant settings change; it is not continuously recomputed during normal playback
 - In `moving_charge` mode, the paused streamline overlay makes the shell kink / before-after structure visually legible
 - In `moving_charge` mode, when the ghost-charge overlay is enabled, the student can optionally show/hide a second streamline overlay for the ghost's extrapolated velocity-field pattern
 - Streamline overlays are labeled and documented as an instantaneous visualization aid for a time-dependent field, not as material lines that physically move with the charge
-- Performance remains acceptable because streamline tracing is restricted to paused / stepped frames and initially scoped to single-charge scenes
+- Performance remains acceptable because streamline tracing is restricted to paused / stepped frames; multi-charge modes seed from each charge and trace the combined field
 
 ### M10: Multiple charges — complete
 
 Generalize the runtime architecture from a single charge to an array of
 independent charge runtimes, then ship the first multi-charge teaching mode as a
-two-charge collinear vibrating dipole.
+two-charge collinear vibrating dipole. A follow-on within the same architecture
+adds a hydrogen-like atom with a fixed central positive charge and an orbiting
+negative charge.
 
 Implementation notes:
 - Each runtime owns its own `ChargeHistory` and signed charge value
@@ -286,20 +301,25 @@ Implementation notes:
   wavefront overlay use the superposed field
 - The dipole mode uses two opposite charges on the x-axis with antiphase
   sinusoidal motion; charges never cross
-- The WebGL heatmap remains single-charge for M10; dipole routes to the CPU
-  wavefront overlay pending a follow-up multi-charge WebGL renderer
+- The hydrogen mode uses a fixed positive charge and a prescribed circular
+  negative-charge orbit
+- The WebGL heatmap supports up to two independent charge histories, so dipole
+  and hydrogen use the high-fidelity per-pixel radiation heatmap when WebGL is
+  available
 
 **Acceptance criteria:**
 - Each charge maintains its own history buffer
 - The field at each grid point is the vector sum of each charge's LW contribution
 - The dipole demo produces a recognizable dipole radiation pattern
+- The hydrogen demo shows a stable scripted circular orbit around a fixed
+  positive center
 - Streamlines and cursor readout use the combined field in multi-charge mode
-- Radiation heatmap and wavefront contours are available in dipole mode via the
-  CPU overlay path
+- Radiation heatmap and wavefront contours are available in multi-charge modes
+  through the WebGL path, with CPU fallback
 - Superposition tests prove the multi-charge helper equals the manual sum of
   individual one-charge field evaluations
-- Performance remains usable for the two-charge dipole on the default 40x40
-  vector grid
+- Performance remains usable for the two-charge scripted modes on the default
+  40x40 vector grid
 
 ## UI and Interaction Spec
 
@@ -350,33 +370,32 @@ The v1 renderer iterates over a grid of observation points, solves the retarded 
 
 ### WebGL heatmap and GPU follow-on work
 
-The WebGL renderer transition is shipped for the M7–M8 single-charge scope. The
-design is specified in full in `IDEAS-webGL.md`. M7 delivered the fragment-shader
-radiation heatmap for `moving_charge` and `oscillating` modes plus the
-shader-native zero-crossing contour for `oscillating`. M8 restored the
-shader-native `moving_charge` envelope contour while keeping the heatmap itself
-signed.
+The WebGL renderer transition is shipped for the single-charge M7–M8 scope and
+the two-charge M10 scope. The design is specified in full in `IDEAS-webGL.md`.
+M7 delivered the fragment-shader radiation heatmap for `moving_charge` and
+`oscillating` modes plus the shader-native zero-crossing contour for
+`oscillating`. M8 restored the shader-native `moving_charge` envelope contour
+while keeping the heatmap itself signed. M10 extends the history texture layout
+and shader loop to two independent charge histories, allowing dipole and
+hydrogen modes to use the same high-fidelity per-pixel radiation heatmap.
 
-The M10 dipole mode currently uses the CPU wavefront overlay because the WebGL
-shader still packs and solves one charge history. The CPU physics
-implementation remains the validation oracle for all GPU field values.
+The CPU physics implementation remains the validation oracle for point probes of
+all GPU field values.
 
 ## Deferred Work and Future Directions
 
-- **Multi-charge WebGL heatmap:** extend the M7/M8 WebGL renderer from one
-  charge history to N histories so dipole and later molecular demos can use the
-  high-fidelity per-pixel radiation heatmap. This likely requires explicit
-  history packing for multiple runtimes, a shader loop over charges, and
-  normalization over the combined field.
+- **N-charge WebGL generalization:** the WebGL heatmap currently supports two
+  charge histories, enough for dipole and hydrogen. Future molecular demos with
+  more than two moving charges should extend the texture layout and shader loop
+  from `MAX_CHARGES = 2` to a larger explicit bound.
 - **WebGL efficiency tuning:** future work may add a manual heatmap quality
   control for lower-tier hardware, first by reducing internal WebGL render scale
   and then, if needed, by lowering CPU normalization-probe density/cadence. See
   `IDEAS-webGL-efficiency.md`.
-- **Additional multi-charge demos:** hydrogen-like oscillator and molecular
-  geometries such as water stretch/bend modes are natural follow-ons now that
-  the N-charge architecture exists. These should wait until the multi-charge
-  WebGL path is available so their radiation structure is not limited by the CPU
-  sampled heatmap.
+- **Additional multi-charge demos:** molecular geometries such as water
+  stretch/bend modes are natural follow-ons now that the N-charge architecture
+  exists. Modes with more than two moving charges should wait for the N-charge
+  WebGL generalization above.
 - **Vector-grid density control:** an optional low / medium / high selector for
   the CPU arrow field may be added in a future pass if teaching needs or
   performance tuning justify it. This was removed from the v1 control-panel

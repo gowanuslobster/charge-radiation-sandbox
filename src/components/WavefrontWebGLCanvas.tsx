@@ -13,6 +13,7 @@
 import { useEffect, useRef, type CSSProperties, type RefObject, type MutableRefObject } from 'react';
 import type { SimConfig } from '@/physics/types';
 import type { ChargeRuntime } from '@/physics/chargeRuntime';
+import { HYDROGEN_OMEGA } from '@/physics/demoModes';
 import type { WorldBounds } from '@/rendering/worldSpace';
 import { createSamplerState, sampleWavefront } from '@/physics/wavefrontSampler';
 import { computeContrastPeak } from '@/rendering/wavefrontRender';
@@ -59,6 +60,7 @@ const NEWTON_ITERS        = 28;   // profiling target range 24–32
 const NORM_PROBE_W   = 32;
 const NORM_PROBE_H   = 32;
 const NORM_EMA_ALPHA = 0.12;       // temporal smoothing; tune if flicker observed
+const HYDROGEN_NORM_PHASE_SAMPLES = 8;
 
 // Phase I performance cap: limit the effective DPR for this canvas only.
 const WEBGL_MAX_DPR = 1.5;
@@ -494,6 +496,13 @@ export function WavefrontWebGLCanvas({
       //
       // Probe sums bZAccel contributions from all active charges, matching what the
       // GPU shader computes. The summed peak is passed as u_peak.
+      //
+      // Hydrogen is a special case: the radiating pattern rotates continuously at
+      // nearly constant intensity, so per-frame re-probing aliases against the
+      // coarse CPU probe lattice and makes the whole heatmap pulse. For that mode
+      // we cache a phase-invariant peak by sweeping several orbital phases over
+      // one full period and taking the max. The cached value is recomputed only
+      // when the view or normalization inputs change.
 
       const epochChanged  = epoch   !== prevNormEpoch;
       const modeChanged   = mode    !== prevNormMode;
@@ -511,31 +520,46 @@ export function WavefrontWebGLCanvas({
         curBounds.maxY !== prevNormBounds.maxY;
 
       const hardReset = epochChanged || modeChanged || cChanged || chargesChanged;
+      const needsHydrogenProbe = mode === 'hydrogen' && (hardReset || boundsChanged);
+      const needsStandardProbe = mode !== 'hydrogen' && (hardReset || !paused || boundsChanged);
 
-      if (hardReset || !paused || boundsChanged) {
-        // Sum probe contributions from each active charge.
-        normProbeScratch.fill(0);
-        for (let ci = 0; ci < chargeCount; ci++) {
-          const { history: h, charge: q } = runtimes[ci];
-          if (!h || h.isEmpty()) continue;
-          const contrib = sampleWavefront(normSamplerStates[ci], {
-            history: h,
-            simTime:  tCurrent,
-            charge:   q,
-            config,
-            bounds:   curBounds,
-            gridW:    NORM_PROBE_W,
-            gridH:    NORM_PROBE_H,
-            simEpoch: epoch,
-          });
-          for (let k = 0; k < normProbeScratch.length; k++) normProbeScratch[k] += contrib[k];
-        }
-        const rawPeak = computeContrastPeak(normProbeScratch, 'signed');
+      if (needsHydrogenProbe || needsStandardProbe) {
+        const computeProbePeakAtTime = (probeTime: number): number => {
+          normProbeScratch.fill(0);
+          for (let ci = 0; ci < chargeCount; ci++) {
+            const { history: h, charge: q } = runtimes[ci];
+            if (!h || h.isEmpty()) continue;
+            const contrib = sampleWavefront(normSamplerStates[ci], {
+              history: h,
+              simTime:  probeTime,
+              charge:   q,
+              config,
+              bounds:   curBounds,
+              gridW:    NORM_PROBE_W,
+              gridH:    NORM_PROBE_H,
+              simEpoch: epoch,
+            });
+            for (let k = 0; k < normProbeScratch.length; k++) normProbeScratch[k] += contrib[k];
+          }
+          return computeContrastPeak(normProbeScratch, 'signed');
+        };
 
-        if (hardReset || smoothedPeak === 0) {
-          smoothedPeak = rawPeak;  // hard reset — bypass EMA
+        let rawPeak: number;
+        if (mode === 'hydrogen') {
+          const period = (2 * Math.PI) / HYDROGEN_OMEGA;
+          rawPeak = 0;
+          for (let si = 0; si < HYDROGEN_NORM_PHASE_SAMPLES; si++) {
+            const probeTime = tCurrent - (si * period) / HYDROGEN_NORM_PHASE_SAMPLES;
+            rawPeak = Math.max(rawPeak, computeProbePeakAtTime(probeTime));
+          }
+          smoothedPeak = rawPeak; // phase-invariant cache: no EMA wobble in hydrogen mode
         } else {
-          smoothedPeak = NORM_EMA_ALPHA * rawPeak + (1 - NORM_EMA_ALPHA) * smoothedPeak;
+          rawPeak = computeProbePeakAtTime(tCurrent);
+          if (hardReset || smoothedPeak === 0) {
+            smoothedPeak = rawPeak;  // hard reset — bypass EMA
+          } else {
+            smoothedPeak = NORM_EMA_ALPHA * rawPeak + (1 - NORM_EMA_ALPHA) * smoothedPeak;
+          }
         }
 
         prevNormEpoch  = epoch;
@@ -546,7 +570,7 @@ export function WavefrontWebGLCanvas({
         for (let ci = chargeCount; ci < MAX_CHARGES; ci++) prevNormChargeVals[ci] = NaN;
         prevNormBounds = { ...curBounds };
       }
-      // else: paused + no relevant change → skip re-probe, reuse smoothedPeak
+      // else: reuse cached peak; hydrogen intentionally does not re-probe every frame
 
       const peak = Math.max(smoothedPeak, 1e-10);
 

@@ -795,6 +795,7 @@ export function ChargeRadiationSandbox() {
             demoMode={demoMode}
             heatmapChannel={magneticHeatmapMode}
             showContours={showWavefrontContours}
+            stopTriggered={stopTriggered}
             isPausedRef={isPausedRef}
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 10 }}
           />
@@ -814,6 +815,7 @@ export function ChargeRadiationSandbox() {
               demoMode={demoMode}
               heatmapChannel={magneticHeatmapMode}
               showContours={showWavefrontContours}
+              stopTriggered={stopTriggered}
               isPausedRef={isPausedRef}
               style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 10 }}
             />

@@ -11,8 +11,9 @@
 // This keeps sampling fidelity stable across zoom levels.
 //
 // Normalization is mode-aware and per-channel, matching WavefrontWebGLCanvas:
-//   Policy A (moving_charge, draggable)  — dynamic EMA.
-//   Policy B (oscillating, dipole, hydrogen) — phase-invariant cached peak.
+//   Policy A (moving_charge post-stop, draggable) — dynamic EMA.
+//   Policy B (oscillating, dipole, hydrogen)      — phase-invariant cached peak.
+//   Policy C (moving_charge pre-stop)             — translational phase cache.
 //
 // Stacking: position:absolute inset:0, zIndex:10 (below VectorFieldCanvas at z-15).
 
@@ -65,6 +66,7 @@ const NORM_PROBE_W   = 32;
 const NORM_PROBE_H   = 32;
 const NORM_EMA_ALPHA = 0.12;
 const PERIODIC_NORM_PHASE_SAMPLES = 8;
+const TRANSLATION_NORM_PHASE_SAMPLES = 8;
 
 // Channel indices (match WavefrontWebGLCanvas).
 const CHANNEL_TOTAL = 0;
@@ -80,6 +82,7 @@ type Props = {
   demoMode: DemoMode;
   heatmapChannel: MagneticHeatmapMode;
   showContours: boolean;
+  stopTriggered: boolean;
   isPausedRef: MutableRefObject<boolean>;
   style?: CSSProperties;
 };
@@ -93,6 +96,33 @@ function periodicModePeriod(mode: DemoMode): number | null {
   if (mode === 'dipole')      return (2 * Math.PI) / DIPOLE_OMEGA;
   if (mode === 'hydrogen')    return (2 * Math.PI) / HYDROGEN_OMEGA;
   return null;
+}
+
+function translationalNormWindow(
+  mode: DemoMode,
+  stopTriggered: boolean,
+  chargeRuntimes: ChargeRuntime[],
+  bounds: WorldBounds,
+): number | null {
+  if (mode !== 'moving_charge' || stopTriggered) return null;
+  const runtime = chargeRuntimes[0];
+  if (!runtime?.history || runtime.history.isEmpty()) return null;
+  const newest = runtime.history.newest();
+  if (!newest) return null;
+  const speed = Math.hypot(newest.vel.x, newest.vel.y);
+  if (speed < 1e-9) return null;
+
+  const dx = NORM_PROBE_W > 1 ? (bounds.maxX - bounds.minX) / (NORM_PROBE_W - 1) : 0;
+  const dy = NORM_PROBE_H > 1 ? (bounds.maxY - bounds.minY) / (NORM_PROBE_H - 1) : 0;
+  const vHatX = newest.vel.x / speed;
+  const vHatY = newest.vel.y / speed;
+  // Conservative L1 over-estimate of the probe-lattice period along vHat.
+  // This is exact for the current moving_charge path (pure +x motion). More
+  // generally, over-coverage is safe, while under-coverage can reintroduce the
+  // whole-screen bright/dim pulsing if the sweep misses a probe phase.
+  const projectedCell = Math.abs(vHatX) * dx + Math.abs(vHatY) * dy;
+  if (projectedCell < 1e-9) return null;
+  return projectedCell / speed;
 }
 
 function channelIndex(channel: MagneticHeatmapMode): number {
@@ -139,6 +169,7 @@ export function WavefrontOverlayCanvas({
   demoMode,
   heatmapChannel,
   showContours,
+  stopTriggered,
   isPausedRef,
   style,
 }: Props) {
@@ -150,10 +181,12 @@ export function WavefrontOverlayCanvas({
   const demoModeRef         = useRef(demoMode);
   const heatmapChannelRef   = useRef(heatmapChannel);
   const showContoursRef     = useRef(showContours);
+  const stopTriggeredRef    = useRef(stopTriggered);
   useEffect(() => { boundsRef.current         = bounds;         }, [bounds]);
   useEffect(() => { demoModeRef.current       = demoMode;       }, [demoMode]);
   useEffect(() => { heatmapChannelRef.current = heatmapChannel; }, [heatmapChannel]);
   useEffect(() => { showContoursRef.current   = showContours;   }, [showContours]);
+  useEffect(() => { stopTriggeredRef.current  = stopTriggered;  }, [stopTriggered]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -208,8 +241,12 @@ export function WavefrontOverlayCanvas({
     let lastChargeCount = -1;
 
     // ── Mode-aware per-channel normalization state (mirrors WebGL path) ─────────
+    // Invalidation: epoch / mode / c / charges / bounds / stop state.
+    // Channel switches deliberately do NOT invalidate. Both the caches and the
+    // EMA path store all three channel slots together; flipping the heatmap
+    // channel just selects a different slot.
     const smoothedPeaks = new Float64Array(3);  // Policy A
-    const cachedPeaks   = new Float64Array(3);  // Policy B
+    const cachedPeaks   = new Float64Array(3);  // Policy B / C
     let cachedPeaksValid = false;
 
     let prevNormEpoch       = NaN;
@@ -218,6 +255,7 @@ export function WavefrontOverlayCanvas({
     let prevNormChargeCount = -1;
     const prevNormChargeVals = new Float64Array(8).fill(NaN); // tolerant upper bound
     let prevNormBounds      = { minX: NaN, maxX: NaN, minY: NaN, maxY: NaN } as WorldBounds;
+    let prevStopTriggered   = false;
 
     // Probe scratch buffers (per-channel).
     const probeScratchTotal = new Float32Array(NORM_PROBE_W * NORM_PROBE_H);
@@ -255,6 +293,7 @@ export function WavefrontOverlayCanvas({
 
       const currentBounds  = boundsRef.current;
       const mode = demoModeRef.current;
+      const stopped = stopTriggeredRef.current;
 
       // Grid dimensions: world-space driven so fidelity is stable across zoom levels.
       const spanX = currentBounds.maxX - currentBounds.minX;
@@ -380,9 +419,11 @@ export function WavefrontOverlayCanvas({
       // Both Policy B's cache and Policy A's EMA store all three channel slots,
       // populated together on every probe. Flipping the heatmap channel just
       // selects a different slot; no recompute is needed.
-      const hardReset  = epochChanged || modeChanged || cChanged || chargesChanged;
+      const stopChanged = mode === 'moving_charge' && stopped !== prevStopTriggered;
+      const hardReset  = epochChanged || modeChanged || cChanged || chargesChanged || stopChanged;
       const invalidate = hardReset || boundsChanged;
       const period     = periodicModePeriod(mode);
+      const translationWindow = translationalNormWindow(mode, stopped, chargeRuntimes, currentBounds);
       const policyB    = period !== null;
 
       const runProbe = (probeTime: number): [number, number, number] => {
@@ -433,6 +474,24 @@ export function WavefrontOverlayCanvas({
           cachedPeaks[CHANNEL_ACCEL] = maxA;
           cachedPeaksValid = true;
         }
+      } else if (translationWindow !== null) {
+        if (invalidate) cachedPeaksValid = false;
+        if (!cachedPeaksValid) {
+          const dt = translationWindow;
+          const N = TRANSLATION_NORM_PHASE_SAMPLES;
+          let maxT = 0, maxV = 0, maxA = 0;
+          for (let si = 0; si < N; si++) {
+            const probeTime = currentSimTime - (si * dt) / N;
+            const [pt, pv, pa] = runProbe(probeTime);
+            if (pt > maxT) maxT = pt;
+            if (pv > maxV) maxV = pv;
+            if (pa > maxA) maxA = pa;
+          }
+          cachedPeaks[CHANNEL_TOTAL] = maxT;
+          cachedPeaks[CHANNEL_VEL]   = maxV;
+          cachedPeaks[CHANNEL_ACCEL] = maxA;
+          cachedPeaksValid = true;
+        }
       } else {
         if (hardReset) { smoothedPeaks[0] = 0; smoothedPeaks[1] = 0; smoothedPeaks[2] = 0; }
         const needsProbe = hardReset || !paused || boundsChanged;
@@ -456,8 +515,9 @@ export function WavefrontOverlayCanvas({
       for (let ci = 0; ci < chargeRuntimes.length; ci++) prevNormChargeVals[ci] = chargeRuntimes[ci].charge;
       for (let ci = chargeRuntimes.length; ci < prevNormChargeVals.length; ci++) prevNormChargeVals[ci] = NaN;
       prevNormBounds      = { ...currentBounds };
+      prevStopTriggered   = stopped;
 
-      const activePeaks = policyB ? cachedPeaks : smoothedPeaks;
+      const activePeaks = (policyB || translationWindow !== null) ? cachedPeaks : smoothedPeaks;
       const chIdx       = channelIndex(channel);
       const heatmapPeak = Math.max(chIdx >= 0 ? activePeaks[chIdx] : 0, 1e-10);
       const accelPeak   = Math.max(activePeaks[CHANNEL_ACCEL], 1e-10);

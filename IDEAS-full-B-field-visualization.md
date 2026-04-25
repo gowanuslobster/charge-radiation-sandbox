@@ -1,5 +1,12 @@
 # IDEAS — Full B-Field Visualization
 
+> **Implemented in M11.** The core proposal below — exposing `Total B`,
+> `Velocity B`, and `Accel B` as signed warm/cool heatmaps through a single
+> labeled picker, with the wavefront contour remaining tied to `bZAccel` — now
+> ships. The design discussion is preserved for context. See the M11 entry in
+> `SPEC.md` for the shipped shape, including the mode-aware normalization policy
+> (per-channel EMA for transient modes; phase-sweep cache for periodic modes).
+
 ## Context
 
 The current heatmap overlay is deliberately scoped to the **radiative magnetic

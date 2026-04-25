@@ -54,7 +54,7 @@ The current official scope does not include:
 - Poynting vector or energy flow visualization
 - time-averaged field displays
 
-M1–M10 are complete. Remaining work is tracked as future directions rather than
+M1–M11 are complete. Remaining work is tracked as future directions rather than
 official v1 milestone scope.
 
 ## Canonical Demo Modes
@@ -321,6 +321,57 @@ Implementation notes:
 - Performance remains usable for the two-charge scripted modes on the default
   40x40 vector grid
 
+### M11: Full magnetic-field visualization — complete
+
+Generalize the pre-M11 radiation-only heatmap into a full magnetic-field
+visualization. The overlay now exposes three signed `Bz` channels — `Total B`,
+`Velocity B`, and `Accel B` — selectable through a labeled `Magnetic heatmap`
+picker (Off / Total B / Velocity B / Accel B). The wavefront contour remains a
+radiation annotation and continues to read `bZAccel` independently of the
+heatmap channel.
+
+Implementation notes:
+- `sampleWavefront` returns a struct of three scratch buffers
+  (`bZ`, `bZVel`, `bZAccel`) owned by the sampler state and reused across
+  calls. One retarded-time solve per cell feeds all three, so the extra
+  channels cost no additional solves.
+- The WebGL shader's `computeBZComponents` derives all three components from
+  the same retarded state. `main()` accumulates three per-channel sums across
+  charges; a new `int` uniform `u_bzChannel` selects which sum colors the
+  heatmap body, while the contour branch always reads the acceleration sum.
+- Normalization is a mode-aware policy. Transient modes (`moving_charge`,
+  `draggable`) use a per-channel EMA smoothed peak; periodic modes
+  (`oscillating`, `dipole`, `hydrogen`) use a phase-sweep cache over one
+  period `T = 2π/ω`, taking the max across 8 probe phases and reusing the
+  cached peak until an invalidation condition fires (epoch, mode, `c`,
+  charges, bounds, or channel).
+- The CPU fallback mirrors the WebGL policy, selecting the heatmap buffer by
+  channel and always feeding the contour extractor the `bZAccel` buffer.
+- `draggable` mode is in scope: the magnetic picker is visible and active
+  there; the wavefront-contour toggle remains hidden for `draggable` because
+  there is no scripted wavefront structure to annotate.
+- The pre-M11 `|Accel B|` envelope heatmap body is retired; the `Accel B`
+  channel is its signed, pedagogically clearer successor. The `moving_charge`
+  envelope contour (radiation shell annotation) is unchanged.
+
+**Acceptance criteria:**
+- Unit tests verify the cell-wise decomposition identity
+  `bZ ≈ bZVel + bZAccel` and the uniformly-moving-charge invariant
+  (`bZVel` nonzero off-axis, `bZAccel ≈ 0`)
+- A uniformly moving charge displays a clean top-warm / bottom-cool
+  right-hand-rule split under `Velocity B`, near-zero under `Accel B`
+- After a `moving_charge` stop, `Total B` shows the post-stop void — a dead
+  interior around the stopped charge surrounded by the expanding radiation
+  shell
+- Periodic modes render steady signed heatmaps across all three channels
+  without frame-to-frame pulsing under the phase-sweep cache
+- Switching channel, zooming/panning, changing `c`, or resetting forces a
+  recompute and the normalization stabilizes within one frame
+- Wavefront contours continue to trace `bZAccel` regardless of the selected
+  heatmap channel
+- WebGL and CPU-fallback paths produce matching structure across all three
+  channels (coarser resolution expected on CPU)
+
 ## UI and Interaction Spec
 
 ### Viewport
@@ -348,7 +399,7 @@ Implementation notes:
   - **Speed of light:** slider for `c` with visible numeric readout
   - **Field layers:** toggles for total field, velocity field, acceleration field
   - **Mode-specific controls:** in `moving_charge` mode, a separate draggable mini panel provides a `Stop now` trigger and ghost-charge overlay toggle
-  - **Teaching overlays:** toggles for pedagogical overlays — ghost-charge markers, radiation heatmap (M6), wavefront contours (M6), and paused-frame streamline displays (M9)
+  - **Teaching overlays:** toggles for pedagogical overlays — ghost-charge markers, magnetic heatmap channel picker (M11; supersedes the M6 radiation heatmap toggle), wavefront contours (M6), and paused-frame streamline displays (M9)
 
 ### Camera
 

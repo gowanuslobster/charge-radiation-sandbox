@@ -61,7 +61,7 @@ A charge moves at constant velocity. While moving, its field shows relativistic 
 
 **To try:**
 - Lower c before clicking Stop so the shell is easy to see at normal zoom.
-- Enable the **Radiation heatmap** to see where the radiated energy is concentrated.
+- Pick **Accel B** on the **Magnetic heatmap** picker to see where the radiated magnetic field is concentrated. Flip to **Velocity B** to color the bound moving-charge field instead, and **Total B** to see both — including the post-stop void where the stopped charge sits inside the expanding shell.
 - Toggle **Ghost charge** in the mini panel — a marker appears at the would-have-been position so the outside-of-shell field makes sense.
 - Enable **Field lines** (while paused) and then **Ghost field lines** in the mini panel to compare the inside and outside field geometries side by side.
 - Enable **Wavefront contours** to see the envelope contour marking the shell boundary.
@@ -71,7 +71,7 @@ A charge moves at constant velocity. While moving, its field shows relativistic 
 A charge oscillates sinusoidally along one axis, radiating continuously. The field shows the characteristic dipole pattern: strongest perpendicular to the motion, weaker along the axis. The wavefronts expand outward at c.
 
 **To try:**
-- Enable **Radiation heatmap** to map the radiated field intensity.
+- Pick **Accel B** on the **Magnetic heatmap** picker to map the radiated magnetic field intensity.
 - Enable **Wavefront contours** to see zero-crossing lines that track the wave phase exactly.
 - Lower c until you can see the wavefronts expanding in real time.
 - Pause and enable **Field lines** to see the instantaneous field geometry.
@@ -83,7 +83,7 @@ Two opposite charges (one positive, one negative) oscillate in antiphase along a
 This mode demonstrates that the simulator is not restricted to a single charge. Each charge has its own history buffer and retarded-time solve; the total field is the exact sum with no approximation.
 
 **To try:**
-- Enable **Radiation heatmap** and pause — the lobed pattern is most vivid on a frozen frame.
+- Pick **Accel B** on the **Magnetic heatmap** picker and pause — the lobed pattern is most vivid on a frozen frame.
 - Zoom out to see several wavefront rings and the angular variation in brightness.
 - Switch to **Accel E** to isolate just the radiation contribution from each charge.
 - Compare with **Oscillating** (single charge): the dipole pattern looks similar but the field from the two charges partially cancels near the axis, sharpening the lobes.
@@ -93,8 +93,8 @@ This mode demonstrates that the simulator is not restricted to a single charge. 
 A fixed positive charge sits at the center while a negative charge follows a prescribed circular orbit. This is a teaching model, not self-consistent orbital dynamics: the trajectory is scripted so the sandbox can focus on retarded fields, superposition, and radiation from a rotating dipole-like source.
 
 **To try:**
-- Enable **Radiation heatmap** and **Wavefront contours** to see the signed magnetic radiation pattern rotate outward.
-- Pause and enable **Field lines** to compare the near-field geometry with the radiation heatmap.
+- Pick **Accel B** on the **Magnetic heatmap** picker and enable **Wavefront contours** to see the signed magnetic radiation pattern rotate outward.
+- Pause and enable **Field lines** to compare the near-field geometry with the magnetic heatmap.
 - Lower c to exaggerate the causal delay between the orbiting charge and the fields far from the atom.
 
 ---
@@ -106,8 +106,8 @@ All overlays are off by default. They stack freely — you can enable any combin
 | Overlay | Where | What it shows |
 |---------|-------|---------------|
 | **Field lines** | All modes, when paused | Instantaneous streamlines of the total electric field at the paused frame. Not material lines that move with the charge — they are a snapshot of the field at that moment. |
-| **Radiation heatmap** | Moving charge, Oscillating, Dipole, Hydrogen | Color map of the radiation magnetic field (Bz from the acceleration term). Warm/orange = positive, cool/blue = negative — the sign encodes the field direction. Contributions from all active charges are superposed before rendering. |
-| **Wavefront contours** | Moving charge, Oscillating, Dipole, Hydrogen | Contour lines always aligned with the heatmap. In Oscillating, Dipole, and Hydrogen: zero-crossing lines tracking wave phase. In Moving charge: envelope threshold contour marking the shell boundary. |
+| **Magnetic heatmap** | Charge at rest, Moving charge, Oscillating, Dipole, Hydrogen | A four-state picker (Off / Total B / Velocity B / Accel B) coloring the chosen Bz channel as a signed warm/cool heatmap. **Accel B** is the radiation magnetic field (Bz from the acceleration term — the pre-M11 "Radiation heatmap"). **Velocity B** is the bound moving-charge magnetic field. **Total B** sums both — useful for seeing the post-stop void in `Moving charge`. Contributions from all active charges are superposed before rendering. |
+| **Wavefront contours** | Moving charge, Oscillating, Dipole, Hydrogen | Contour lines tied to the radiation magnetic field (`bZAccel`) regardless of which heatmap channel is selected. In Oscillating, Dipole, and Hydrogen: zero-crossing lines tracking wave phase. In Moving charge: envelope threshold contour marking the shell boundary. |
 | **Ghost charge** (mini panel) | Moving charge | A marker at the extrapolated would-have-been position after the stop. Shows why the field outside the shell still points toward a charge that is no longer there. |
 | **Ghost field lines** (mini panel) | Moving charge, paused | Streamlines of the extrapolated constant-velocity field — shows what the field would look like if the charge had never stopped. |
 

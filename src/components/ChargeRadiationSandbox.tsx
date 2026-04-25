@@ -32,6 +32,7 @@ import { magnitude } from '@/physics/vec2';
 import type { SimConfig, Vec2 } from '@/physics/types';
 import {
   type DemoMode,
+  type MagneticHeatmapMode,
   sampleSourceState,
   sampleDemoChargeStates,
   sampleSuddenStopState,
@@ -75,8 +76,11 @@ export function ChargeRadiationSandbox() {
   const [showGhost, setShowGhost] = useState(false);
   const [c, setC] = useState(1.0);
 
-  // M6 overlay state.
-  const [showRadiationHeatmap, setShowRadiationHeatmap] = useState(false);
+  // Overlay state. `magneticHeatmapMode` replaces the pre-M11 boolean
+  // `showRadiationHeatmap`: the overlay is now a 4-state channel picker
+  // (off / total B / velocity B / accel B). The wavefront contour remains a
+  // radiation annotation driven by bZAccel, independent of this channel.
+  const [magneticHeatmapMode, setMagneticHeatmapMode] = useState<MagneticHeatmapMode>('off');
   const [showWavefrontContours, setShowWavefrontContours] = useState(false);
   const [showVelocityVectors, setShowVelocityVectors] = useState(true);
 
@@ -293,7 +297,7 @@ export function ChargeRadiationSandbox() {
     // (mode → reset) with no loop risk.
     setStopTriggered(false);
     setShowGhost(false);
-    setShowRadiationHeatmap(false);
+    setMagneticHeatmapMode('off');
     setShowWavefrontContours(false);
     setShowStreamlines(false);
     setShowGhostStreamlines(false);
@@ -451,7 +455,7 @@ export function ChargeRadiationSandbox() {
       setFieldLayer('total');
       setStopTriggered(false);
       setShowGhost(false);
-      setShowRadiationHeatmap(false);
+      setMagneticHeatmapMode('off');
       setShowWavefrontContours(false);
       setShowStreamlines(false);
       setShowGhostStreamlines(false);
@@ -520,7 +524,7 @@ export function ChargeRadiationSandbox() {
     setFieldLayer('total');
     setStopTriggered(false);
     setShowGhost(false);
-    setShowRadiationHeatmap(false);
+    setMagneticHeatmapMode('off');
     setShowWavefrontContours(false);
     setShowStreamlines(false);
     setShowGhostStreamlines(false);
@@ -777,7 +781,7 @@ export function ChargeRadiationSandbox() {
         ghostVel={demoMode === 'moving_charge' ? { x: SUDDEN_STOP_V, y: 0 } : undefined}
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 17 }}
       />
-      {(demoMode === 'moving_charge' || demoMode === 'oscillating' || demoMode === 'dipole' || demoMode === 'hydrogen') && (
+      {(demoMode === 'moving_charge' || demoMode === 'oscillating' || demoMode === 'dipole' || demoMode === 'hydrogen' || demoMode === 'draggable') && (
         webGLReady === true ? (
           // WebGL path: per-pixel retarded-time solve for heatmap-capable modes.
           // WavefrontWebGLCanvas supports up to MAX_CHARGES=2 independent histories,
@@ -789,7 +793,7 @@ export function ChargeRadiationSandbox() {
             simEpochRef={simEpochRef}
             bounds={viewBounds}
             demoMode={demoMode}
-            showHeatmap={showRadiationHeatmap}
+            heatmapChannel={magneticHeatmapMode}
             showContours={showWavefrontContours}
             isPausedRef={isPausedRef}
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 10 }}
@@ -808,7 +812,7 @@ export function ChargeRadiationSandbox() {
               simEpochRef={simEpochRef}
               bounds={viewBounds}
               demoMode={demoMode}
-              showHeatmap={showRadiationHeatmap}
+              heatmapChannel={magneticHeatmapMode}
               showContours={showWavefrontContours}
               isPausedRef={isPausedRef}
               style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 10 }}
@@ -845,7 +849,7 @@ export function ChargeRadiationSandbox() {
         c={c}
         stopTriggered={stopTriggered}
         readout={readout}
-        showRadiationHeatmap={showRadiationHeatmap}
+        magneticHeatmapMode={magneticHeatmapMode}
         showWavefrontContours={showWavefrontContours}
         onDemoModeChange={handleDemoModeChange}
         onFieldLayerChange={setFieldLayer}
@@ -861,7 +865,7 @@ export function ChargeRadiationSandbox() {
         onPanRight={() => panBy(PAN_STEP_PX, 0)}
         onPanUp={() => panBy(0, -PAN_STEP_PX)}
         onPanDown={() => panBy(0, PAN_STEP_PX)}
-        onRadiationHeatmapToggle={() => setShowRadiationHeatmap(v => !v)}
+        onMagneticHeatmapModeChange={setMagneticHeatmapMode}
         onWavefrontContoursToggle={() => setShowWavefrontContours(v => !v)}
         showStreamlines={showStreamlines}
         onStreamlinesToggle={() => setShowStreamlines(v => !v)}

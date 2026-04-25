@@ -1,12 +1,12 @@
-// wavefrontSampler.ts — coarse scalar grid sampler for the M6 wavefront overlay.
+// wavefrontSampler.ts — coarse scalar grid sampler for the wavefront overlay.
 //
-// Evaluates bZAccel (the radiative magnetic component) on a regular grid of world-space
-// observation points. Uses a per-cell retarded-time warm-start cache to reduce iteration
-// count across frames: the previous frame's solved tRet is a much better initial guess
-// than the default newest-position bootstrap for smoothly evolving charge motion.
+// Evaluates the three magnetic-field components (bZ, bZVel, bZAccel) on a regular grid of
+// world-space observation points. Uses a per-cell retarded-time warm-start cache to reduce
+// iteration count across frames: the previous frame's solved tRet is a much better initial
+// guess than the default newest-position bootstrap for smoothly evolving charge motion.
 //
 // Pure physics layer: no rendering imports, no UI mode concepts.
-// Always returns signed bZAccel. The rendering layer applies abs() for envelope display.
+// All three buffers are signed. The rendering layer applies abs() / channel selection.
 
 import type { SamplerBounds, SimConfig } from './types';
 import { ChargeHistory } from './chargeHistory';
@@ -34,12 +34,37 @@ export type WavefrontSamplerParams = {
   simEpoch: number;
 };
 
+/**
+ * Sampled scalar output buffers. Row-major, idx = j * gridW + i.
+ *
+ *   bZ      — total out-of-plane magnetic field
+ *   bZVel   — velocity (bound) component of Bz
+ *   bZAccel — acceleration (radiative) component of Bz
+ *
+ * IMPORTANT: the three Float32Arrays are **scratch storage owned by the
+ * WavefrontSamplerState**. They are resized in place when the grid changes and
+ * overwritten on every call to sampleWavefront. Callers must NOT retain these
+ * references past the next sampleWavefront call; if values need to persist,
+ * the caller must copy into its own buffer. This mirrors the existing
+ * cachedTRet ownership pattern and avoids three per-frame Float32Array
+ * allocations per charge.
+ */
+export type WavefrontSamples = {
+  bZ: Float32Array;
+  bZVel: Float32Array;
+  bZAccel: Float32Array;
+};
+
 export type WavefrontSamplerState = {
   /**
    * Per-cell cached retarded times. Indexed row-major: cell (i, j) → j * gridW + i.
    * NaN means the cell has not been solved yet or the cache was invalidated.
    */
   cachedTRet: Float64Array;
+  /** Owned output scratch buffers. See WavefrontSamples for ownership rules. */
+  bZ: Float32Array;
+  bZVel: Float32Array;
+  bZAccel: Float32Array;
   /** Last bounds used — used to detect camera changes that require a cache reset. */
   lastBounds: SamplerBounds | null;
   lastC: number;
@@ -52,6 +77,9 @@ export type WavefrontSamplerState = {
 export function createSamplerState(): WavefrontSamplerState {
   return {
     cachedTRet: new Float64Array(0),
+    bZ: new Float32Array(0),
+    bZVel: new Float32Array(0),
+    bZAccel: new Float32Array(0),
     lastBounds: null,
     lastC: NaN,
     lastEpoch: NaN,
@@ -61,18 +89,21 @@ export function createSamplerState(): WavefrontSamplerState {
 }
 
 /**
- * Sample bZAccel (signed) at each cell of a gridW × gridH lattice covering `bounds`.
+ * Sample bZ, bZVel, bZAccel (signed) at each cell of a gridW × gridH lattice covering `bounds`.
  *
  * Cell (i, j) occupies column i [0, gridW) and row j [0, gridH).
  * Output index: j * gridW + i (row-major).
  *
- * Mutates `state.cachedTRet` in place with updated solved tRet values.
- * One retarded-time solve per cell — no redundant solves.
+ * Mutates `state.cachedTRet` and the three scratch output buffers in place.
+ * One retarded-time solve per cell feeds all three outputs — no redundant solves.
+ *
+ * Returned WavefrontSamples references alias `state.{bZ,bZVel,bZAccel}`; they
+ * are valid only until the next call to sampleWavefront on the same state.
  */
 export function sampleWavefront(
   state: WavefrontSamplerState,
   params: WavefrontSamplerParams,
-): Float32Array {
+): WavefrontSamples {
   const { history, simTime, charge, config, bounds, gridW, gridH, simEpoch } = params;
   const n = gridW * gridH;
 
@@ -90,6 +121,18 @@ export function sampleWavefront(
     state.cachedTRet = new Float64Array(n).fill(NaN);
   }
 
+  // Resize scratch outputs in place when the grid dimensions change; otherwise
+  // zero them so cells we skip (e.g. empty history, unsolved cells) are clean.
+  if (state.bZ.length !== n) {
+    state.bZ = new Float32Array(n);
+    state.bZVel = new Float32Array(n);
+    state.bZAccel = new Float32Array(n);
+  } else {
+    state.bZ.fill(0);
+    state.bZVel.fill(0);
+    state.bZAccel.fill(0);
+  }
+
   // Update bookkeeping before the solve loop so that even a partial run (e.g.
   // early return on empty history) leaves the state consistent for the next call.
   state.lastGridW  = gridW;
@@ -99,9 +142,9 @@ export function sampleWavefront(
   state.lastBounds = { ...bounds };
 
   // ── Sample each cell ───────────────────────────────────────────────────────
-  const output = new Float32Array(n);
-
-  if (history.isEmpty()) return output; // all zeros; valid first-frame state
+  if (history.isEmpty()) {
+    return { bZ: state.bZ, bZVel: state.bZVel, bZAccel: state.bZAccel };
+  }
 
   const xStep = gridW > 1 ? (bounds.maxX - bounds.minX) / (gridW - 1) : 0;
   const yStep = gridH > 1 ? (bounds.maxY - bounds.minY) / (gridH - 1) : 0;
@@ -127,7 +170,6 @@ export function sampleWavefront(
 
       if (solveResult === null) {
         // History was empty mid-loop (shouldn't happen, but safe to handle).
-        output[idx] = 0;
         continue;
       }
 
@@ -135,11 +177,13 @@ export function sampleWavefront(
       state.cachedTRet[idx] = solveResult.tRet;
 
       const field = evaluateLWFieldFromState(solveResult, observationPos, charge, config);
-      output[idx] = field.bZAccel; // signed; rendering layer applies abs() for envelope mode
+      state.bZ[idx]      = field.bZ;
+      state.bZVel[idx]   = field.bZVel;
+      state.bZAccel[idx] = field.bZAccel;
     }
   }
 
-  return output;
+  return { bZ: state.bZ, bZVel: state.bZVel, bZAccel: state.bZAccel };
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

@@ -8,6 +8,21 @@ import type { KinematicState } from './types';
 
 export type DemoMode = 'moving_charge' | 'oscillating' | 'draggable' | 'dipole' | 'hydrogen';
 
+/**
+ * Magnetic-heatmap channel selector for the overlay.
+ *
+ *   'off'   — no magnetic heatmap (wavefront contour may still render independently)
+ *   'total' — signed total Bz  = bZVel + bZAccel
+ *   'vel'   — signed velocity (bound) Bz component
+ *   'accel' — signed acceleration (radiative) Bz component; pedagogical successor
+ *             of the pre-M11 absolute-value "Radiation heatmap"
+ *
+ * All three non-off channels render as signed warm/cool Bz; the wavefront
+ * contour, when enabled, is always derived from bZAccel regardless of the
+ * selected channel (it is a radiation annotation, not a magnetic isoline).
+ */
+export type MagneticHeatmapMode = 'off' | 'total' | 'vel' | 'accel';
+
 // ─── sudden_stop constants ───────────────────────────────────────────────────
 
 export const SUDDEN_STOP_V = 0.6;          // initial speed (world units / s)

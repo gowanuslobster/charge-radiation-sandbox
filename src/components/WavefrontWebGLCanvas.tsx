@@ -1,19 +1,32 @@
-// WavefrontWebGLCanvas — WebGL2 fragment-shader heatmap for the radiation overlay.
+// WavefrontWebGLCanvas — WebGL2 fragment-shader heatmap for the magnetic-field overlay.
 //
 // Drop-in replacement for WavefrontOverlayCanvas (same prop interface).
-// Evaluates the Liénard-Wiechert bZAccel field at every screen pixel via a GLSL
-// fragment shader that replicates the full retarded-time solve.
+// Evaluates the Liénard-Wiechert magnetic field (bZ, bZVel, bZAccel) at every
+// screen pixel via a GLSL fragment shader that replicates the full retarded-time
+// solve. The channel rendered as a signed warm/cool heatmap is chosen by the
+// `heatmapChannel` prop; the wavefront contour, when enabled, always reads the
+// radiative (bZAccel) sum regardless of that choice.
 //
 // History is uploaded each frame as a 2D RGBA32F texture (TEX_WIDTH × TEX_HEIGHT).
 // Supports up to MAX_CHARGES independent charge histories. Each charge occupies a
 // contiguous texel slice; the shader solves retarded time independently per charge
-// and sums bZAccel contributions. Normalization uses a 32×32 CPU probe per charge
-// summed to a single peak, with temporal EMA, hard-reset, and probe caching.
+// and sums the three magnetic components.
+//
+// Normalization is mode-aware and per-channel (see "Normalization" block below).
+// moving_charge splits into two regimes:
+//   - pre-stop steady translation → translational phase cache
+//   - post-stop transient shell   → dynamic EMA
 
 import { useEffect, useRef, type CSSProperties, type RefObject, type MutableRefObject } from 'react';
 import type { SimConfig } from '@/physics/types';
 import type { ChargeRuntime } from '@/physics/chargeRuntime';
-import { HYDROGEN_OMEGA } from '@/physics/demoModes';
+import {
+  type DemoMode,
+  type MagneticHeatmapMode,
+  DIPOLE_OMEGA,
+  HYDROGEN_OMEGA,
+  OSCILLATING_OMEGA,
+} from '@/physics/demoModes';
 import type { WorldBounds } from '@/rendering/worldSpace';
 import { createSamplerState, sampleWavefront } from '@/physics/wavefrontSampler';
 import { computeContrastPeak } from '@/rendering/wavefrontRender';
@@ -59,8 +72,14 @@ const NEWTON_ITERS        = 28;   // profiling target range 24–32
 // Normalization probe parameters.
 const NORM_PROBE_W   = 32;
 const NORM_PROBE_H   = 32;
-const NORM_EMA_ALPHA = 0.12;       // temporal smoothing; tune if flicker observed
-const HYDROGEN_NORM_PHASE_SAMPLES = 8;
+const NORM_EMA_ALPHA = 0.12;               // temporal smoothing for Policy A modes
+const PERIODIC_NORM_PHASE_SAMPLES = 8;     // Policy B phase sweep count
+const TRANSLATION_NORM_PHASE_SAMPLES = 8;  // Policy C translation sweep count
+
+// Channel indices (match shader's u_bzChannel uniform).
+const CHANNEL_TOTAL = 0;
+const CHANNEL_VEL   = 1;
+const CHANNEL_ACCEL = 2;
 
 // Phase I performance cap: limit the effective DPR for this canvas only.
 const WEBGL_MAX_DPR = 1.5;
@@ -73,9 +92,10 @@ type Props = {
   configRef:         MutableRefObject<SimConfig>;
   simEpochRef:       MutableRefObject<number>;
   bounds:            WorldBounds;
-  demoMode:          'moving_charge' | 'oscillating' | 'dipole' | 'hydrogen';
-  showHeatmap:       boolean;
+  demoMode:          DemoMode;
+  heatmapChannel:    MagneticHeatmapMode;
   showContours:      boolean;
+  stopTriggered:     boolean;
   isPausedRef:       MutableRefObject<boolean>;
   style?:            CSSProperties;
 };
@@ -96,8 +116,8 @@ void main() {
 //   interpState(a, b, frac)                  — linear interpolation between states
 //   historyLookup(chargeIdx, t, histCount)   — binary search + interpolation
 //   solveRetarded(chargeIdx, r_obs, histCount) — bracketed Newton solver
-//   computeBZAccel(r_obs, ret, chargeVal)    — Liénard-Wiechert bZAccel
-//   main()                                   — loops over charges, sums bZAccel
+//   computeBZComponents(r_obs, ret, chargeVal) — Liénard-Wiechert (total, vel, accel)
+//   main()                                   — loops over charges, sums per channel
 
 const FRAG_SRC = /* glsl */`#version 300 es
 precision highp float;
@@ -121,11 +141,13 @@ uniform vec4      u_worldBounds;        // (minX, maxX, minY, maxY) in world spa
 uniform vec2      u_resolution;         // canvas physical pixel size (post-DPR)
 uniform bool      u_isSigned;           // true = zero-crossing contour (oscillating, dipole, hydrogen)
                                         // false = envelope contour (moving_charge)
-uniform float     u_peak;              // normalization ceiling (EMA-smoothed CPU probe)
+uniform float     u_heatmapPeak;        // normalization ceiling for the selected heatmap channel
+uniform float     u_accelPeak;          // normalization ceiling for the bZAccel contour branch
+uniform int       u_bzChannel;          // 0 = total, 1 = vel, 2 = accel
 uniform bool      u_showHeatmap;
 uniform bool      u_showContour;
 uniform float     u_softening;
-uniform bool      u_debugMode;          // dev-only: output raw summed bZAccel to fragColor.r
+uniform bool      u_debugMode;          // dev-only: output raw bZAccel sum to fragColor.r
 
 out vec4 fragColor;
 
@@ -136,6 +158,12 @@ struct KinematicState {
   vec2  pos;
   vec2  vel;
   vec2  accel;
+};
+
+struct BZComponents {
+  float total;
+  float vel;
+  float accel;
 };
 
 // ── History texture fetch ─────────────────────────────────────────────────────
@@ -245,20 +273,41 @@ KinematicState solveRetarded(int chargeIdx, vec2 r_obs, int historyCount) {
   return historyLookup(chargeIdx, t_ret, historyCount);
 }
 
-// ── Liénard-Wiechert bZAccel for one charge ───────────────────────────────────
+// ── Liénard-Wiechert magnetic-field components for one charge ─────────────────
+//
+// bZVel   (bound)       = -q · cross2D(n̂, β) / (γ² κ³ R_eff² c)
+// bZAccel (radiative)   = -q · cross2D(n̂−β, β̇) / (c² κ³ R_eff)
+// bZ                    = bZVel + bZAccel
+//
+// Matches evaluateLWFieldFromState in src/physics/lienardWiechert.ts term-by-term,
+// after the 2D simplification |n̂|² = 1 that collapses n̂ × ((n̂−β) × β̇) to a scalar.
 
-float computeBZAccel(vec2 r_obs, KinematicState ret, float chargeVal) {
+BZComponents computeBZComponents(vec2 r_obs, KinematicState ret, float chargeVal) {
   vec2  R_vec   = r_obs - ret.pos;
   float R_eff   = sqrt(dot(R_vec, R_vec) + u_softening * u_softening);
   vec2  nHat    = R_vec / R_eff;
   vec2  beta    = ret.vel   / u_c;
   vec2  betaDot = ret.accel / u_c;
+
   float kappa   = 1.0 - dot(nHat, beta);
   float kappa3  = max(kappa, 1e-6);
   kappa3        = kappa3 * kappa3 * kappa3;
-  vec2  nBeta   = nHat - beta;
+
+  float betaSq  = min(dot(beta, beta), 1.0 - 1e-6);
+  float gammaSq = 1.0 / (1.0 - betaSq);
+
+  float crossNB  = nHat.x * beta.y    - nHat.y * beta.x;
+  vec2  nBeta    = nHat - beta;
   float crossNBD = nBeta.x * betaDot.y - nBeta.y * betaDot.x;
-  return -chargeVal * crossNBD / (u_c * u_c * kappa3 * R_eff);
+
+  float bZVel   = -chargeVal * crossNB  / (gammaSq * kappa3 * R_eff * R_eff * u_c);
+  float bZAccel = -chargeVal * crossNBD / (u_c * u_c * kappa3 * R_eff);
+
+  BZComponents b;
+  b.vel   = bZVel;
+  b.accel = bZAccel;
+  b.total = bZVel + bZAccel;
+  return b;
 }
 
 // ── Color mapping (must match wavefrontRender.ts) ─────────────────────────────
@@ -274,12 +323,6 @@ vec4 signedColor(float bZ, float peak) {
   return vec4(rgb * strength, strength);
 }
 
-vec4 envelopeColor(float bZ, float peak) {
-  float norm     = abs(bZ) / peak;
-  float strength = pow(clamp(norm, 0.0, 1.0), 0.78);
-  return vec4(WARM * strength, strength);
-}
-
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 void main() {
@@ -293,33 +336,44 @@ void main() {
   float worldY = u_worldBounds.z + uv.y * (u_worldBounds.w - u_worldBounds.z);
   vec2 worldPos = vec2(worldX, worldY);
 
-  // Sum bZAccel contributions from all active charges.
+  // Sum the three Bz components across all active charges.
   // Each charge has its own retarded-time solve — no cross-charge coupling.
-  float bZAccel = 0.0;
+  float sumTotal = 0.0;
+  float sumVel   = 0.0;
+  float sumAccel = 0.0;
   for (int ci = 0; ci < MAX_CHARGES; ci++) {
     if (ci >= u_chargeCount) break;
     int hcount = u_historyCounts[ci];
     if (hcount <= 0) continue;
     KinematicState retState = solveRetarded(ci, worldPos, hcount);
-    bZAccel += computeBZAccel(worldPos, retState, u_charges[ci]);
+    BZComponents comp = computeBZComponents(worldPos, retState, u_charges[ci]);
+    sumTotal += comp.total;
+    sumVel   += comp.vel;
+    sumAccel += comp.accel;
   }
 
-  // Dev-only: bypass color mapping and output raw summed scalar for validation.
+  // Dev-only: bypass color mapping and output raw summed bZAccel for validation.
   if (u_debugMode) {
-    fragColor = vec4(bZAccel, 0.0, 0.0, 1.0);
+    fragColor = vec4(sumAccel, 0.0, 0.0, 1.0);
     return;
   }
+
+  float heatmapScalar = (u_bzChannel == 0) ? sumTotal
+                      : (u_bzChannel == 1) ? sumVel
+                                           : sumAccel;
 
   vec4 outColor = vec4(0.0);
 
   if (u_showHeatmap) {
-    outColor = signedColor(bZAccel, u_peak);
+    outColor = signedColor(heatmapScalar, u_heatmapPeak);
   }
 
+  // Wavefront contour is a radiation annotation: always reads the bZAccel sum
+  // regardless of which channel the heatmap is displaying.
   if (u_showContour) {
     if (u_isSigned) {
       // oscillating, dipole, and hydrogen: zero-crossing contour on summed bZAccel
-      float norm         = bZAccel / u_peak;
+      float norm         = sumAccel / u_accelPeak;
       float contourWidth = fwidth(norm) * 1.5;
       float contourMask  = 1.0 - smoothstep(0.0, contourWidth, abs(norm));
       vec4 contourColor  = vec4(0.88, 0.88, 0.88, 0.85);
@@ -327,7 +381,7 @@ void main() {
     } else {
       // moving_charge: envelope threshold contour (marks radiation shell boundary)
       const float CONTOUR_FRAC = 0.03;
-      float norm         = abs(bZAccel) / u_peak;
+      float norm         = abs(sumAccel) / u_accelPeak;
       float contourWidth = fwidth(norm) * 2.0;
       float dist         = abs(norm - CONTOUR_FRAC);
       float contourMask  = 1.0 - smoothstep(0.0, contourWidth, dist);
@@ -341,6 +395,49 @@ void main() {
 }
 `;
 
+// ── Mode period lookup (Policy B) ─────────────────────────────────────────────
+
+function periodicModePeriod(mode: DemoMode): number | null {
+  if (mode === 'oscillating') return (2 * Math.PI) / OSCILLATING_OMEGA;
+  if (mode === 'dipole')      return (2 * Math.PI) / DIPOLE_OMEGA;
+  if (mode === 'hydrogen')    return (2 * Math.PI) / HYDROGEN_OMEGA;
+  return null;
+}
+
+function translationalNormWindow(
+  mode: DemoMode,
+  stopTriggered: boolean,
+  chargeRuntimes: ChargeRuntime[],
+  bounds: WorldBounds,
+): number | null {
+  if (mode !== 'moving_charge' || stopTriggered) return null;
+  const runtime = chargeRuntimes[0];
+  if (!runtime?.history || runtime.history.isEmpty()) return null;
+  const newest = runtime.history.newest();
+  if (!newest) return null;
+  const speed = Math.hypot(newest.vel.x, newest.vel.y);
+  if (speed < 1e-9) return null;
+
+  const dx = NORM_PROBE_W > 1 ? (bounds.maxX - bounds.minX) / (NORM_PROBE_W - 1) : 0;
+  const dy = NORM_PROBE_H > 1 ? (bounds.maxY - bounds.minY) / (NORM_PROBE_H - 1) : 0;
+  const vHatX = newest.vel.x / speed;
+  const vHatY = newest.vel.y / speed;
+  // Conservative L1 over-estimate of the probe-lattice period along vHat.
+  // This is exact for the current moving_charge path (pure +x motion). More
+  // generally, over-coverage is safe, while under-coverage can reintroduce the
+  // whole-screen bright/dim pulsing if the sweep misses a probe phase.
+  const projectedCell = Math.abs(vHatX) * dx + Math.abs(vHatY) * dy;
+  if (projectedCell < 1e-9) return null;
+  return projectedCell / speed;
+}
+
+function channelIndex(channel: MagneticHeatmapMode): number {
+  if (channel === 'total') return CHANNEL_TOTAL;
+  if (channel === 'vel')   return CHANNEL_VEL;
+  if (channel === 'accel') return CHANNEL_ACCEL;
+  return -1; // 'off'
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function WavefrontWebGLCanvas({
@@ -350,22 +447,25 @@ export function WavefrontWebGLCanvas({
   simEpochRef,
   bounds,
   demoMode,
-  showHeatmap,
+  heatmapChannel,
   showContours,
+  stopTriggered,
   isPausedRef,
   style,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // Stable refs to the latest prop values — read each RAF tick without re-mounting.
-  const boundsRef       = useRef(bounds);
-  const showHeatmapRef  = useRef(showHeatmap);
-  const showContoursRef = useRef(showContours);
-  const demoModeRef     = useRef(demoMode);
-  boundsRef.current       = bounds;
-  showHeatmapRef.current  = showHeatmap;
-  showContoursRef.current = showContours;
-  demoModeRef.current     = demoMode;
+  const boundsRef         = useRef(bounds);
+  const heatmapChannelRef = useRef(heatmapChannel);
+  const showContoursRef   = useRef(showContours);
+  const demoModeRef       = useRef(demoMode);
+  const stopTriggeredRef  = useRef(stopTriggered);
+  boundsRef.current         = bounds;
+  heatmapChannelRef.current = heatmapChannel;
+  showContoursRef.current   = showContours;
+  demoModeRef.current       = demoMode;
+  stopTriggeredRef.current  = stopTriggered;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -403,17 +503,46 @@ export function WavefrontWebGLCanvas({
 
     // Normalization probes — one sampler state per charge slot; length tied to MAX_CHARGES.
     const normSamplerStates = Array.from({ length: MAX_CHARGES }, createSamplerState);
-    // Scratch buffer for summing multi-charge probe contributions.
-    const normProbeScratch = new Float32Array(NORM_PROBE_W * NORM_PROBE_H);
+    // Per-channel scratch buffers for summing multi-charge probe contributions.
+    const probeScratch = [
+      new Float32Array(NORM_PROBE_W * NORM_PROBE_H), // total
+      new Float32Array(NORM_PROBE_W * NORM_PROBE_H), // vel
+      new Float32Array(NORM_PROBE_W * NORM_PROBE_H), // accel
+    ];
 
-    // Normalization bookkeeping (all closure-local to avoid React re-renders).
-    let smoothedPeak       = 0;
+    // ── Normalization state ───────────────────────────────────────────────────
+    //
+    // Three policies, each with per-channel storage (index 0=total, 1=vel, 2=accel):
+    //
+    //   Policy A (transient modes: moving_charge post-stop, draggable) — dynamic EMA.
+    //     smoothedPeaks[k] = α · rawPeak + (1-α) · smoothedPeaks[k], per channel.
+    //     Hard reset bypasses the EMA for one frame.
+    //
+    //   Policy B (periodic modes: oscillating, dipole, hydrogen) — phase-invariant
+    //     cache. Sweep PERIODIC_NORM_PHASE_SAMPLES probe times over one period,
+    //     take per-channel max, cache until invalidated.
+    //
+    //   Policy C (moving_charge pre-stop) — translational phase cache.
+    //     Sweep probe times over one probe-cell translation and cache the
+    //     per-channel maxima until invalidated. This removes the non-physical
+    //     bright/dim pulsing caused by the coarse probe landing on different
+    //     phases of the translating 1/R^2 bound-field hotspot.
+    //
+    // Invalidation: epoch / mode / c / charges / bounds / stop state.
+    // Channel switches deliberately do NOT invalidate. Both the caches and the
+    // EMA path store all three channel slots together; flipping the heatmap
+    // channel just selects a different slot.
+    const smoothedPeaks = new Float64Array(3);  // Policy A
+    const cachedPeaks   = new Float64Array(3);  // Policy B / C
+    let   cachedPeaksValid = false;
+
     let prevNormEpoch      = NaN;
-    let prevNormMode       = '' as typeof demoMode;
+    let prevNormMode       = '' as DemoMode;
     let prevNormC          = NaN;
     let prevNormChargeCount = -1;
     const prevNormChargeVals = new Float64Array(MAX_CHARGES).fill(NaN);
     let prevNormBounds     = { minX: NaN, maxX: NaN, minY: NaN, maxY: NaN } as typeof bounds;
+    let prevStopTriggered  = false;
 
     // ── RAF loop ──────────────────────────────────────────────────────────────
     let rafId    = 0;
@@ -422,15 +551,17 @@ export function WavefrontWebGLCanvas({
     const tick = () => {
       if (!glAlive) return;
 
-      const runtimes  = chargeRuntimesRef.current;
-      const tCurrent  = simulationTimeRef.current;
-      const config    = configRef.current;
-      const epoch     = simEpochRef.current;
-      const mode      = demoModeRef.current;
-      const curBounds = boundsRef.current;
-      const doHeatmap = showHeatmapRef.current;
-      const doContour = showContoursRef.current;
-      const paused    = isPausedRef.current;
+      const runtimes   = chargeRuntimesRef.current;
+      const tCurrent   = simulationTimeRef.current;
+      const config     = configRef.current;
+      const epoch      = simEpochRef.current;
+      const mode       = demoModeRef.current;
+      const stopped    = stopTriggeredRef.current;
+      const curBounds  = boundsRef.current;
+      const channel    = heatmapChannelRef.current;
+      const doContour  = showContoursRef.current;
+      const doHeatmap  = channel !== 'off';
+      const paused     = isPausedRef.current;
 
       if (!doHeatmap && !doContour) {
         gl.clear(gl.COLOR_BUFFER_BIT);
@@ -492,21 +623,12 @@ export function WavefrontWebGLCanvas({
         gl.RGBA, gl.FLOAT, staging,
       );
 
-      // ── Normalization probe with EMA smoothing and caching ──────────────────
+      // ── Mode-aware per-channel normalization ────────────────────────────────
       //
-      // Probe sums bZAccel contributions from all active charges, matching what the
-      // GPU shader computes. The summed peak is passed as u_peak.
-      //
-      // Hydrogen is a special case: the radiating pattern rotates continuously at
-      // nearly constant intensity, so per-frame re-probing aliases against the
-      // coarse CPU probe lattice and makes the whole heatmap pulse. For that mode
-      // we cache a phase-invariant peak by sweeping several orbital phases over
-      // one full period and taking the max. The cached value is recomputed only
-      // when the view or normalization inputs change.
-
-      const epochChanged  = epoch   !== prevNormEpoch;
-      const modeChanged   = mode    !== prevNormMode;
-      const cChanged      = config.c !== prevNormC;
+      // Invalidation conditions (shared by both policies):
+      const epochChanged   = epoch   !== prevNormEpoch;
+      const modeChanged    = mode    !== prevNormMode;
+      const cChanged       = config.c !== prevNormC;
       let   chargesChanged = chargeCount !== prevNormChargeCount;
       if (!chargesChanged) {
         for (let ci = 0; ci < chargeCount; ci++) {
@@ -518,73 +640,137 @@ export function WavefrontWebGLCanvas({
         curBounds.maxX !== prevNormBounds.maxX ||
         curBounds.minY !== prevNormBounds.minY ||
         curBounds.maxY !== prevNormBounds.maxY;
+      const stopChanged = mode === 'moving_charge' && stopped !== prevStopTriggered;
 
-      const hardReset = epochChanged || modeChanged || cChanged || chargesChanged;
-      const needsHydrogenProbe = mode === 'hydrogen' && (hardReset || boundsChanged);
-      const needsStandardProbe = mode !== 'hydrogen' && (hardReset || !paused || boundsChanged);
+      // NOTE: channel switches deliberately do NOT invalidate the cached peaks.
+      // Both Policy B's cache and Policy A's EMA store all three channel slots,
+      // populated together on every probe. Flipping the heatmap channel just
+      // selects a different slot; no recompute is needed.
+      const hardReset     = epochChanged || modeChanged || cChanged || chargesChanged || stopChanged;
+      const invalidate    = hardReset || boundsChanged;
+      const period        = periodicModePeriod(mode);
+      const translationWindow = translationalNormWindow(mode, stopped, runtimes, curBounds);
+      const policyB       = period !== null;
 
-      if (needsHydrogenProbe || needsStandardProbe) {
-        const computeProbePeakAtTime = (probeTime: number): number => {
-          normProbeScratch.fill(0);
-          for (let ci = 0; ci < chargeCount; ci++) {
-            const { history: h, charge: q } = runtimes[ci];
-            if (!h || h.isEmpty()) continue;
-            const contrib = sampleWavefront(normSamplerStates[ci], {
-              history: h,
-              simTime:  probeTime,
-              charge:   q,
-              config,
-              bounds:   curBounds,
-              gridW:    NORM_PROBE_W,
-              gridH:    NORM_PROBE_H,
-              simEpoch: epoch,
-            });
-            for (let k = 0; k < normProbeScratch.length; k++) normProbeScratch[k] += contrib[k];
-          }
-          return computeContrastPeak(normProbeScratch, 'signed');
-        };
-
-        let rawPeak: number;
-        if (mode === 'hydrogen') {
-          const period = (2 * Math.PI) / HYDROGEN_OMEGA;
-          rawPeak = 0;
-          for (let si = 0; si < HYDROGEN_NORM_PHASE_SAMPLES; si++) {
-            const probeTime = tCurrent - (si * period) / HYDROGEN_NORM_PHASE_SAMPLES;
-            rawPeak = Math.max(rawPeak, computeProbePeakAtTime(probeTime));
-          }
-          smoothedPeak = rawPeak; // phase-invariant cache: no EMA wobble in hydrogen mode
-        } else {
-          rawPeak = computeProbePeakAtTime(tCurrent);
-          if (hardReset || smoothedPeak === 0) {
-            smoothedPeak = rawPeak;  // hard reset — bypass EMA
-          } else {
-            smoothedPeak = NORM_EMA_ALPHA * rawPeak + (1 - NORM_EMA_ALPHA) * smoothedPeak;
+      // Run the probe at probeTime and accumulate per-channel peaks into `peaksOut`
+      // using Math.max semantics. Returns the three raw single-phase peaks as well.
+      const runProbe = (probeTime: number): [number, number, number] => {
+        probeScratch[CHANNEL_TOTAL].fill(0);
+        probeScratch[CHANNEL_VEL].fill(0);
+        probeScratch[CHANNEL_ACCEL].fill(0);
+        for (let ci = 0; ci < chargeCount; ci++) {
+          const { history: h, charge: q } = runtimes[ci];
+          if (!h || h.isEmpty()) continue;
+          const samples = sampleWavefront(normSamplerStates[ci], {
+            history: h,
+            simTime:  probeTime,
+            charge:   q,
+            config,
+            bounds:   curBounds,
+            gridW:    NORM_PROBE_W,
+            gridH:    NORM_PROBE_H,
+            simEpoch: epoch,
+          });
+          const total = probeScratch[CHANNEL_TOTAL];
+          const vel   = probeScratch[CHANNEL_VEL];
+          const accel = probeScratch[CHANNEL_ACCEL];
+          for (let k = 0; k < total.length; k++) {
+            total[k] += samples.bZ[k];
+            vel[k]   += samples.bZVel[k];
+            accel[k] += samples.bZAccel[k];
           }
         }
+        return [
+          computeContrastPeak(probeScratch[CHANNEL_TOTAL], 'signed'),
+          computeContrastPeak(probeScratch[CHANNEL_VEL],   'signed'),
+          computeContrastPeak(probeScratch[CHANNEL_ACCEL], 'signed'),
+        ];
+      };
 
-        prevNormEpoch  = epoch;
-        prevNormMode   = mode;
-        prevNormC      = config.c;
-        prevNormChargeCount = chargeCount;
-        for (let ci = 0; ci < chargeCount; ci++) prevNormChargeVals[ci] = runtimes[ci].charge;
-        for (let ci = chargeCount; ci < MAX_CHARGES; ci++) prevNormChargeVals[ci] = NaN;
-        prevNormBounds = { ...curBounds };
+      if (policyB) {
+        // Policy B: phase-invariant cache. Recompute only on invalidation; otherwise
+        // the cached per-channel peaks are canonical.
+        if (invalidate) cachedPeaksValid = false;
+        if (!cachedPeaksValid) {
+          const T = period as number;
+          const N = PERIODIC_NORM_PHASE_SAMPLES;
+          let maxT = 0, maxV = 0, maxA = 0;
+          for (let si = 0; si < N; si++) {
+            const probeTime = tCurrent - (si * T) / N;
+            const [pt, pv, pa] = runProbe(probeTime);
+            if (pt > maxT) maxT = pt;
+            if (pv > maxV) maxV = pv;
+            if (pa > maxA) maxA = pa;
+          }
+          cachedPeaks[CHANNEL_TOTAL] = maxT;
+          cachedPeaks[CHANNEL_VEL]   = maxV;
+          cachedPeaks[CHANNEL_ACCEL] = maxA;
+          cachedPeaksValid = true;
+        }
+      } else if (translationWindow !== null) {
+        // Policy C: translational phase cache for steady moving_charge before stop.
+        if (invalidate) cachedPeaksValid = false;
+        if (!cachedPeaksValid) {
+          const dt = translationWindow;
+          const N = TRANSLATION_NORM_PHASE_SAMPLES;
+          let maxT = 0, maxV = 0, maxA = 0;
+          for (let si = 0; si < N; si++) {
+            const probeTime = tCurrent - (si * dt) / N;
+            const [pt, pv, pa] = runProbe(probeTime);
+            if (pt > maxT) maxT = pt;
+            if (pv > maxV) maxV = pv;
+            if (pa > maxA) maxA = pa;
+          }
+          cachedPeaks[CHANNEL_TOTAL] = maxT;
+          cachedPeaks[CHANNEL_VEL]   = maxV;
+          cachedPeaks[CHANNEL_ACCEL] = maxA;
+          cachedPeaksValid = true;
+        }
+      } else {
+        // Policy A: dynamic EMA. Re-probe on every unpaused frame (or after an
+        // invalidation) so the peak tracks transient dynamics.
+        if (hardReset) { smoothedPeaks[0] = 0; smoothedPeaks[1] = 0; smoothedPeaks[2] = 0; }
+        const needsProbe = hardReset || !paused || boundsChanged;
+        if (needsProbe) {
+          const [rt, rv, ra] = runProbe(tCurrent);
+          const raw: [number, number, number] = [rt, rv, ra];
+          for (let k = 0; k < 3; k++) {
+            if (hardReset || smoothedPeaks[k] === 0) {
+              smoothedPeaks[k] = raw[k];
+            } else {
+              smoothedPeaks[k] = NORM_EMA_ALPHA * raw[k] + (1 - NORM_EMA_ALPHA) * smoothedPeaks[k];
+            }
+          }
+        }
+        // else: reuse last smoothedPeaks values (paused-frame short-circuit).
       }
-      // else: reuse cached peak; hydrogen intentionally does not re-probe every frame
 
-      const peak = Math.max(smoothedPeak, 1e-10);
+      prevNormEpoch  = epoch;
+      prevNormMode   = mode;
+      prevNormC      = config.c;
+      prevNormChargeCount = chargeCount;
+      for (let ci = 0; ci < chargeCount; ci++) prevNormChargeVals[ci] = runtimes[ci].charge;
+      for (let ci = chargeCount; ci < MAX_CHARGES; ci++) prevNormChargeVals[ci] = NaN;
+      prevNormBounds = { ...curBounds };
+      prevStopTriggered = stopped;
+
+      const activePeaks = (policyB || translationWindow !== null) ? cachedPeaks : smoothedPeaks;
+      const chIdx = channelIndex(channel);
+      const heatmapPeak = Math.max(chIdx >= 0 ? activePeaks[chIdx] : 0, 1e-10);
+      const accelPeak   = Math.max(activePeaks[CHANNEL_ACCEL], 1e-10);
+      const bzChannelUniform = chIdx >= 0 ? chIdx : CHANNEL_ACCEL; // harmless default
 
       // ── Set uniforms ────────────────────────────────────────────────────────
       gl.useProgram(program);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, historyTex);
-      if (uniforms['u_history']      !== undefined) gl.uniform1i(uniforms['u_history'], 0);
-      if (uniforms['u_texWidth']     !== undefined) gl.uniform1i(uniforms['u_texWidth'], TEX_WIDTH);
-      if (uniforms['u_chargeCount']  !== undefined) gl.uniform1i(uniforms['u_chargeCount'], chargeCount);
+      if (uniforms['u_history']       !== undefined) gl.uniform1i(uniforms['u_history'], 0);
+      if (uniforms['u_texWidth']      !== undefined) gl.uniform1i(uniforms['u_texWidth'], TEX_WIDTH);
+      if (uniforms['u_chargeCount']   !== undefined) gl.uniform1i(uniforms['u_chargeCount'], chargeCount);
       if (uniforms['u_historyCounts'] !== undefined) gl.uniform1iv(uniforms['u_historyCounts'], histCountsArr);
-      if (uniforms['u_charges']      !== undefined) gl.uniform1fv(uniforms['u_charges'], chargeValsArr);
-      if (uniforms['u_c']            !== undefined) gl.uniform1f(uniforms['u_c'], config.c);
-      if (uniforms['u_worldBounds']  !== undefined) {
+      if (uniforms['u_charges']       !== undefined) gl.uniform1fv(uniforms['u_charges'], chargeValsArr);
+      if (uniforms['u_c']             !== undefined) gl.uniform1f(uniforms['u_c'], config.c);
+      if (uniforms['u_worldBounds']   !== undefined) {
         gl.uniform4f(uniforms['u_worldBounds'],
           curBounds.minX, curBounds.maxX, curBounds.minY, curBounds.maxY);
       }
@@ -593,9 +779,13 @@ export function WavefrontWebGLCanvas({
       }
       if (uniforms['u_isSigned'] !== undefined) {
         // Signed zero-crossing contour for periodic modes; envelope for moving_charge.
-        gl.uniform1i(uniforms['u_isSigned'], (mode === 'oscillating' || mode === 'dipole' || mode === 'hydrogen') ? 1 : 0);
+        // (draggable hides the contour toggle entirely; value is irrelevant there.)
+        gl.uniform1i(uniforms['u_isSigned'],
+          (mode === 'oscillating' || mode === 'dipole' || mode === 'hydrogen') ? 1 : 0);
       }
-      if (uniforms['u_peak']        !== undefined) gl.uniform1f(uniforms['u_peak'], peak);
+      if (uniforms['u_heatmapPeak'] !== undefined) gl.uniform1f(uniforms['u_heatmapPeak'], heatmapPeak);
+      if (uniforms['u_accelPeak']   !== undefined) gl.uniform1f(uniforms['u_accelPeak'],   accelPeak);
+      if (uniforms['u_bzChannel']   !== undefined) gl.uniform1i(uniforms['u_bzChannel'],   bzChannelUniform);
       if (uniforms['u_showHeatmap'] !== undefined) gl.uniform1i(uniforms['u_showHeatmap'], doHeatmap ? 1 : 0);
       if (uniforms['u_showContour'] !== undefined) gl.uniform1i(uniforms['u_showContour'], doContour ? 1 : 0);
       if (uniforms['u_softening']   !== undefined) gl.uniform1f(uniforms['u_softening'], config.softening ?? 0.01);

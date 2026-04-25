@@ -37,19 +37,19 @@ const MODE_CARDS: ModeCard[] = [
     mode: 'oscillating',
     title: 'Oscillating',
     desc: 'Continuous sinusoidal acceleration radiates outward as an expanding wave train.',
-    hint: 'Enable the Radiation heatmap and Wavefront contours. Lower c so the fronts slow down and separate clearly.',
+    hint: 'Pick Accel B on the Magnetic heatmap and enable Wavefront contours. Lower c so the fronts slow down and separate clearly.',
   },
   {
     mode: 'dipole',
     title: 'Dipole',
     desc: 'Two opposite charges oscillate in antiphase. Their combined field shows the classic dipole radiation pattern.',
-    hint: 'Enable the Radiation heatmap to see the characteristic lobed pattern — radiation is strongest perpendicular to the dipole axis.',
+    hint: 'Pick Accel B on the Magnetic heatmap to see the characteristic lobed pattern — radiation is strongest perpendicular to the dipole axis.',
   },
   {
     mode: 'hydrogen',
     title: 'Hydrogen atom',
     desc: 'A negative charge follows a circular orbit around a fixed positive center, creating a rotating dipole source.',
-    hint: 'Turn on the Radiation heatmap and contours to watch the signed magnetic radiation pattern rotate outward.',
+    hint: 'Pick Accel B on the Magnetic heatmap and turn on contours to watch the signed magnetic radiation pattern rotate outward.',
   },
 ];
 

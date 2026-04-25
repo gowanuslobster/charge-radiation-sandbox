@@ -7,7 +7,7 @@
 // solid-bg + black text + glow active buttons, text-sm throughout.
 // All styling via Tailwind — no inline CSSProperties.
 
-import type { DemoMode } from '@/physics/demoModes';
+import type { DemoMode, MagneticHeatmapMode } from '@/physics/demoModes';
 import type { CursorReadout } from './useCursorReadout';
 
 type FieldLayer = 'total' | 'vel' | 'accel';
@@ -19,7 +19,7 @@ type Props = {
   c: number;
   stopTriggered: boolean;
   readout: CursorReadout;
-  showRadiationHeatmap: boolean;
+  magneticHeatmapMode: MagneticHeatmapMode;
   showWavefrontContours: boolean;
   showStreamlines: boolean;
   showVelocityVectors: boolean;
@@ -38,7 +38,7 @@ type Props = {
   onPanRight: () => void;
   onPanUp: () => void;
   onPanDown: () => void;
-  onRadiationHeatmapToggle: () => void;
+  onMagneticHeatmapModeChange: (mode: MagneticHeatmapMode) => void;
   onWavefrontContoursToggle: () => void;
   onStreamlinesToggle: () => void;
   onVelocityVectorsToggle: () => void;
@@ -63,16 +63,22 @@ const ICON_BASE = 'flex h-7 w-7 items-center justify-center rounded-md text-sm t
 
 export function ControlPanel({
   demoMode, fieldLayer, isPaused, c, stopTriggered, readout,
-  showRadiationHeatmap, showWavefrontContours, showStreamlines, showVelocityVectors,
+  magneticHeatmapMode, showWavefrontContours, showStreamlines, showVelocityVectors,
   onDemoModeChange, onFieldLayerChange,
   onPauseToggle, onStepForward, onReset, onGoToStartScreen,
   onCChange,
   onResetView, onZoomIn, onZoomOut,
   onPanLeft, onPanRight, onPanUp, onPanDown,
-  onRadiationHeatmapToggle, onWavefrontContoursToggle, onStreamlinesToggle, onVelocityVectorsToggle,
+  onMagneticHeatmapModeChange, onWavefrontContoursToggle, onStreamlinesToggle, onVelocityVectorsToggle,
   cMin = 0.65,
   noModeActive = false,
 }: Props) {
+  const magneticHeatmapVisible =
+    demoMode === 'moving_charge' || demoMode === 'oscillating' ||
+    demoMode === 'dipole' || demoMode === 'hydrogen' || demoMode === 'draggable';
+  const wavefrontContoursVisible =
+    demoMode === 'moving_charge' || demoMode === 'oscillating' ||
+    demoMode === 'dipole' || demoMode === 'hydrogen';
   return (
     <div className="absolute left-4 top-4 z-20 flex flex-col gap-3 rounded-2xl border border-orange-400/20 bg-black/65 p-4 text-sm text-zinc-200 backdrop-blur-md select-none pointer-events-auto max-w-xs">
 
@@ -228,14 +234,7 @@ export function ControlPanel({
               : 'bg-sky-400/15 text-sky-200 hover:bg-sky-400/28'}`}>
             Field lines
           </button>
-          {/* Radiation overlays — moving_charge and periodic analytic modes. */}
-          {(demoMode === 'moving_charge' || demoMode === 'oscillating' || demoMode === 'dipole' || demoMode === 'hydrogen') && (<>
-            <button type="button" onClick={onRadiationHeatmapToggle}
-              className={`${TOGGLE_BASE} ${showRadiationHeatmap
-                ? 'bg-amber-400/90 text-black shadow-[0_0_12px_rgba(251,191,36,0.4)]'
-                : 'bg-amber-400/15 text-amber-200 hover:bg-amber-400/28'}`}>
-              Radiation heatmap
-            </button>
+          {wavefrontContoursVisible && (
             <button
               type="button"
               onClick={onWavefrontContoursToggle}
@@ -244,8 +243,46 @@ export function ControlPanel({
                 : 'bg-violet-400/15 text-violet-200 hover:bg-violet-400/28'}`}>
               Wavefront contours
             </button>
-          </>)}
+          )}
         </div>
+
+        {/* Magnetic heatmap picker — labeled section mirroring the Field (E) section above.
+            Visible for moving_charge, the periodic analytic modes, and draggable.
+            Contour is tied to bZAccel regardless of this selection. */}
+        {magneticHeatmapVisible && (
+          <div className="mt-2">
+            <p className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400">
+              Magnetic heatmap
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              <button type="button" onClick={() => onMagneticHeatmapModeChange('off')}
+                className={`${TOGGLE_BASE} ${magneticHeatmapMode === 'off'
+                  ? 'bg-amber-400 text-black shadow-[0_0_16px_rgba(251,191,36,0.5)]'
+                  : 'bg-amber-400/20 text-amber-200 hover:bg-amber-400/35'}`}>
+                Off
+              </button>
+              <button type="button" onClick={() => onMagneticHeatmapModeChange('total')}
+                className={`${TOGGLE_BASE} ${magneticHeatmapMode === 'total'
+                  ? 'bg-amber-400 text-black shadow-[0_0_16px_rgba(251,191,36,0.5)]'
+                  : 'bg-amber-400/20 text-amber-200 hover:bg-amber-400/35'}`}>
+                Total B
+              </button>
+              <button type="button" onClick={() => onMagneticHeatmapModeChange('vel')}
+                className={`${TOGGLE_BASE} ${magneticHeatmapMode === 'vel'
+                  ? 'bg-amber-400 text-black shadow-[0_0_16px_rgba(251,191,36,0.5)]'
+                  : 'bg-amber-400/20 text-amber-200 hover:bg-amber-400/35'}`}>
+                Velocity B
+              </button>
+              <button type="button" onClick={() => onMagneticHeatmapModeChange('accel')}
+                className={`${TOGGLE_BASE} ${magneticHeatmapMode === 'accel'
+                  ? 'bg-amber-400 text-black shadow-[0_0_16px_rgba(251,191,36,0.5)]'
+                  : 'bg-amber-400/20 text-amber-200 hover:bg-amber-400/35'}`}>
+                Accel B
+              </button>
+            </div>
+          </div>
+        )}
+
         {showStreamlines && isPaused && (
           <p className="mt-1.5 text-[11px] text-zinc-400">
             Instantaneous snapshot — not material lines that move with the charge.

@@ -56,7 +56,10 @@ const MODE_CARDS: ModeCard[] = [
 export function StartPanel({ onSelectMode }: Props) {
   return (
     <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center px-6">
-      <div className="pointer-events-auto w-full max-w-5xl select-none rounded-3xl border border-orange-400/20 bg-black/65 px-8 py-7 text-center shadow-[0_0_48px_rgba(251,146,60,0.1)] backdrop-blur-md">
+      <div
+        className="pointer-events-auto w-full max-w-5xl select-none rounded-3xl border border-orange-400/20 bg-black/65 px-8 py-7 text-center shadow-[0_0_48px_rgba(251,146,60,0.1)] backdrop-blur-md"
+        onClick={(e) => e.stopPropagation()}
+      >
 
         {/* Header */}
         <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-orange-200/70">

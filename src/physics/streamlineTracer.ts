@@ -249,6 +249,12 @@ export function buildStreamlines(
       paddedBounds, dirSign, options, velocityOnly,
     );
     if (line.length >= 4) {
+      // Reverse for negative sources so the polyline's stroke direction
+      // (line[0] → line[n-1]) matches the local E field direction. The trace
+      // runs outward in either case (so the line geometry is visible), but for
+      // q < 0 the field points inward; flipping the array makes segment-based
+      // arrow tick-marks render in the correct direction.
+      if (dirSign < 0) line.reverse();
       lines.push(line);
     }
   }

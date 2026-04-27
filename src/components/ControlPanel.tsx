@@ -80,7 +80,10 @@ export function ControlPanel({
     demoMode === 'moving_charge' || demoMode === 'oscillating' ||
     demoMode === 'dipole' || demoMode === 'hydrogen';
   return (
-    <div className="absolute left-4 top-4 z-20 flex flex-col gap-3 rounded-2xl border border-orange-400/20 bg-black/65 p-4 text-sm text-zinc-200 backdrop-blur-md select-none pointer-events-auto max-w-xs">
+    <div
+      className="absolute left-4 top-4 z-20 flex flex-col gap-3 rounded-2xl border border-orange-400/20 bg-black/65 p-4 text-sm text-zinc-200 backdrop-blur-md select-none pointer-events-auto max-w-xs"
+      onClick={(e) => e.stopPropagation()}
+    >
 
       {/* Mode */}
       <div>

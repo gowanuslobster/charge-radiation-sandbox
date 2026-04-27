@@ -50,6 +50,8 @@ import { ControlPanel } from './ControlPanel';
 import { MovingChargeMiniPanel } from './MovingChargeMiniPanel';
 import { StreamlineCanvas } from './StreamlineCanvas';
 import { useCursorReadout } from './useCursorReadout';
+import { useFieldProbe } from './useFieldProbe';
+import { FieldProbePanel } from './FieldProbePanel';
 import { StartPanel } from './StartPanel';
 import { isWithinBounds, maxCornerDist, worldToScreen, type WorldBounds } from '@/rendering/worldSpace';
 import { hitTestCharge } from '@/rendering/chargeHitTest';
@@ -196,6 +198,52 @@ export function ChargeRadiationSandbox() {
   const rawDragPosRef = useRef<{ x: number; y: number } | null>(null);
   const dragStateRef = useRef<DragState | null>(null);
   const dragPeakSpeedRef = useRef(0);
+
+  // ─── Field probe ────────────────────────────────────────────────────────────
+
+  const probe = useFieldProbe({
+    chargeRuntimesRef,
+    simTimeRef,
+    simEpochRef,
+    configRef,
+  });
+
+  // Default top-right; persists across mode changes within a session.
+  const [probePanelPos, setProbePanelPos] = useState(() => ({
+    x: Math.max(0, window.innerWidth - 320),
+    y: 96,
+  }));
+
+  // Container size for screen-space marker placement.
+  const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    setContainerSize({ w: el.clientWidth, h: el.clientHeight });
+    const ro = new ResizeObserver(([entry]) => {
+      setContainerSize({ w: entry.contentRect.width, h: entry.contentRect.height });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Click-to-place: ignore drags (browser suppresses click after drag motion),
+  // ignore clicks on the active charge in draggable mode, otherwise drop a probe.
+  const handleContainerClick = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    if (isDraggingRef.current) return;
+    const rect = containerRef.current!.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    if (demoModeRef.current === 'draggable') {
+      const chargePos = dragStateRef.current?.pos ?? { x: 0, y: 0 };
+      const cp = worldToScreen(chargePos, viewBoundsRef.current, rect.width, rect.height);
+      if (hitTestCharge(cx, cy, cp.x, cp.y)) return;
+    }
+    const worldPos = getWorldFromClientPoint(e.clientX, e.clientY);
+    if (worldPos === null) return;
+    probe.setPosition(worldPos);
+  }, [getWorldFromClientPoint, probe]);
 
   const togglePause = useCallback(() => {
     isPausedRef.current = !isPausedRef.current;
@@ -462,11 +510,13 @@ export function ChargeRadiationSandbox() {
       isPausedRef.current = true;
       pendingStepRef.current = false;
       setIsPaused(true);
+      probe.clear();
     } else {
       // Normal mode change: effect B handles the reseed.
       setDemoMode(newMode);
+      probe.clear();
     }
-  }, [reseed]);
+  }, [reseed, probe]);
 
   // Reset: reseed the current mode at t=0 and stay in the current mode.
   // Preserves all overlay choices (field layer, heatmap, contours, streamlines).
@@ -494,7 +544,8 @@ export function ChargeRadiationSandbox() {
     }
     setDragCalloutPos(null);
     setIsPaused(true);
-  }, [reseed]);
+    probe.clear();
+  }, [reseed, probe]);
 
   // Go to Start Screen: clears everything and returns to the mode-picker overlay.
   // Resets all overlay choices to initial settings.
@@ -539,7 +590,8 @@ export function ChargeRadiationSandbox() {
 
     showStartPanelRef.current = true;
     setShowStartPanel(true);
-  }, [resetCamera]);
+    probe.clear();
+  }, [resetCamera, probe]);
 
   // ─── Simulation tick ────────────────────────────────────────────────────────
 
@@ -749,6 +801,11 @@ export function ChargeRadiationSandbox() {
     getWorldFromClientPoint,
   });
 
+  // Probe marker screen position (recomputed on viewBounds / containerSize / probe move).
+  const probeScreenPos = probe.position !== null && containerSize.w > 0
+    ? worldToScreen(probe.position, viewBounds, containerSize.w, containerSize.h)
+    : null;
+
   // ─── Render ─────────────────────────────────────────────────────────────────
 
   // c-slider lower bound.
@@ -766,6 +823,7 @@ export function ChargeRadiationSandbox() {
       className="relative w-full h-full overflow-hidden bg-[#0d0d12]"
       style={demoMode === 'draggable' ? { cursor: 'crosshair' } : undefined}
       onPointerDown={handlePointerDown}
+      onClick={handleContainerClick}
       onContextMenu={e => e.preventDefault()}
     >
       <StreamlineCanvas
@@ -876,6 +934,52 @@ export function ChargeRadiationSandbox() {
         cMin={cMin}
         noModeActive={showStartPanel}
       />
+      {probeScreenPos !== null && (
+        <svg
+          className="pointer-events-none absolute inset-0"
+          style={{ zIndex: 18 }}
+          width={containerSize.w}
+          height={containerSize.h}
+        >
+          <circle
+            cx={probeScreenPos.x}
+            cy={probeScreenPos.y}
+            r={10}
+            fill="none"
+            stroke="rgba(255,255,255,0.85)"
+            strokeWidth={1.4}
+            strokeDasharray="4 4"
+          />
+          <line
+            x1={probeScreenPos.x - 14}
+            x2={probeScreenPos.x + 14}
+            y1={probeScreenPos.y}
+            y2={probeScreenPos.y}
+            stroke="rgba(255,255,255,0.55)"
+            strokeWidth={1}
+          />
+          <line
+            x1={probeScreenPos.x}
+            x2={probeScreenPos.x}
+            y1={probeScreenPos.y - 14}
+            y2={probeScreenPos.y + 14}
+            stroke="rgba(255,255,255,0.55)"
+            strokeWidth={1}
+          />
+        </svg>
+      )}
+      {!showStartPanel && probe.position !== null && (
+        <FieldProbePanel
+          position={probe.position}
+          channel={probe.channel}
+          instant={probe.instant}
+          displaySamples={probe.displaySamples}
+          onChannelChange={probe.setChannel}
+          onClear={probe.clear}
+          pos={probePanelPos}
+          onPosChange={setProbePanelPos}
+        />
+      )}
       {showStartPanel && (
         <StartPanel onSelectMode={handleDemoModeChange} />
       )}

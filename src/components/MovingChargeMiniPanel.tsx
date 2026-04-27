@@ -72,6 +72,7 @@ export function MovingChargeMiniPanel({
       ref={panelRef}
       className="absolute z-20 flex flex-col rounded-2xl border border-orange-400/20 bg-black/65 text-sm text-zinc-200 backdrop-blur-md select-none pointer-events-auto overflow-hidden"
       style={{ left: pos.x, top: pos.y }}
+      onClick={(e) => e.stopPropagation()}
     >
       {/* Drag handle header */}
       <div

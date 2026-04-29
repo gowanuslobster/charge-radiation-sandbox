@@ -7,10 +7,9 @@
 // solid-bg + black text + glow active buttons, text-sm throughout.
 // All styling via Tailwind — no inline CSSProperties.
 
-import type { DemoMode, MagneticHeatmapMode } from '@/physics/demoModes';
+import type { DemoMode } from '@/physics/demoModes';
+import type { FieldLayer, MagneticHeatmapMode } from '@/rendering/displayModes';
 import type { CursorReadout } from './useCursorReadout';
-
-type FieldLayer = 'total' | 'vel' | 'accel' | 'poynting';
 
 type Props = {
   demoMode: DemoMode;

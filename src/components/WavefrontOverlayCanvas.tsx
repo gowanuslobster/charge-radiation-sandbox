@@ -22,11 +22,11 @@ import type { SimConfig } from '@/physics/types';
 import type { ChargeRuntime } from '@/physics/chargeRuntime';
 import {
   type DemoMode,
-  type MagneticHeatmapMode,
   DIPOLE_OMEGA,
   HYDROGEN_OMEGA,
   OSCILLATING_OMEGA,
 } from '@/physics/demoModes';
+import type { MagneticHeatmapMode } from '@/rendering/displayModes';
 import type { WorldBounds } from '@/rendering/worldSpace';
 import {
   createSamplerState,

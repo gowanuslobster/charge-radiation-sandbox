@@ -32,7 +32,6 @@ import { magnitude } from '@/physics/vec2';
 import type { SimConfig, Vec2 } from '@/physics/types';
 import {
   type DemoMode,
-  type MagneticHeatmapMode,
   sampleSourceState,
   sampleDemoChargeStates,
   sampleSuddenStopState,
@@ -40,6 +39,7 @@ import {
   brakingSubstepTimes,
   SUDDEN_STOP_V,
 } from '@/physics/demoModes';
+import type { FieldLayer, MagneticHeatmapMode } from '@/rendering/displayModes';
 import { type DragState, computeDragState, stoppedDragState } from '@/physics/dragKinematics';
 import { useSandboxCamera } from './useSandboxCamera';
 import { VectorFieldCanvas } from './VectorFieldCanvas';
@@ -55,8 +55,6 @@ import { FieldProbePanel } from './FieldProbePanel';
 import { StartPanel } from './StartPanel';
 import { isWithinBounds, maxCornerDist, worldToScreen, type WorldBounds } from '@/rendering/worldSpace';
 import { hitTestCharge } from '@/rendering/chargeHitTest';
-
-type FieldLayer = 'total' | 'vel' | 'accel' | 'poynting';
 
 export function ChargeRadiationSandbox() {
   const [fieldLayer, setFieldLayer] = useState<FieldLayer>('total');

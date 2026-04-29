@@ -32,7 +32,7 @@ A floating panel in the upper-left corner gives you all controls:
 | **Mode** | Switch between the five demo modes (see below). Switching reseeds the simulation cleanly. **← Start screen** — return to the mode-picker panel and reset all settings to defaults (including c). |
 | **Playback** | **Run / Pause** — toggle real-time playback. **Step →** — advance one frame at a time while paused. **Reset** — restart the current mode from t=0, keeping your field layer and overlay choices. |
 | **Speed of light** | Drag the slider to change c (max 3.0). The lower bound is mode-dependent: 0.62 in Oscillating and Dipole, 0.72 in Moving charge and Hydrogen (the GPU history buffer must cover the causal horizon), and 0.65 in Charge at rest. Lowering c slows all field propagation, making retarded-time effects dramatically visible. |
-| **Field** | Toggle which component of E you see: **Total E** (default), **Velocity E** (Coulomb-like term), or **Accel E** (radiation term only). |
+| **Field** | Toggle which vector layer you see: **Total E** (default), **Velocity E** (Coulomb-like term), **Accel E** (radiation term only), or **Poynting S** (instantaneous energy-flow arrows derived from E × B; aggressively compressed magnitude, mutually exclusive with the E layers). |
 | **Overlays** | See the Overlays section below. |
 | **Camera** | Reset view, zoom ±, and pan arrows. You can also scroll-to-zoom and right/middle-drag to pan directly on the canvas. |
 | **Field at cursor** | When your cursor is over the canvas, shows the instantaneous field components at that point: \|E\|, Ev, Ea, Bz. |

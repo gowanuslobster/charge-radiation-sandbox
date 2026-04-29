@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { fieldToVisual, arrowColor, buildArrowSpec } from './arrows';
+import { fieldToVisual, arrowColor, buildArrowSpec, poyntingNearChargeFade } from './arrows';
 import type { WorldToScreenTransform } from './worldSpace';
 
 // Standard Y-flip transform: 10 pixels per world unit, canvas 200×160
@@ -126,5 +126,119 @@ describe('buildArrowSpec', () => {
     const lenCapped = Math.sqrt((specCapped.x1 - specCapped.x0) ** 2 + (specCapped.y1 - specCapped.y0) ** 2);
     const lenUncapped = Math.sqrt((specUncapped.x1 - specUncapped.x0) ** 2 + (specUncapped.y1 - specUncapped.y0) ** 2);
     expect(lenCapped).toBeCloseTo(lenUncapped, 9);
+  });
+});
+
+// ─── M12: style parameter (electric default vs poynting) ─────────────────────
+
+describe('fillArrowSpec / buildArrowSpec — style parameter', () => {
+  it('electric-style regression: fixed input yields the same arrowLen, alpha, color as before M12', () => {
+    // For fieldVec = {x:1, y:0} under HINT_SCALE = 1.65:
+    //   hint    = 1 - exp(-1.65)        ≈ 0.80795
+    //   hotness = hint^4.8              ≈ 0.35918
+    //   arrowLen = 2.8 + 0.92215*18 + 0.35918*3.0 ≈ 20.48
+    //   alpha    = 0.12 + 0.45905*0.88            ≈ 0.524
+    //   color    (segment 2): r=255, g≈166, b≈101
+    const spec = buildArrowSpec(50, 50, { x: 1, y: 0 }, TRANSFORM)!;
+    expect(spec).not.toBeNull();
+
+    const stemLen = Math.hypot(spec.x1 - spec.x0, spec.y1 - spec.y0);
+    expect(stemLen).toBeCloseTo(20.48, 1);
+    expect(spec.alpha).toBeCloseTo(0.524, 2);
+    expect(spec.color.r).toBe(255);
+    expect(spec.color.g).toBe(166);
+    expect(spec.color.b).toBe(101);
+  });
+
+  it('default style is electric: omitting the style arg matches passing "electric" explicitly', () => {
+    const def  = buildArrowSpec(50, 50, { x: 1, y: 0 }, TRANSFORM)!;
+    const elec = buildArrowSpec(50, 50, { x: 1, y: 0 }, TRANSFORM, Infinity, 'electric')!;
+    expect(def.color).toEqual(elec.color);
+    expect(def.alpha).toBe(elec.alpha);
+    expect(def.x0).toBe(elec.x0);
+    expect(def.y0).toBe(elec.y0);
+    expect(def.x1).toBe(elec.x1);
+    expect(def.y1).toBe(elec.y1);
+    expect(def.headLength).toBe(elec.headLength);
+    expect(def.lineWidth).toBe(elec.lineWidth);
+  });
+
+  it('poynting compression: two raw magnitudes 100× apart produce stem lengths within 3×', () => {
+    // Without compression, stem lengths would saturate at maxLengthPx. With pow(.., 0.25),
+    // the visual range from raw 0.1 to raw 10 should remain legible — the larger arrow
+    // is still longer, but the ratio is bounded so the smaller arrow is not invisible.
+    const small = buildArrowSpec(50, 50, { x: 0.1, y: 0 }, TRANSFORM, Infinity, 'poynting')!;
+    const large = buildArrowSpec(50, 50, { x: 10,  y: 0 }, TRANSFORM, Infinity, 'poynting')!;
+    expect(small).not.toBeNull();
+    expect(large).not.toBeNull();
+    const lenSmall = Math.hypot(small.x1 - small.x0, small.y1 - small.y0);
+    const lenLarge = Math.hypot(large.x1 - large.x0, large.y1 - large.y0);
+    expect(lenLarge).toBeGreaterThan(lenSmall);
+    expect(lenLarge / lenSmall).toBeLessThan(3);
+  });
+
+  it('style-distinctness: same fieldVec produces different colors under poynting vs electric', () => {
+    // The style parameter is the actual selector — it must route to a different palette
+    // branch. Tests the contract structurally, not by pinning specific gold-range values.
+    const elec = buildArrowSpec(50, 50, { x: 1, y: 0 }, TRANSFORM, Infinity, 'electric')!;
+    const poyn = buildArrowSpec(50, 50, { x: 1, y: 0 }, TRANSFORM, Infinity, 'poynting')!;
+    const sameColor =
+      elec.color.r === poyn.color.r &&
+      elec.color.g === poyn.color.g &&
+      elec.color.b === poyn.color.b;
+    expect(sameColor).toBe(false);
+  });
+
+  it('threshold contract: shaped magnitude gates visibility per style', () => {
+    // 5e-5 raw < 1e-4 electric cutoff → rejected under electric (and default).
+    // (5e-5)^0.25 ≈ 0.0841 > 0.03 poynting cutoff → admitted under poynting.
+    expect(buildArrowSpec(50, 50, { x: 5e-5, y: 0 }, TRANSFORM)).toBeNull();
+    expect(buildArrowSpec(50, 50, { x: 5e-5, y: 0 }, TRANSFORM, Infinity, 'electric')).toBeNull();
+    expect(buildArrowSpec(50, 50, { x: 5e-5, y: 0 }, TRANSFORM, Infinity, 'poynting')).not.toBeNull();
+
+    // (1e-8)^0.25 = 0.01 < 0.03 poynting cutoff → rejected under both styles.
+    expect(buildArrowSpec(50, 50, { x: 1e-8, y: 0 }, TRANSFORM)).toBeNull();
+    expect(buildArrowSpec(50, 50, { x: 1e-8, y: 0 }, TRANSFORM, Infinity, 'poynting')).toBeNull();
+  });
+});
+
+// ─── M12 follow-up: near-charge fade for the Poynting render path ────────────
+
+// Smoothstep fade multiplier applied to the Poynting field vector before it
+// reaches fillArrowSpec, so attenuation propagates through length, head,
+// line width, alpha, and glow rather than only through alpha.
+describe('poyntingNearChargeFade', () => {
+  it('returns 1 at and beyond the fade radius (closed boundary)', () => {
+    expect(poyntingNearChargeFade(0.15, 0.15)).toBe(1);
+    expect(poyntingNearChargeFade(0.20, 0.15)).toBe(1);
+    expect(poyntingNearChargeFade(10,   0.15)).toBe(1);
+  });
+
+  it('returns 0 at and below r = 0', () => {
+    expect(poyntingNearChargeFade(0,     0.15)).toBe(0);
+    expect(poyntingNearChargeFade(-0.01, 0.15)).toBe(0);
+  });
+
+  it('returns 0.5 at the smoothstep midpoint (r = radius / 2)', () => {
+    expect(poyntingNearChargeFade(0.075, 0.15)).toBeCloseTo(0.5, 12);
+  });
+
+  it('is monotonically increasing on (0, radius)', () => {
+    const radius = 0.15;
+    const samples = [0.01, 0.03, 0.05, 0.075, 0.1, 0.12, 0.149];
+    for (let i = 1; i < samples.length; i++) {
+      const prev = poyntingNearChargeFade(samples[i - 1], radius);
+      const curr = poyntingNearChargeFade(samples[i],     radius);
+      expect(curr).toBeGreaterThan(prev);
+    }
+  });
+
+  it('output is in [0, 1] for arbitrary inputs', () => {
+    const radius = 0.15;
+    for (const r of [-1, 0, 1e-9, 0.001, 0.05, 0.1, 0.149, 0.15, 0.2, 100]) {
+      const f = poyntingNearChargeFade(r, radius);
+      expect(f).toBeGreaterThanOrEqual(0);
+      expect(f).toBeLessThanOrEqual(1);
+    }
   });
 });

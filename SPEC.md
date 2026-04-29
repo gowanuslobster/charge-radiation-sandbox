@@ -51,10 +51,11 @@ The current official scope does not include:
 
 - self-consistent charge dynamics (charges responding to each other's fields)
 - radiation reaction or energy loss
-- Poynting vector or energy flow visualization
+- time-averaged or SI-calibrated energy-flux displays (the M12 Poynting layer
+  is instantaneous and in sandbox units)
 - time-averaged field displays
 
-M1–M11 are complete. Remaining work is tracked as future directions rather than
+M1–M12 are complete. Remaining work is tracked as future directions rather than
 official v1 milestone scope.
 
 ## Canonical Demo Modes
@@ -372,6 +373,67 @@ Implementation notes:
 - WebGL and CPU-fallback paths produce matching structure across all three
   channels (coarser resolution expected on CPU)
 
+### M12: Instantaneous Poynting-vector field-arrow mode — complete
+
+Add a fourth mutually exclusive option to the vector-field selector,
+`Poynting S`, derived from the already-computed `eTotal` and `bZ`:
+`S ∝ (Ey·Bz, -Ex·Bz)`. The mode is rendered as a field-arrow layer (not a
+heatmap) and remains compatible with the magnetic-heatmap channel and the
+wavefront contour. The display is instantaneous in sandbox units — not a
+calibrated SI energy-flux quantity and not a time-averaged radiated power.
+
+Implementation notes:
+- No new retarded-time solve is required; the cost is entirely in vector
+  rendering and display tuning. The sampler returns `eTotal` and `bZ` as it
+  already does for the electric channels and the magnetic heatmap.
+- `fillArrowSpec` and `buildArrowSpec` gain a `style: 'electric' | 'poynting'`
+  parameter that selects the magnitude-shaping curve, palette, and visibility
+  threshold. Pre-M12 callers continue to default to `'electric'`.
+- Magnitude shaping uses `shapedMag = Math.pow(rawMag, 0.25)` to compress the
+  `1/r^4` near-field dynamic range so far-field radiation arrows remain
+  legible alongside near-source arrows.
+- The visibility threshold operates on the shaped magnitude, with a
+  style-specific cutoff: `1e-4` raw for `'electric'` (unchanged) and `0.03`
+  shaped (≈ `8.1e-7` raw) for `'poynting'`. The Poynting cutoff is
+  intentionally more permissive than the electric raw cutoff because the
+  compression curve exists to make small raw values visible.
+- Near-charge fade pre-attenuates the input vector itself (smoothstep over a
+  fixed world-space radius around the nearest charge) so the attenuation
+  propagates through length, head length, line width, alpha, and glow rather
+  than only through alpha. The fade radius is coupled to the visibility
+  threshold: arrows whose attenuated magnitude drops below the threshold are
+  rejected.
+- Palette is a distinct olive → mid-gold → bright lime-gold ramp, separated
+  from the electric orange → hot-yellow ramp.
+- The Poynting layer is mutually exclusive with the electric vector layers
+  (Total E / Velocity E / Accel E). It does not introduce a Poynting heatmap
+  and does not introduce `Velocity S` / `Accel S` channels — the cross-term
+  structure of the Poynting vector makes a naive component split
+  pedagogically misleading.
+
+**Acceptance criteria:**
+- A `Poynting S` button appears in the Field section of the control panel
+  with the gold palette, mutually exclusive with Total E / Velocity E /
+  Accel E
+- For a stationary charge, all Poynting arrows are suppressed (zero
+  magnetic field → zero `S`), reinforcing that a static Coulomb field
+  carries energy but does not transport it
+- For a uniformly moving charge, the Poynting arrows show stable, nonzero
+  bound-field energy-flow structure without numerical blowup or near-source
+  NaN/garbage (the specific near-field geometry is observational, not a
+  pass/fail oracle)
+- After a sudden stop, the Poynting arrows are zero inside the radiation
+  shell (static field) and point outward on the shell itself
+- For oscillating, dipole, and hydrogen modes, far-field Poynting arrows
+  read as outward energy flow
+- The Poynting layer is compatible with the magnetic-heatmap channel and
+  the wavefront contour: enabling either alongside `Poynting S` does not
+  produce visual artifacts
+- Unit tests cover the style parameter contract: pre-M12 default is
+  `'electric'`, the threshold contract for the two styles, and a Poynting
+  compression invariant (raw magnitudes 100× apart yield stem lengths
+  within a small bounded ratio after compression)
+
 ## UI and Interaction Spec
 
 ### Viewport
@@ -386,8 +448,8 @@ Implementation notes:
 
 - Sampled on a regular grid (default 40x40, configurable)
 - Arrow style matches field-sandbox: thin stems with arrowheads, length proportional to field magnitude with clamping, color-coded by magnitude
-- Toggleable display modes: total E field, velocity field only, acceleration field only
-- Color palette consistent with field-sandbox (orange/blue)
+- Toggleable display modes are mutually exclusive: total E field, velocity field only, acceleration field only, or Poynting S (instantaneous energy-flow arrows derived from E × B)
+- Color palette: the electric layers use the field-sandbox warm palette; the Poynting layer uses a distinct gold / green-gold palette to keep the two readable when switching between them
 
 ### Control panel
 
@@ -463,7 +525,10 @@ all GPU field values.
 - **Magnetic field visualization:** B is computed from the LW equations. The
   current radiation heatmap visualizes signed `bZAccel`; broader `B` controls
   and any dedicated magnetic-vector layer remain deferred.
-- **Poynting vector / energy flow:** plausible later as a derived overlay. Requires both E and B, which are already computed.
+- **Time-averaged Poynting / radiated power:** the M12 Poynting vector layer
+  is instantaneous and uncalibrated. Time-averaged radiation intensity (a
+  calibrated `<S>` map suitable for radiation-pattern teaching) remains
+  deferred. See `IDEAS-poynting-vectors.md`.
 - **Continuous live field-line tracing:** continuously recomputed field lines during normal playback remain deferred because time-dependent LW fields would require expensive re-tracing every frame. Paused-frame streamline overlays are covered by M9 instead.
 - **Potential visualization:** scalar potential heatmap is less natural for the LW framework than for electrostatics. Deferred.
 - **Sound or haptic feedback:** not in scope.
@@ -520,5 +585,10 @@ all GPU field values.
   expanding the current radiation heatmap into full `B`-field visualization
   modes (`Total B`, `Velocity B`, `Accel B`) while keeping contours tied to
   `bZAccel`.
+- `IDEAS-poynting-vectors.md` is the design rationale for the M12
+  instantaneous Poynting-vector field-arrow mode. It documents the 2D
+  `S ∝ (Ey·Bz, -Ex·Bz)` derivation, the `1/r^4` dynamic-range trap, the
+  magnitude-compression and near-charge-fade strategy, and the rendering
+  decisions adopted in M12.
 - `AGENTS.md` governs implementation style, engineering conventions, and agent behavior. It is authoritative for "how to write the code."
 - If there is a conflict between documents, SPEC.md defines intent.

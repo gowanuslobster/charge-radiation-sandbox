@@ -10,7 +10,7 @@
 import type { DemoMode, MagneticHeatmapMode } from '@/physics/demoModes';
 import type { CursorReadout } from './useCursorReadout';
 
-type FieldLayer = 'total' | 'vel' | 'accel';
+type FieldLayer = 'total' | 'vel' | 'accel' | 'poynting';
 
 type Props = {
   demoMode: DemoMode;
@@ -217,6 +217,12 @@ export function ControlPanel({
               ? 'bg-amber-300 text-black shadow-[0_0_16px_rgba(251,191,36,0.45)]'
               : 'bg-amber-400/20 text-amber-200 hover:bg-amber-400/35'}`}>
             Accel E
+          </button>
+          <button type="button" onClick={() => onFieldLayerChange('poynting')}
+            className={`${TOGGLE_BASE} ${fieldLayer === 'poynting'
+              ? 'bg-yellow-300 text-black shadow-[0_0_16px_rgba(253,224,71,0.5)]'
+              : 'bg-yellow-400/20 text-yellow-200 hover:bg-yellow-400/35'}`}>
+            Poynting S
           </button>
         </div>
       </div>

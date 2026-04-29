@@ -12,7 +12,7 @@ import type { SimConfig, Vec2 } from '@/physics/types';
 import type { ChargeRuntime } from '@/physics/chargeRuntime';
 import { evaluateSuperposedLienardWiechertField } from '@/physics/lienardWiechert';
 import { getWorldToScreenTransform, transformWorldPoint, type WorldBounds } from '@/rendering/worldSpace';
-import { fillArrowSpec, type ArrowSpec } from '@/rendering/arrows';
+import { fillArrowSpec, poyntingNearChargeFade, type ArrowSpec } from '@/rendering/arrows';
 import { CHARGE_MARKER_RADIUS_PX } from '@/rendering/chargeMarker';
 
 type Props = {
@@ -22,7 +22,7 @@ type Props = {
   bounds: WorldBounds;
   gridW?: number; // default 40
   gridH?: number; // default 40
-  fieldLayer: 'total' | 'vel' | 'accel';
+  fieldLayer: 'total' | 'vel' | 'accel' | 'poynting';
   /** When false, velocity arrows on charge markers are hidden. Defaults to true. */
   showVelocityVectors?: boolean;
   /** True while the user is panning — halves grid density for responsiveness. */
@@ -178,6 +178,14 @@ export function VectorFieldCanvas({
     }));
     // Scratch observation-position object: mutated per grid point, never reallocated.
     const obsPos = { x: 0, y: 0 };
+    // Scratch Poynting vector: mutated per grid point on the 'poynting' layer only.
+    // Allocated once here so the inner loop never allocates.
+    const poyntingScratch = { x: 0, y: 0 };
+
+    // M12: near-charge fade radius for the Poynting layer. Coupled tuning gate
+    // alongside the pow(.., 0.25) shaping exponent and the 0.03 visibility threshold
+    // in fillArrowSpec — see SPEC M12 / IDEAS-poynting-vectors.md.
+    const POYNTING_NEAR_CHARGE_RADIUS = 0.15;
 
     // Cached arrow count from the last solve. When paused, we skip the solve and
     // redraw the existing pool contents. Initialised to -1 so the first frame always solves.
@@ -292,16 +300,49 @@ export function VectorFieldCanvas({
             });
             if (!result) continue;
 
-            const fieldVec =
-              layer === 'vel' ? result.eVel :
-              layer === 'accel' ? result.eAccel :
-              result.eTotal;
+            let fieldVec: Vec2;
+            if (layer === 'poynting') {
+              // S ∝ E × B; in 2D with E in-plane and B = (0,0,Bz):
+              //   S_x =  Ey * Bz,  S_y = -Ex * Bz
+              poyntingScratch.x =  result.eTotal.y * result.bZ;
+              poyntingScratch.y = -result.eTotal.x * result.bZ;
+
+              // Near-charge fade: smoothstep on min distance to any charge.
+              // Scaling the vector itself (not just alpha) propagates the fade
+              // through length, head, line width, alpha, and glow inside fillArrowSpec.
+              // Note: the fade also gates visibility — pre-fade values near the
+              // 0.03 shaped threshold can be dropped after attenuation. The fade
+              // radius and threshold are coupled tuning knobs.
+              let nearestSqDist = Infinity;
+              // Indexed loop: avoid for-of iterator allocation inside the grid loop.
+              for (let ri = 0; ri < chargeRuntimes.length; ri++) {
+                const newest = chargeRuntimes[ri].history.newest();
+                if (newest === null) continue;
+                const dx = obsPos.x - newest.pos.x;
+                const dy = obsPos.y - newest.pos.y;
+                const sq = dx * dx + dy * dy;
+                if (sq < nearestSqDist) nearestSqDist = sq;
+              }
+              const fade = poyntingNearChargeFade(Math.sqrt(nearestSqDist), POYNTING_NEAR_CHARGE_RADIUS);
+              if (fade < 1) {
+                poyntingScratch.x *= fade;
+                poyntingScratch.y *= fade;
+              }
+              fieldVec = poyntingScratch;
+            } else if (layer === 'vel') {
+              fieldVec = result.eVel;
+            } else if (layer === 'accel') {
+              fieldVec = result.eAccel;
+            } else {
+              fieldVec = result.eTotal;
+            }
 
             // Inline transformWorldPoint: screenX = a*wx + e, screenY = d*wy + f.
             const cpx = transform.a * obsPos.x + transform.e;
             const cpy = transform.d * obsPos.y + transform.f;
 
-            if (fillArrowSpec(arrowPool[arrowCount], cpx, cpy, fieldVec, transform, maxLengthPx)) {
+            const arrowStyle = layer === 'poynting' ? 'poynting' : 'electric';
+            if (fillArrowSpec(arrowPool[arrowCount], cpx, cpy, fieldVec, transform, maxLengthPx, arrowStyle)) {
               arrowCount++;
             }
           }

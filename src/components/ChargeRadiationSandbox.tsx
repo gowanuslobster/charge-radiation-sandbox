@@ -56,7 +56,7 @@ import { StartPanel } from './StartPanel';
 import { isWithinBounds, maxCornerDist, worldToScreen, type WorldBounds } from '@/rendering/worldSpace';
 import { hitTestCharge } from '@/rendering/chargeHitTest';
 
-type FieldLayer = 'total' | 'vel' | 'accel';
+type FieldLayer = 'total' | 'vel' | 'accel' | 'poynting';
 
 export function ChargeRadiationSandbox() {
   const [fieldLayer, setFieldLayer] = useState<FieldLayer>('total');

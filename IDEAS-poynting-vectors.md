@@ -1,5 +1,17 @@
 # IDEAS — Poynting Vector Visualization
 
+> **Implemented in M12.** The instantaneous-Poynting-vector field-arrow mode
+> (`Poynting S`) shipped in M12 follows the first-scope definition at the
+> bottom of this document: a single mutually exclusive vector layer derived
+> from `eTotal × bZ`, rendered with `Math.pow(rawMag, 0.25)` magnitude
+> compression, a smoothstep near-charge fade applied to the input vector
+> (so attenuation propagates through length, head, line width, alpha, and
+> glow), and a distinct gold/green-gold palette. The visibility threshold
+> operates on the shaped magnitude (`0.03` shaped ≈ `8.1e-7` raw) and is
+> intentionally more permissive than the electric raw cutoff so that the
+> compression curve can do its job. The design discussion below is preserved
+> as the original specification.
+
 ## Context
 
 The sandbox currently visualizes the electric field ($\vec{E}$) via vector arrows and the magnetic field ($B_z$) via a scalar heatmap. While this accurately represents the individual components of the Liénard-Wiechert fields, it stops short of the ultimate pedagogical punchline of classical electrodynamics: **physical energy transport**.

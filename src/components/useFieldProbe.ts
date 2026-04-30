@@ -1,6 +1,6 @@
 // useFieldProbe — RAF-batched LW field sampling at a fixed world position.
 //
-// The probe samples all six channels (Ex, Ey, |E|, Bz, BzVel, BzAccel) every
+// The probe samples all seven channels (Ex, Ey, |E|, Bz, Sx, Sy, |S|) every
 // time it advances, so switching channels never clears history — the panel
 // just redraws from a different ring buffer.
 //
@@ -53,12 +53,13 @@ type ChannelBuffers = Record<ProbeChannel, Float32Array>;
 
 function makeBuffers(): ChannelBuffers {
   return {
-    Ex:      new Float32Array(PROBE_HISTORY_LEN),
-    Ey:      new Float32Array(PROBE_HISTORY_LEN),
-    Emag:    new Float32Array(PROBE_HISTORY_LEN),
-    Bz:      new Float32Array(PROBE_HISTORY_LEN),
-    BzVel:   new Float32Array(PROBE_HISTORY_LEN),
-    BzAccel: new Float32Array(PROBE_HISTORY_LEN),
+    Ex:   new Float32Array(PROBE_HISTORY_LEN),
+    Ey:   new Float32Array(PROBE_HISTORY_LEN),
+    Emag: new Float32Array(PROBE_HISTORY_LEN),
+    Bz:   new Float32Array(PROBE_HISTORY_LEN),
+    Sx:   new Float32Array(PROBE_HISTORY_LEN),
+    Sy:   new Float32Array(PROBE_HISTORY_LEN),
+    Smag: new Float32Array(PROBE_HISTORY_LEN),
   };
 }
 
@@ -174,13 +175,16 @@ export function useFieldProbe(opts: UseFieldProbeOptions): FieldProbe {
         setInstant(null);
       } else {
         for (const ch of PROBE_CHANNELS) buffers[ch][w] = getProbeChannelValue(result, ch);
+        const sx =  result.eTotal.y * result.bZ;
+        const sy = -result.eTotal.x * result.bZ;
         setInstant({
-          Ex:      result.eTotal.x,
-          Ey:      result.eTotal.y,
-          Emag:    Math.hypot(result.eTotal.x, result.eTotal.y),
-          Bz:      result.bZ,
-          BzVel:   result.bZVel,
-          BzAccel: result.bZAccel,
+          Ex:   result.eTotal.x,
+          Ey:   result.eTotal.y,
+          Emag: Math.hypot(result.eTotal.x, result.eTotal.y),
+          Bz:   result.bZ,
+          Sx:   sx,
+          Sy:   sy,
+          Smag: Math.hypot(sx, sy),
         });
       }
       writeIdxRef.current = (w + 1) % PROBE_HISTORY_LEN;

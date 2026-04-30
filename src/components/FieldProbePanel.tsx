@@ -29,12 +29,13 @@ type Props = {
 };
 
 const CHANNEL_LABEL: Record<ProbeChannel, string> = {
-  Ex:      'Eₓ',
-  Ey:      'Eᵧ',
-  Emag:    '|E|',
-  Bz:      'Bz',
-  BzVel:   'Bz Vel',
-  BzAccel: 'Bz Acc',
+  Ex:   'Eₓ',
+  Ey:   'Eᵧ',
+  Emag: '|E|',
+  Bz:   'Bz',
+  Sx:   'Sₓ',
+  Sy:   'Sᵧ',
+  Smag: '|S|',
 };
 
 const SPARK_W = 260;
@@ -42,9 +43,9 @@ const SPARK_H = 80;
 const SPARK_PAD_X = 6;
 const SPARK_PAD_Y = 6;
 
-// |E| is the only non-negative channel; everything else preserves sign.
+// Magnitudes are the only non-negative channels; everything else preserves sign.
 function isSignedChannel(ch: ProbeChannel): boolean {
-  return ch !== 'Emag';
+  return ch !== 'Emag' && ch !== 'Smag';
 }
 
 function fmt(v: number): string {

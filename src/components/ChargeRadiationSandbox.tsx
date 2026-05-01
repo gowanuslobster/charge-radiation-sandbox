@@ -226,9 +226,12 @@ export function ChargeRadiationSandbox() {
   }, []);
 
   // Click-to-place: ignore drags (browser suppresses click after drag motion),
-  // ignore clicks on the active charge in draggable mode, otherwise drop a probe.
+  // ignore clicks while the start panel is up (only the mode cards should be
+  // actionable then), ignore clicks on the active charge in draggable mode,
+  // otherwise drop a probe.
   const handleContainerClick = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return;
+    if (showStartPanelRef.current) return;
     if (isDraggingRef.current) return;
     const rect = containerRef.current!.getBoundingClientRect();
     const cx = e.clientX - rect.left;

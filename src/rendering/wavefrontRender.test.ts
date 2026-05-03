@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import {
   buildHeatmapImageData,
+  computeContrastPeak,
   extractContourSegments,
   chainContourSegments,
   smoothScalars,
@@ -440,5 +441,49 @@ describe('bilinearUpsample', () => {
     const dst = new Float32Array(16); // 4×4 from 2×2, scale=3
     bilinearUpsample(src, 2, 2, dst, 4, 4);
     for (const v of dst) expect(v).toBeCloseTo(7.5, 5);
+  });
+});
+
+// ─── computeContrastPeak (mask) ──────────────────────────────────────────────
+
+describe('computeContrastPeak — mask', () => {
+  // SIGNED_K_PEAK = 0.18, SIGNED_K_RMS = 4.2, MIN_CONTRAST_PEAK = 1e-10.
+
+  it('all-included mask is identical to no mask', () => {
+    const scalars = new Float32Array([1, -2, 3, -4, 5, -6, 7, -8]);
+    const mask = new Uint8Array([1, 1, 1, 1, 1, 1, 1, 1]);
+    expect(computeContrastPeak(scalars, 'signed', mask))
+      .toBe(computeContrastPeak(scalars, 'signed'));
+  });
+
+  it('half-masked excludes masked cells from peak and rms', () => {
+    // Masked-out cell (index 0) holds the largest value. With mask, peak
+    // should drop from 100 to 5.
+    const scalars = new Float32Array([100, 1, 2, 3, 4, 5]);
+    const mask = new Uint8Array([0, 1, 1, 1, 1, 1]);
+    const masked = computeContrastPeak(scalars, 'signed', mask);
+    // peak * kPeak = 5 * 0.18 = 0.9; rms over [1,2,3,4,5] = sqrt(55/5) ≈ 3.317
+    // rms * kRms ≈ 13.93. Expected return ≈ 13.93.
+    expect(masked).toBeCloseTo(Math.sqrt(55 / 5) * 4.2, 8);
+    // Sanity: unmasked would be dominated by the 100, returning peak * 0.18 = 18
+    // (or rms over all 6, whichever is larger), both >> 13.93.
+    expect(computeContrastPeak(scalars, 'signed')).toBeGreaterThan(masked);
+  });
+
+  it('all-masked falls back to unmasked computation (does not return floor)', () => {
+    const scalars = new Float32Array([1, -2, 3, -4, 5]);
+    const mask = new Uint8Array([0, 0, 0, 0, 0]);
+    const fallback = computeContrastPeak(scalars, 'signed', mask);
+    expect(fallback).toBe(computeContrastPeak(scalars, 'signed'));
+    expect(fallback).toBeGreaterThan(1e-10);
+  });
+
+  it('peak/rms denominator uses unmasked count, not full length', () => {
+    // 4 unmasked unit cells + 4 masked zero cells. RMS over 4 unmasked = 1.
+    // If denominator used full length, RMS = sqrt(4/8) = 0.707 instead.
+    const scalars = new Float32Array([1, 1, 1, 1, 0, 0, 0, 0]);
+    const mask = new Uint8Array([1, 1, 1, 1, 0, 0, 0, 0]);
+    // With proper masking: peak * 0.18 = 0.18; rms * 4.2 = 4.2. Returns 4.2.
+    expect(computeContrastPeak(scalars, 'signed', mask)).toBeCloseTo(4.2, 8);
   });
 });

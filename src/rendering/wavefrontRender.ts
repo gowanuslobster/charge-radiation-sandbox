@@ -51,17 +51,39 @@ const COOL_R =  80, COOL_G = 100, COOL_B = 255;
  * normalized units as the heatmap display, so a given iso-value corresponds to
  * a predictable visible brightness.
  */
-export function computeContrastPeak(scalars: Float32Array, mode: HeatmapMode): number {
-  let peak = 0;
-  let sumSq = 0;
-  for (let k = 0; k < scalars.length; k++) {
+export function computeContrastPeak(
+  scalars: Float32Array,
+  mode: HeatmapMode,
+  mask?: Uint8Array,
+): number {
+  const kPeak = mode === 'signed' ? SIGNED_K_PEAK : ENVELOPE_K_PEAK;
+  const kRms  = mode === 'signed' ? SIGNED_K_RMS  : ENVELOPE_K_RMS;
+  const n = scalars.length;
+
+  if (mask !== undefined) {
+    let peak = 0, sumSq = 0, count = 0;
+    for (let k = 0; k < n; k++) {
+      if (mask[k] === 0) continue;
+      const abs = Math.abs(scalars[k]);
+      if (abs > peak) peak = abs;
+      sumSq += abs * abs;
+      count++;
+    }
+    if (count > 0) {
+      const rms = Math.sqrt(sumSq / count);
+      return Math.max(MIN_CONTRAST_PEAK, peak * kPeak, rms * kRms);
+    }
+    // All-masked fallback: recompute over every cell so the caller doesn't
+    // divide by the floor and saturate everything.
+  }
+
+  let peak = 0, sumSq = 0;
+  for (let k = 0; k < n; k++) {
     const abs = Math.abs(scalars[k]);
     if (abs > peak) peak = abs;
     sumSq += abs * abs;
   }
-  const rms = Math.sqrt(sumSq / Math.max(scalars.length, 1));
-  const kPeak = mode === 'signed' ? SIGNED_K_PEAK : ENVELOPE_K_PEAK;
-  const kRms  = mode === 'signed' ? SIGNED_K_RMS  : ENVELOPE_K_RMS;
+  const rms = Math.sqrt(sumSq / Math.max(n, 1));
   return Math.max(MIN_CONTRAST_PEAK, peak * kPeak, rms * kRms);
 }
 

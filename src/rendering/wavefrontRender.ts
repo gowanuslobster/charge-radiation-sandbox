@@ -50,6 +50,12 @@ const COOL_R =  80, COOL_G = 100, COOL_B = 255;
  * Keeping this in one place ensures contour levels are expressed in the same
  * normalized units as the heatmap display, so a given iso-value corresponds to
  * a predictable visible brightness.
+ *
+ * When `mask` is supplied and excludes every cell, returns the sentinel `-1`
+ * (rather than silently falling back to the unmasked peak, which would flip
+ * "singularity excluded" to "singularity included" at the boundary where the
+ * last unmasked cell disappears under tight zoom). Callers handle the sentinel
+ * by skipping the update or running an explicit bootstrap.
  */
 export function computeContrastPeak(
   scalars: Float32Array,
@@ -69,12 +75,9 @@ export function computeContrastPeak(
       sumSq += abs * abs;
       count++;
     }
-    if (count > 0) {
-      const rms = Math.sqrt(sumSq / count);
-      return Math.max(MIN_CONTRAST_PEAK, peak * kPeak, rms * kRms);
-    }
-    // All-masked fallback: recompute over every cell so the caller doesn't
-    // divide by the floor and saturate everything.
+    if (count === 0) return -1;
+    const rms = Math.sqrt(sumSq / count);
+    return Math.max(MIN_CONTRAST_PEAK, peak * kPeak, rms * kRms);
   }
 
   let peak = 0, sumSq = 0;

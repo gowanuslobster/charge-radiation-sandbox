@@ -470,12 +470,10 @@ describe('computeContrastPeak — mask', () => {
     expect(computeContrastPeak(scalars, 'signed')).toBeGreaterThan(masked);
   });
 
-  it('all-masked falls back to unmasked computation (does not return floor)', () => {
+  it('all-masked returns -1 sentinel (caller must handle)', () => {
     const scalars = new Float32Array([1, -2, 3, -4, 5]);
     const mask = new Uint8Array([0, 0, 0, 0, 0]);
-    const fallback = computeContrastPeak(scalars, 'signed', mask);
-    expect(fallback).toBe(computeContrastPeak(scalars, 'signed'));
-    expect(fallback).toBeGreaterThan(1e-10);
+    expect(computeContrastPeak(scalars, 'signed', mask)).toBe(-1);
   });
 
   it('peak/rms denominator uses unmasked count, not full length', () => {

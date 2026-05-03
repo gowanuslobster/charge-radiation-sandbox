@@ -30,8 +30,8 @@ import {
 } from '@/physics/demoModes';
 import type { MagneticHeatmapMode } from '@/rendering/displayModes';
 import type { WorldBounds } from '@/rendering/worldSpace';
-import { createSamplerState, sampleWavefront } from '@/physics/wavefrontSampler';
-import { computeContrastPeak } from '@/rendering/wavefrontRender';
+import { createSamplerState } from '@/physics/wavefrontSampler';
+import { runNormalizationProbe } from '@/rendering/wavefrontNormalization';
 import {
   createShaderProgram,
   createFloat32Texture,
@@ -631,111 +631,80 @@ export function WavefrontWebGLCanvas({
       const period        = periodicModePeriod(mode);
       const policyB       = period !== null;
 
-      // Run the probe at probeTime, accumulating per-channel sums into
-      // probeScratch and building probeMask to exclude cells within
-      // MASK_RADIUS_FACTOR · softening of any charge's interpolated position
-      // at probeTime. Returns the masked per-channel contrast peaks.
-      const runProbe = (probeTime: number): [number, number, number] => {
-        probeScratch[CHANNEL_TOTAL].fill(0);
-        probeScratch[CHANNEL_VEL].fill(0);
-        probeScratch[CHANNEL_ACCEL].fill(0);
-        probeMask.fill(1);
-
-        const maskRadius   = MASK_RADIUS_FACTOR * (config.softening ?? 0.01);
-        const maskRadiusSq = maskRadius * maskRadius;
-        const dxCell = NORM_PROBE_W > 1 ? (curBounds.maxX - curBounds.minX) / (NORM_PROBE_W - 1) : 0;
-        const dyCell = NORM_PROBE_H > 1 ? (curBounds.maxY - curBounds.minY) / (NORM_PROBE_H - 1) : 0;
-
-        for (let ci = 0; ci < chargeCount; ci++) {
-          const { history: h, charge: q } = runtimes[ci];
-          if (!h || h.isEmpty()) continue;
-          const samples = sampleWavefront(normSamplerStates[ci], {
-            history: h,
-            simTime:  probeTime,
-            charge:   q,
-            config,
-            bounds:   curBounds,
-            gridW:    NORM_PROBE_W,
-            gridH:    NORM_PROBE_H,
-            simEpoch: epoch,
-          });
-          const total = probeScratch[CHANNEL_TOTAL];
-          const vel   = probeScratch[CHANNEL_VEL];
-          const accel = probeScratch[CHANNEL_ACCEL];
-          for (let k = 0; k < total.length; k++) {
-            total[k] += samples.bZ[k];
-            vel[k]   += samples.bZVel[k];
-            accel[k] += samples.bZAccel[k];
-          }
-
-          // Mask cells within maskRadius of this charge's position at probeTime.
-          // AABB-restricted loop: only walk cells whose bounding box intersects
-          // the mask circle.
-          if (maskRadius > 0 && dxCell > 0 && dyCell > 0) {
-            const s = h.interpolateAt(probeTime);
-            const iMin = Math.max(0, Math.floor((s.pos.x - maskRadius - curBounds.minX) / dxCell));
-            const iMax = Math.min(NORM_PROBE_W - 1, Math.ceil((s.pos.x + maskRadius - curBounds.minX) / dxCell));
-            const jMin = Math.max(0, Math.floor((s.pos.y - maskRadius - curBounds.minY) / dyCell));
-            const jMax = Math.min(NORM_PROBE_H - 1, Math.ceil((s.pos.y + maskRadius - curBounds.minY) / dyCell));
-            for (let j = jMin; j <= jMax; j++) {
-              const cellY = curBounds.minY + j * dyCell;
-              const ddy   = cellY - s.pos.y;
-              const ddySq = ddy * ddy;
-              for (let i = iMin; i <= iMax; i++) {
-                const cellX = curBounds.minX + i * dxCell;
-                const ddx   = cellX - s.pos.x;
-                if (ddx * ddx + ddySq < maskRadiusSq) {
-                  probeMask[j * NORM_PROBE_W + i] = 0;
-                }
-              }
-            }
-          }
-        }
-        return [
-          computeContrastPeak(probeScratch[CHANNEL_TOTAL], 'signed', probeMask),
-          computeContrastPeak(probeScratch[CHANNEL_VEL],   'signed', probeMask),
-          computeContrastPeak(probeScratch[CHANNEL_ACCEL], 'signed', probeMask),
-        ];
-      };
+      const probe = (probeTime: number, maskFactor: number) =>
+        runNormalizationProbe({
+          chargeRuntimes:    runtimes,
+          normSamplerStates,
+          probeScratch,
+          probeMask,
+          bounds:            curBounds,
+          config,
+          probeTime,
+          simEpoch:          epoch,
+          gridW:             NORM_PROBE_W,
+          gridH:             NORM_PROBE_H,
+          maskRadiusFactor:  maskFactor,
+        });
 
       if (policyB) {
-        // Policy B: phase-invariant cache. Recompute only on invalidation; otherwise
-        // the cached per-channel peaks are canonical.
+        // Policy B: phase-invariant cache. Recompute only on invalidation;
+        // otherwise the cached per-channel peaks are canonical. Skip
+        // ok:false phases (extreme zoom where the source orbit fits inside
+        // one mask circle); if every phase is ok:false, bootstrap once with
+        // the mask disabled so the first frame after invalidation isn't
+        // black/saturated.
         if (invalidate) cachedPeaksValid = false;
         if (!cachedPeaksValid) {
           const T = period as number;
           const N = PERIODIC_NORM_PHASE_SAMPLES;
-          let maxT = 0, maxV = 0, maxA = 0;
+          let maxT = 0, maxV = 0, maxA = 0, validAny = false;
           for (let si = 0; si < N; si++) {
-            const probeTime = tCurrent - (si * T) / N;
-            const [pt, pv, pa] = runProbe(probeTime);
-            if (pt > maxT) maxT = pt;
-            if (pv > maxV) maxV = pv;
-            if (pa > maxA) maxA = pa;
+            const r = probe(tCurrent - (si * T) / N, MASK_RADIUS_FACTOR);
+            if (!r.ok) continue;
+            validAny = true;
+            if (r.peaks[0] > maxT) maxT = r.peaks[0];
+            if (r.peaks[1] > maxV) maxV = r.peaks[1];
+            if (r.peaks[2] > maxA) maxA = r.peaks[2];
           }
-          cachedPeaks[CHANNEL_TOTAL] = maxT;
-          cachedPeaks[CHANNEL_VEL]   = maxV;
-          cachedPeaks[CHANNEL_ACCEL] = maxA;
-          cachedPeaksValid = true;
+          if (validAny) {
+            cachedPeaks[CHANNEL_TOTAL] = maxT;
+            cachedPeaks[CHANNEL_VEL]   = maxV;
+            cachedPeaks[CHANNEL_ACCEL] = maxA;
+            cachedPeaksValid = true;
+          } else {
+            const fb = probe(tCurrent, 0);
+            if (fb.ok) {
+              cachedPeaks[CHANNEL_TOTAL] = fb.peaks[0];
+              cachedPeaks[CHANNEL_VEL]   = fb.peaks[1];
+              cachedPeaks[CHANNEL_ACCEL] = fb.peaks[2];
+              cachedPeaksValid = true;
+            }
+            // If even the unmasked bootstrap fails (degenerate state), leave
+            // cache invalid; the next frame retries.
+          }
         }
       } else {
         // Policy A: dynamic EMA. Re-probe on every unpaused frame (or after an
         // invalidation) so the peak tracks transient dynamics. Used by both
-        // moving_charge (pre and post stop) and draggable.
+        // moving_charge (pre and post stop) and draggable. ok:false (extreme
+        // zoom) reuses the previous smoothedPeaks for this frame — same effect
+        // as the paused-frame short-circuit.
         if (hardReset) { smoothedPeaks[0] = 0; smoothedPeaks[1] = 0; smoothedPeaks[2] = 0; }
         const needsProbe = hardReset || !paused || boundsChanged;
         if (needsProbe) {
-          const [rt, rv, ra] = runProbe(tCurrent);
-          const raw: [number, number, number] = [rt, rv, ra];
-          for (let k = 0; k < 3; k++) {
-            if (hardReset || smoothedPeaks[k] === 0) {
-              smoothedPeaks[k] = raw[k];
-            } else {
-              smoothedPeaks[k] = NORM_EMA_ALPHA * raw[k] + (1 - NORM_EMA_ALPHA) * smoothedPeaks[k];
+          const r = probe(tCurrent, MASK_RADIUS_FACTOR);
+          if (r.ok) {
+            const raw = r.peaks;
+            for (let k = 0; k < 3; k++) {
+              if (hardReset || smoothedPeaks[k] === 0) {
+                smoothedPeaks[k] = raw[k];
+              } else {
+                smoothedPeaks[k] = NORM_EMA_ALPHA * raw[k] + (1 - NORM_EMA_ALPHA) * smoothedPeaks[k];
+              }
             }
           }
         }
-        // else: reuse last smoothedPeaks values (paused-frame short-circuit).
+        // else: reuse last smoothedPeaks values.
       }
 
       prevNormEpoch  = epoch;

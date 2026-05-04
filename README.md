@@ -106,6 +106,19 @@ A finite line of seven like-signed positive charges in uniform translation along
 - Compare with **Moving charge** (single-charge equivalent): same kinematic profile, seven of them in a line. The superposition and end-effect structure are unmistakably different from a single source.
 - The wavefront-contour overlay is hidden in this mode — there is no scripted radiation shell to annotate.
 
+### Neutral wire
+
+A finite, initially-neutral, sliding-carrier segment: a stationary positive lattice on the centerline plus two transversely offset moving negative streams (one above, one below), each carrying half the compensating charge. **At reset (t = 0) the source is column-neutral** — every longitudinal slice nets to zero. As time advances, the negative streams drift relative to the stationary positive lattice, so the wire-like cancellation is *only approximate and degrades with time*. This is a deliberately honest finite-segment approximation, not a steady-state infinite wire. Recirculation / periodic wrap is intentionally not modeled.
+
+The negative streams move in −x, so the conventional current is +x — matching `Particle beam`'s macroscopic current direction. The transverse magnetic field is current-like because the negative carriers are in motion. End effects and microscopic lattice structure remain visible.
+
+**To try:**
+- **Compare against `Particle beam` at reset (t = 0).** This is the headline pedagogical move. Pick **Total E** in both modes and probe a bulk-region external point (above the middle of the wire, e.g., the cursor at (0, +0.5)): in `Neutral wire` the external |E| is substantially smaller than in `Particle beam`. That is the wire-like cancellation, and it is approximate by design.
+- Pick **Velocity B** to see a current-like transverse magnetic field with banded structure across the bulk region. The orientation matches `Particle beam` for the matched-current convention.
+- Watch the source **drift over time**: scrub forward and the negative streams slide leftward through and past the positive lattice. The column-neutral picture is canonical only at reset; as t advances the segment becomes increasingly an unbalanced sliding-carrier configuration.
+- **Press Reset** to return to the canonical column-neutral configuration and re-evaluate the comparison. Reset is part of the intended interaction model in this mode.
+- The wavefront-contour overlay is hidden in this mode — there is no scripted radiation shell to annotate.
+
 ---
 
 ## Teaching overlays
@@ -115,8 +128,8 @@ All overlays are off by default. They stack freely — you can enable any combin
 | Overlay | Where | What it shows |
 |---------|-------|---------------|
 | **Field lines** | All modes, when paused | Instantaneous streamlines of the total electric field at the paused frame. Not material lines that move with the charge — they are a snapshot of the field at that moment. |
-| **Magnetic heatmap** | Charge at rest, Moving charge, Oscillating, Dipole, Hydrogen, Particle beam | A four-state picker (Off / Total B / Velocity B / Accel B) coloring the chosen Bz channel as a signed warm/cool heatmap. **Accel B** is the radiation magnetic field (Bz from the acceleration term — the pre-M11 "Radiation heatmap"). **Velocity B** is the bound moving-charge magnetic field. **Total B** sums both — useful for seeing the post-stop void in `Moving charge` or the superposed transverse field of `Particle beam`. Contributions from all active charges are superposed before rendering. |
-| **Wavefront contours** | Moving charge, Oscillating, Dipole, Hydrogen | Contour lines tied to the radiation magnetic field (`bZAccel`) regardless of which heatmap channel is selected. In Oscillating, Dipole, and Hydrogen: zero-crossing lines tracking wave phase. In Moving charge: envelope threshold contour marking the shell boundary. Hidden in Charge at rest and Particle beam — no scripted radiation shell to annotate. |
+| **Magnetic heatmap** | Charge at rest, Moving charge, Oscillating, Dipole, Hydrogen, Particle beam, Neutral wire | A four-state picker (Off / Total B / Velocity B / Accel B) coloring the chosen Bz channel as a signed warm/cool heatmap. **Accel B** is the radiation magnetic field (Bz from the acceleration term — the pre-M11 "Radiation heatmap"). **Velocity B** is the bound moving-charge magnetic field. **Total B** sums both — useful for seeing the post-stop void in `Moving charge`, the superposed transverse field of `Particle beam`, or the current-like transverse field of `Neutral wire`. Contributions from all active charges are superposed before rendering. |
+| **Wavefront contours** | Moving charge, Oscillating, Dipole, Hydrogen | Contour lines tied to the radiation magnetic field (`bZAccel`) regardless of which heatmap channel is selected. In Oscillating, Dipole, and Hydrogen: zero-crossing lines tracking wave phase. In Moving charge: envelope threshold contour marking the shell boundary. Hidden in Charge at rest, Particle beam, and Neutral wire — no scripted radiation shell to annotate. |
 | **Ghost charge** (mini panel) | Moving charge | A marker at the extrapolated would-have-been position after the stop. Shows why the field outside the shell still points toward a charge that is no longer there. |
 | **Ghost field lines** (mini panel) | Moving charge, paused | Streamlines of the extrapolated constant-velocity field — shows what the field would look like if the charge had never stopped. |
 

@@ -75,9 +75,9 @@ export function ControlPanel({
   const magneticHeatmapVisible =
     demoMode === 'moving_charge' || demoMode === 'oscillating' ||
     demoMode === 'dipole' || demoMode === 'hydrogen' || demoMode === 'draggable' ||
-    demoMode === 'particle_beam';
+    demoMode === 'particle_beam' || demoMode === 'neutral_wire';
   // Wavefront contours annotate radiation shells; hidden for modes with no
-  // scripted radiation feature to annotate (draggable, particle_beam).
+  // scripted radiation feature to annotate (draggable, particle_beam, neutral_wire).
   const wavefrontContoursVisible =
     demoMode === 'moving_charge' || demoMode === 'oscillating' ||
     demoMode === 'dipole' || demoMode === 'hydrogen';
@@ -121,11 +121,20 @@ export function ControlPanel({
               : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
             Hydrogen
           </button>
+        </div>
+        <p className="mt-2 mb-1.5 text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400">Line of charges</p>
+        <div className="flex flex-wrap gap-1.5">
           <button type="button" onClick={() => onDemoModeChange('particle_beam')}
             className={`${TOGGLE_BASE} ${!noModeActive && demoMode === 'particle_beam'
               ? 'bg-orange-400 text-black shadow-[0_0_16px_rgba(251,146,60,0.5)]'
               : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
             Particle beam
+          </button>
+          <button type="button" onClick={() => onDemoModeChange('neutral_wire')}
+            className={`${TOGGLE_BASE} ${!noModeActive && demoMode === 'neutral_wire'
+              ? 'bg-orange-400 text-black shadow-[0_0_16px_rgba(251,146,60,0.5)]'
+              : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
+            Neutral wire
           </button>
         </div>
         {/* Start Screen button — hidden while no mode is active (already on start screen) */}
@@ -166,6 +175,17 @@ export function ControlPanel({
             A finite line of like-signed positive charges in uniform translation. Both E and B
             are present; the magnetic structure is the superposition of each charge&apos;s
             transverse velocity field, with visible end effects. Distinct from a neutral wire.
+          </p>
+        )}
+        {!noModeActive && demoMode === 'neutral_wire' && (
+          <p className="mt-1.5 text-[11px] text-zinc-400">
+            At reset (t = 0), the source is aligned so each longitudinal slice is net-neutral:
+            a stationary positive lattice with two transversely offset moving negative streams.
+            As time advances, the negative streams drift relative to the positive lattice, so
+            the wire-like cancellation is only approximate and degrades with time. The
+            transverse magnetic field is current-like — the negative carriers are still in
+            motion. End effects and microscopic lattice structure are visible. Press Reset to
+            return to the canonical configuration.
           </p>
         )}
       </div>

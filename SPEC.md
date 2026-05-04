@@ -56,8 +56,9 @@ The current official scope does not include:
 - time-averaged field displays
 
 M1–M12 are complete. M13 is in progress: M13-A (renderer expansion + Particle
-Beam mode) is complete; M13-B/C/D are planned. Remaining work beyond M13 is
-tracked as future directions rather than official v1 milestone scope.
+Beam mode) and M13-B (Neutral-wire approximation) are complete; M13-C/D are
+planned. Remaining work beyond M13 is tracked as future directions rather than
+official v1 milestone scope.
 
 ## Canonical Demo Modes
 
@@ -527,13 +528,131 @@ behavior.
   designated low-end device, with no spikes below half-target in a 10 s
   window.
 
-#### M13-B / M13-C / M13-D — planned
+#### M13-B: Neutral-wire approximation — complete
 
-- **B:** Neutral-wire approximation (positive lattice on centerline +
-  symmetric ±ε moving negative streams, each carrying half the
-  compensating charge), N = 7. UI subsection "Line of charges".
-- **C:** Stop-now semantics for the neutral wire — only the moving
-  negative streams halt; positives unaffected.
+The mode is framed as a **finite, initially-neutral, sliding-carrier segment**,
+not a steady-state wire analogue. At reset (t = 0), each longitudinal slice is
+net-neutral. As time advances, the moving negative streams drift in −x relative
+to the stationary positive lattice, so the wire-like cancellation is only
+approximate and degrades with time. The most meaningful beam-vs-wire comparison
+is evaluated at reset (t = 0). Reset is part of the intended interaction model,
+not just a utility button. Recirculation / periodic wrap is intentionally
+deferred: teleport breaks Liénard-Wiechert continuity (unphysical radiation
+pulse at every wrap); spawn-with-fade violates charge conservation in time;
+true periodic topology is a larger separate milestone.
+
+Source geometry (`DemoMode = 'neutral_wire'`, N = 7, 21 charges total):
+
+- 7 stationary positive charges (`NEUTRAL_WIRE_POS_CHARGE = +1`) on the
+  centerline at y = 0, evenly spaced (`NEUTRAL_WIRE_SPACING = 0.5`, matches
+  `PARTICLE_BEAM_SPACING`), centered on the origin at all times.
+- 7 negative charges (`NEUTRAL_WIRE_NEG_CHARGE = −0.5`) at y = +ε
+  (`NEUTRAL_WIRE_EPSILON = 0.15`), translating in −x at
+  `NEUTRAL_WIRE_NEG_VELOCITY = −0.6`.
+- 7 negative charges at y = −ε, with the same kinematics as the +ε row.
+
+Each x-column is net-neutral at t = 0 (+1 + 2·(−0.5) = 0). Negative-stream
+velocity sign is −x by convention: with negative carriers drifting in −x, the
+conventional current is +x, matching `particle_beam`'s macroscopic current
+direction so the beam-vs-wire B-orientation comparison is sign-coherent.
+
+Implementation notes:
+
+- `sampleDemoChargeStates('neutral_wire', t)` returns specs in the locked order
+  `[...positives, ...neg_plus_row, ...neg_minus_row]`. The WebGL canvas indexes
+  charge slots stably and history textures persist across frames; reordering
+  would invalidate persisted history.
+- `maxHistorySpeed('neutral_wire')` returns `|NEUTRAL_WIRE_NEG_VELOCITY|` =
+  0.6 (peak speed magnitude). `minCForMode('neutral_wire')` shares
+  `CMIN_MOVING_CHARGE` with `moving_charge`, `hydrogen`, and `particle_beam`.
+- Multi-charge analytic tick branch (`dipole | hydrogen | particle_beam |
+  neutral_wire`) records all 21 charge states per frame and inherits Policy A
+  (dynamic EMA) for normalization. No mode-specific normalization tuning.
+- Per-mode default zoom: `NEUTRAL_WIRE_DEFAULT_ZOOM = 2.3` applied via a small
+  explicit `setInitialZoom(z)` helper on `useSandboxCamera`, called from
+  `reseed()` after `resetCamera()`. The bulk of the wire spans ~50% of the
+  viewport width while end effects (near x ≈ ±1.5) remain clearly visible.
+  Reset goes through `reseed()`, so the canonical default zoom is restored on
+  every Reset — supporting the reset-restorability gate.
+- Auto-reseed (the source-stays-on-screen guard at the single-charge analytic
+  branch) is intentionally not extended to `neutral_wire`. It would be
+  unreachable from the multi-charge tick branch anyway, and under the
+  transient framing a silent auto-reseed would conflict with the pedagogy that
+  Reset is the user's path back to canonical state.
+- ControlPanel mode picker is restructured into two subsections:
+  single-charge / atom modes, and a "Line of charges" subsection containing
+  Particle beam and Neutral wire. StartPanel gains a Neutral wire card with
+  copy aligned to the ControlPanel mode-hint.
+- Magnetic heatmap section is visible (4 channels, mutually exclusive).
+  Wavefront contours are hidden in this mode — there is no scripted radiation
+  shell to annotate (precedent: `draggable`, `particle_beam`).
+- Per-frame upload cost: 21 active charges × 16 rows × 512 texels × 4 floats
+  × 4 bytes ≈ 672 KB per frame at full upload, vs. M13-A's 224 KB for
+  `particle_beam`. The chargeCount-bounded `texSubImage2D` upload introduced
+  in M13-A keeps single- and two-charge modes' upload cost unchanged.
+
+Pedagogical framing: the canonical reset configuration shows a column-neutral
+finite segment with a current-like macroscopic transverse magnetic field. The
+external electric field at a bulk-region external point is substantially
+reduced compared with `particle_beam` at the same point (the headline
+beam-vs-wire comparison; canonical comparison probe at (0, +0.5), evaluated at
+t = 0 post-reset). End effects and microscopic lattice structure remain
+visible — the cancellation is honest-finite, not idealized-infinite. As time
+advances, the negative streams drift through and past the positive lattice,
+so the wire-like character is best read near t = 0 and degrades with t.
+
+**Acceptance criteria** (recorded as gates exercised in dev-server validation):
+
+- All six pre-M13-B modes (`moving_charge`, `oscillating`, `dipole`,
+  `hydrogen`, `draggable`, `particle_beam`) render visually identical to
+  pre-M13-B. Per-frame upload cost for 1- and 2-charge modes unchanged.
+- At reset (t = 0), each longitudinal slice in `neutral_wire` is net-neutral;
+  the source reads as a column-aligned finite segment.
+- At the canonical comparison probe (0, +0.5), evaluated at t = 0 post-reset:
+  - `Total E` shows substantially smaller |E| than `particle_beam` at the
+    same point; the achieved ratio is recorded post-validation, not
+    pre-specified.
+  - `Velocity B` and `Total B` show transverse magnetic structure
+    qualitatively comparable to `particle_beam` in *direction* (both produce
+    +ẑ above the line, given the −x negative-stream convention) and *banded
+    shape*.
+  - Probe |E|/|B| ratio is materially smaller in `neutral_wire` than in
+    `particle_beam`.
+- End-effect regions (near x ≈ ±1.5, |y| ≲ 0.5) at t = 0 show visible
+  departure from the bulk pattern in both modes — honest finite-segment
+  behavior, not numerical artifact.
+- `Accel B` is near zero across the visible region (no acceleration anywhere
+  in the source, at any t).
+- **Reset-restorability:** after letting the mode drift into a visibly
+  degraded state (e.g., scrub forward 3–5 s until carrier drift has visibly
+  eroded column neutrality), pressing Reset reliably restores t = 0, the
+  canonical column-aligned source configuration, the canonical default zoom
+  (`NEUTRAL_WIRE_DEFAULT_ZOOM = 2.3`), and the original beam-vs-wire
+  comparison reading at (0, +0.5).
+- Policy A normalization gates (blocking): no EMA breathing across a 30 s
+  scrub; no washout of bulk-region magnetic structure; no bulk-region
+  over-compression of probe-readout dynamic range. Fallback rule: any
+  triggered Policy-A adjustment must be applied as a shared refinement
+  across Policy A multi-charge modes (`particle_beam` + `neutral_wire`)
+  rather than as a `neutral_wire`-only special case, unless explicitly
+  documented as a temporary mode-specific exception with a follow-up.
+- Excess-charge dev warning at `WavefrontWebGLCanvas` does not fire
+  (21 ≤ MAX_CHARGES = 32).
+- Wavefront contours button is hidden when Neutral wire is selected.
+- All four magnetic heatmap channels (Off / Total B / Velocity B / Accel B)
+  render without pulsing or washout under scrub, pan, and zoom.
+- Both vector modes (E vectors, Poynting S) render correctly at N_total = 21;
+  switching is responsive.
+- Perf: at the canonical scene (default c, neutral_wire default zoom,
+  magnetic heatmap = `Accel B`, probe on, field lines off, velocity vectors
+  off), Run A (E vectors on) and Run B (Poynting S vectors on) sustain
+  ≥ 60 fps median on mid-range hardware and ≥ 30 fps median on low-end, with
+  no spikes below half-target in a 10 s window.
+
+#### M13-C / M13-D — planned
+
+- **C:** Stop-now semantics for the neutral wire — only the moving negative
+  streams halt; positives unaffected.
 - **D:** N knob polish across A/B/C.
 
 ## UI and Interaction Spec

@@ -17,7 +17,15 @@ import {
   PARTICLE_BEAM_VELOCITY,
   PARTICLE_BEAM_CHARGE,
   PARTICLE_BEAM_CENTER_Y,
+  NEUTRAL_WIRE_N,
+  NEUTRAL_WIRE_SPACING,
+  NEUTRAL_WIRE_NEG_VELOCITY,
+  NEUTRAL_WIRE_EPSILON,
+  NEUTRAL_WIRE_POS_CHARGE,
+  NEUTRAL_WIRE_NEG_CHARGE,
+  NEUTRAL_WIRE_TOTAL_COUNT,
 } from './demoModes';
+import { minCForMode } from '../rendering/wavefrontWebGLConfig';
 import { ChargeHistory } from './chargeHistory';
 import { evaluateLienardWiechertField } from './lienardWiechert';
 
@@ -464,6 +472,132 @@ describe('sampleDemoChargeStates: particle_beam', () => {
 describe('maxHistorySpeed: particle_beam', () => {
   it('returns PARTICLE_BEAM_VELOCITY (uniform translation peak)', () => {
     expect(maxHistorySpeed('particle_beam')).toBe(PARTICLE_BEAM_VELOCITY);
+  });
+});
+
+// ─── neutral_wire ────────────────────────────────────────────────────────────
+
+describe('sampleDemoChargeStates: neutral_wire', () => {
+  it('returns NEUTRAL_WIRE_TOTAL_COUNT specs in [...positives, ...neg_plus, ...neg_minus] order', () => {
+    const specs = sampleDemoChargeStates('neutral_wire', 0);
+    expect(specs.length).toBe(NEUTRAL_WIRE_TOTAL_COUNT);
+    expect(specs.length).toBe(21);
+
+    // First N are positives on the centerline.
+    for (let i = 0; i < NEUTRAL_WIRE_N; i++) {
+      expect(specs[i].charge).toBe(NEUTRAL_WIRE_POS_CHARGE);
+      expect(specs[i].state.pos.y).toBe(0);
+    }
+    // Next N are the +ε negative stream.
+    for (let i = 0; i < NEUTRAL_WIRE_N; i++) {
+      expect(specs[NEUTRAL_WIRE_N + i].charge).toBe(NEUTRAL_WIRE_NEG_CHARGE);
+      expect(specs[NEUTRAL_WIRE_N + i].state.pos.y).toBe(+NEUTRAL_WIRE_EPSILON);
+    }
+    // Last N are the −ε negative stream.
+    for (let i = 0; i < NEUTRAL_WIRE_N; i++) {
+      expect(specs[2 * NEUTRAL_WIRE_N + i].charge).toBe(NEUTRAL_WIRE_NEG_CHARGE);
+      expect(specs[2 * NEUTRAL_WIRE_N + i].state.pos.y).toBe(-NEUTRAL_WIRE_EPSILON);
+    }
+  });
+
+  it('positives are stationary (vel=0, accel=0); negative streams drift at NEUTRAL_WIRE_NEG_VELOCITY', () => {
+    const specs = sampleDemoChargeStates('neutral_wire', 0);
+    // Positives
+    for (let i = 0; i < NEUTRAL_WIRE_N; i++) {
+      expect(specs[i].state.vel.x).toBe(0);
+      expect(specs[i].state.vel.y).toBe(0);
+      expect(specs[i].state.accel.x).toBe(0);
+      expect(specs[i].state.accel.y).toBe(0);
+    }
+    // Both negative streams
+    for (let i = NEUTRAL_WIRE_N; i < NEUTRAL_WIRE_TOTAL_COUNT; i++) {
+      expect(specs[i].state.vel.x).toBeCloseTo(NEUTRAL_WIRE_NEG_VELOCITY, 12);
+      expect(specs[i].state.vel.y).toBe(0);
+      expect(specs[i].state.accel.x).toBe(0);
+      expect(specs[i].state.accel.y).toBe(0);
+    }
+  });
+
+  it('at t=0, x-positions within each row are evenly spaced at NEUTRAL_WIRE_SPACING and symmetric about origin', () => {
+    const specs = sampleDemoChargeStates('neutral_wire', 0);
+
+    const rowRanges: Array<[number, number]> = [
+      [0, NEUTRAL_WIRE_N],
+      [NEUTRAL_WIRE_N, 2 * NEUTRAL_WIRE_N],
+      [2 * NEUTRAL_WIRE_N, 3 * NEUTRAL_WIRE_N],
+    ];
+    for (const [start, end] of rowRanges) {
+      for (let i = start + 1; i < end; i++) {
+        expect(specs[i].state.pos.x - specs[i - 1].state.pos.x).toBeCloseTo(NEUTRAL_WIRE_SPACING, 12);
+      }
+      let sumX = 0;
+      for (let i = start; i < end; i++) sumX += specs[i].state.pos.x;
+      expect(sumX).toBeCloseTo(0, 12);
+    }
+  });
+
+  it('at t > 0, positives unchanged; both negative streams have translated by NEUTRAL_WIRE_NEG_VELOCITY·t with spacing preserved', () => {
+    const t = 1.5;
+    const at0 = sampleDemoChargeStates('neutral_wire', 0);
+    const atT = sampleDemoChargeStates('neutral_wire', t);
+    expect(atT.length).toBe(at0.length);
+
+    // Positives unchanged in position.
+    for (let i = 0; i < NEUTRAL_WIRE_N; i++) {
+      expect(atT[i].state.pos.x).toBeCloseTo(at0[i].state.pos.x, 12);
+      expect(atT[i].state.pos.y).toBe(at0[i].state.pos.y);
+    }
+    // Both negative streams translated by NEG_VELOCITY·t.
+    for (let i = NEUTRAL_WIRE_N; i < NEUTRAL_WIRE_TOTAL_COUNT; i++) {
+      expect(atT[i].state.pos.x - at0[i].state.pos.x).toBeCloseTo(NEUTRAL_WIRE_NEG_VELOCITY * t, 10);
+      expect(atT[i].state.pos.y).toBe(at0[i].state.pos.y);
+    }
+    // Spacing preserved within each row at t > 0.
+    const rowRanges: Array<[number, number]> = [
+      [0, NEUTRAL_WIRE_N],
+      [NEUTRAL_WIRE_N, 2 * NEUTRAL_WIRE_N],
+      [2 * NEUTRAL_WIRE_N, 3 * NEUTRAL_WIRE_N],
+    ];
+    for (const [start, end] of rowRanges) {
+      for (let i = start + 1; i < end; i++) {
+        expect(atT[i].state.pos.x - atT[i - 1].state.pos.x).toBeCloseTo(NEUTRAL_WIRE_SPACING, 10);
+      }
+    }
+  });
+
+  it('at t=0 each x-column (positive at x_i and the two negatives at x_i, ±ε) is net-neutral', () => {
+    const specs = sampleDemoChargeStates('neutral_wire', 0);
+    for (let i = 0; i < NEUTRAL_WIRE_N; i++) {
+      const xPos = specs[i].state.pos.x;
+      const xNegPlus = specs[NEUTRAL_WIRE_N + i].state.pos.x;
+      const xNegMinus = specs[2 * NEUTRAL_WIRE_N + i].state.pos.x;
+      expect(xNegPlus).toBeCloseTo(xPos, 12);
+      expect(xNegMinus).toBeCloseTo(xPos, 12);
+      const columnCharge =
+        specs[i].charge +
+        specs[NEUTRAL_WIRE_N + i].charge +
+        specs[2 * NEUTRAL_WIRE_N + i].charge;
+      expect(columnCharge).toBeCloseTo(0, 12);
+    }
+  });
+
+  it('state.t is the queried time on every spec', () => {
+    for (const t of [-3, 0, 2.7]) {
+      const specs = sampleDemoChargeStates('neutral_wire', t);
+      for (const s of specs) expect(s.state.t).toBe(t);
+    }
+  });
+});
+
+describe('maxHistorySpeed: neutral_wire', () => {
+  it('returns |NEUTRAL_WIRE_NEG_VELOCITY| (peak speed magnitude)', () => {
+    expect(maxHistorySpeed('neutral_wire')).toBe(Math.abs(NEUTRAL_WIRE_NEG_VELOCITY));
+  });
+});
+
+describe('minCForMode: neutral_wire', () => {
+  it('shares the moving_charge bound (peak speed magnitude = 0.6)', () => {
+    expect(minCForMode('neutral_wire')).toBe(minCForMode('moving_charge'));
   });
 });
 

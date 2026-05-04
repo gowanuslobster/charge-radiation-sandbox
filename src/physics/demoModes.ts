@@ -6,7 +6,7 @@
 
 import type { KinematicState } from './types';
 
-export type DemoMode = 'moving_charge' | 'oscillating' | 'draggable' | 'dipole' | 'hydrogen' | 'particle_beam';
+export type DemoMode = 'moving_charge' | 'oscillating' | 'draggable' | 'dipole' | 'hydrogen' | 'particle_beam' | 'neutral_wire';
 
 // ─── sudden_stop constants ───────────────────────────────────────────────────
 
@@ -74,6 +74,29 @@ export const PARTICLE_BEAM_SPACING  = 0.5;   // world units between adjacent cha
 export const PARTICLE_BEAM_VELOCITY = 0.6;   // +x component, world units / s
 export const PARTICLE_BEAM_CENTER_Y = 0;
 export const PARTICLE_BEAM_CHARGE   = 1;     // all positive
+
+// ─── neutral_wire constants ──────────────────────────────────────────────────
+//
+// A finite, initially-neutral, sliding-carrier segment: a stationary positive
+// lattice on the centerline with two transversely offset moving negative
+// streams at y = ±ε. Each x-column is net-neutral at t = 0
+// (+1 + 2·(−0.5) = 0). As t advances, the negative streams drift in −x
+// relative to the positive lattice, so the column-neutral configuration is
+// canonical only at reset / t = 0; the wire-like cancellation is approximate
+// and degrades with time. See SPEC.md §M13-B and IDEAS-line-of-charges.md.
+//
+// Negative-stream velocity is −x: with negative carriers drifting in −x, the
+// conventional current is +x, matching particle_beam's macroscopic current
+// direction. Peak speed magnitude = 0.6, same as moving_charge / particle_beam.
+export const NEUTRAL_WIRE_N             = 7;
+export const NEUTRAL_WIRE_SPACING       = PARTICLE_BEAM_SPACING; // alias for clarity (0.5)
+export const NEUTRAL_WIRE_NEG_VELOCITY  = -0.6;  // sign-explicit; |·| = PARTICLE_BEAM_VELOCITY
+export const NEUTRAL_WIRE_EPSILON       = 0.15;  // transverse offset (±ε)
+export const NEUTRAL_WIRE_POS_CHARGE    = +1;
+export const NEUTRAL_WIRE_NEG_CHARGE    = -0.5;
+export const NEUTRAL_WIRE_POS_COUNT     = NEUTRAL_WIRE_N;       // 7
+export const NEUTRAL_WIRE_NEG_COUNT     = 2 * NEUTRAL_WIRE_N;   // 14 (above + below)
+export const NEUTRAL_WIRE_TOTAL_COUNT   = 3 * NEUTRAL_WIRE_N;   // 21
 
 // ─── sampleSuddenStopState ───────────────────────────────────────────────────
 
@@ -143,7 +166,7 @@ export function sampleSuddenStopState(t: number, brakeStartTime: number): Kinema
  *
  * Multi-charge modes are excluded and must be accessed via sampleDemoChargeStates.
  */
-export function sampleSourceState(mode: Exclude<DemoMode, 'dipole' | 'hydrogen' | 'particle_beam'>, t: number): KinematicState {
+export function sampleSourceState(mode: Exclude<DemoMode, 'dipole' | 'hydrogen' | 'particle_beam' | 'neutral_wire'>, t: number): KinematicState {
   // draggable: live tick bypasses sampleSourceState entirely and reads from drag refs.
   // This branch exists only to satisfy exhaustiveness and provides the zeroed at-rest
   // baseline (Coulomb field) used when the simulation is paused or freshly seeded.
@@ -252,6 +275,54 @@ export function sampleDemoChargeStates(mode: DemoMode, t: number): DemoChargeSpe
     }
     return specs;
   }
+  if (mode === 'neutral_wire') {
+    // Concatenation order locked: [...positives, ...neg_plus, ...neg_minus].
+    // The WebGL canvas indexes charge slots stably and history textures persist
+    // across frames; reordering would invalidate persisted history.
+    const specs: DemoChargeSpec[] = new Array(NEUTRAL_WIRE_TOTAL_COUNT);
+    const offset0 = -((NEUTRAL_WIRE_N - 1) / 2) * NEUTRAL_WIRE_SPACING;
+    const negDx = NEUTRAL_WIRE_NEG_VELOCITY * t;
+    // Positives: stationary on the centerline at the canonical lattice positions.
+    for (let i = 0; i < NEUTRAL_WIRE_N; i++) {
+      const x0 = offset0 + i * NEUTRAL_WIRE_SPACING;
+      specs[i] = {
+        charge: NEUTRAL_WIRE_POS_CHARGE,
+        state: {
+          t,
+          pos:   { x: x0, y: 0 },
+          vel:   { x: 0, y: 0 },
+          accel: { x: 0, y: 0 },
+        },
+      };
+    }
+    // +ε negative stream: drifts in −x.
+    for (let i = 0; i < NEUTRAL_WIRE_N; i++) {
+      const x0 = offset0 + i * NEUTRAL_WIRE_SPACING;
+      specs[NEUTRAL_WIRE_N + i] = {
+        charge: NEUTRAL_WIRE_NEG_CHARGE,
+        state: {
+          t,
+          pos:   { x: x0 + negDx, y: +NEUTRAL_WIRE_EPSILON },
+          vel:   { x: NEUTRAL_WIRE_NEG_VELOCITY, y: 0 },
+          accel: { x: 0, y: 0 },
+        },
+      };
+    }
+    // −ε negative stream: drifts in −x.
+    for (let i = 0; i < NEUTRAL_WIRE_N; i++) {
+      const x0 = offset0 + i * NEUTRAL_WIRE_SPACING;
+      specs[2 * NEUTRAL_WIRE_N + i] = {
+        charge: NEUTRAL_WIRE_NEG_CHARGE,
+        state: {
+          t,
+          pos:   { x: x0 + negDx, y: -NEUTRAL_WIRE_EPSILON },
+          vel:   { x: NEUTRAL_WIRE_NEG_VELOCITY, y: 0 },
+          accel: { x: 0, y: 0 },
+        },
+      };
+    }
+    return specs;
+  }
   if (mode === 'hydrogen') {
     return [
       { charge: +1, state: sampleHydrogenState(0, t) },
@@ -283,6 +354,7 @@ export function maxHistorySpeed(mode: DemoMode): number {
   if (mode === 'oscillating' || mode === 'dipole') return OSCILLATING_AMPLITUDE * OSCILLATING_OMEGA; // 0.5
   if (mode === 'hydrogen') return HYDROGEN_ORBIT_RADIUS * HYDROGEN_OMEGA; // 0.6
   if (mode === 'particle_beam') return PARTICLE_BEAM_VELOCITY; // uniform translation
+  if (mode === 'neutral_wire') return Math.abs(NEUTRAL_WIRE_NEG_VELOCITY); // negative streams drift at |·| = 0.6
   return SUDDEN_STOP_V; // moving_charge peaks at SUDDEN_STOP_V (pre- and post-stop history)
 }
 

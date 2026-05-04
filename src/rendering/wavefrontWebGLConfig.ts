@@ -15,6 +15,7 @@
 //   v_peak(oscillating)    = OSCILLATING_AMPLITUDE × OSCILLATING_OMEGA = 0.5
 //   v_peak(hydrogen)       = HYDROGEN_ORBIT_RADIUS × HYDROGEN_OMEGA = 0.6
 //   v_peak(particle_beam)  = PARTICLE_BEAM_VELOCITY = 0.6
+//   v_peak(neutral_wire)   = |NEUTRAL_WIRE_NEG_VELOCITY| = 0.6
 //
 // c_min = v_peak + 8.1 × 60 / 4096  =  v_peak + 0.119
 //
@@ -25,10 +26,11 @@ const CMIN_OSCILLATING   = 0.62;   // 0.5 + 0.119 ≈ 0.62
 // Dipole shares oscillating's peak speed (same A·ω = 0.5), so same c minimum.
 // Hydrogen's orbiting charge peaks at 0.6, so it shares moving_charge's minimum.
 // Particle beam peaks at 0.6 (uniform translation), same minimum as moving_charge.
+// Neutral wire's negative streams peak at 0.6 (|·|), same minimum as moving_charge.
 export function minCForMode(
-  mode: 'moving_charge' | 'oscillating' | 'dipole' | 'hydrogen' | 'particle_beam',
+  mode: 'moving_charge' | 'oscillating' | 'dipole' | 'hydrogen' | 'particle_beam' | 'neutral_wire',
 ): number {
-  return mode === 'moving_charge' || mode === 'hydrogen' || mode === 'particle_beam'
+  return mode === 'moving_charge' || mode === 'hydrogen' || mode === 'particle_beam' || mode === 'neutral_wire'
     ? CMIN_MOVING_CHARGE
     : CMIN_OSCILLATING;
 }

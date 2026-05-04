@@ -56,6 +56,11 @@ import { StartPanel } from './StartPanel';
 import { isWithinBounds, maxCornerDist, worldToScreen, type WorldBounds } from '@/rendering/worldSpace';
 import { hitTestCharge } from '@/rendering/chargeHitTest';
 
+// Per-mode default zoom for neutral_wire. Source x-extent is [−1.5, +1.5];
+// at zoom 2.3 the bulk region spans ~50% of the viewport width while leaving
+// end effects (near x ≈ ±1.5) clearly visible.
+const NEUTRAL_WIRE_DEFAULT_ZOOM = 2.3;
+
 export function ChargeRadiationSandbox() {
   const [fieldLayer, setFieldLayer] = useState<FieldLayer>('total');
   const [demoMode, setDemoMode] = useState<DemoMode>('draggable');
@@ -132,6 +137,7 @@ export function ChargeRadiationSandbox() {
     zoomAtClientPoint,
     zoomAtCenter,
     resetCamera,
+    setInitialZoom,
     panBy,
   } = useSandboxCamera({ containerRef });
 
@@ -272,6 +278,12 @@ export function ChargeRadiationSandbox() {
 
     // Reset camera so reseedBoundsRef is always source-centered.
     resetCamera();
+    // Per-mode default zoom: applied after resetCamera so the canonical
+    // (offset=0) center is preserved. neutral_wire frames the wire so the
+    // bulk region dominates the viewport while end effects remain visible.
+    if (mode === 'neutral_wire') {
+      setInitialZoom(NEUTRAL_WIRE_DEFAULT_ZOOM);
+    }
 
     simTimeRef.current = 0;
     lastWallTimeRef.current = performance.now();
@@ -320,7 +332,7 @@ export function ChargeRadiationSandbox() {
 
     chargeRuntimesRef.current = runtimes;
     hasSeededRef.current = true;
-  }, [resetCamera]);
+  }, [resetCamera, setInitialZoom]);
 
   // Effect A — initial seed.
   useEffect(() => {
@@ -388,13 +400,14 @@ export function ChargeRadiationSandbox() {
   // Replaces:  historyRef.current (fresh ChargeHistory with correct window).
   // Increments: simEpochRef.current so paused canvases re-solve the current frame.
   const rebuildAnalyticHistoryAtCurrentTime = useCallback(
-    (mode: 'moving_charge' | 'oscillating' | 'dipole' | 'hydrogen' | 'particle_beam') => {
+    (mode: 'moving_charge' | 'oscillating' | 'dipole' | 'hydrogen' | 'particle_beam' | 'neutral_wire') => {
       const T      = simTimeRef.current;
       const config = configRef.current;     // already updated before this call
       const DT     = 0.05;                  // step spacing matches initial reseed
 
       // ── Multi-charge analytic modes: rebuild all charge histories simultaneously.
-      if (mode === 'dipole' || mode === 'hydrogen' || mode === 'particle_beam') {
+      // neutral_wire is a non-periodic multi-charge mode; uses the same shared branch.
+      if (mode === 'dipole' || mode === 'hydrogen' || mode === 'particle_beam' || mode === 'neutral_wire') {
         const horizonSpeed = maxHistorySpeed(mode);
         const chargeStates0 = sampleDemoChargeStates(mode, T);
         const historyWindow = Math.max(
@@ -459,7 +472,7 @@ export function ChargeRadiationSandbox() {
     // Enforce per-mode c minimum (Policy A conservative global minimum).
     // Prevents the causal horizon from exceeding the GPU history buffer for visible pixels.
     const mode = demoModeRef.current;
-    const cMin = (mode === 'moving_charge' || mode === 'oscillating' || mode === 'dipole' || mode === 'hydrogen' || mode === 'particle_beam')
+    const cMin = (mode === 'moving_charge' || mode === 'oscillating' || mode === 'dipole' || mode === 'hydrogen' || mode === 'particle_beam' || mode === 'neutral_wire')
       ? minCForMode(mode)
       : 0.15;
     const newC = Math.max(cMin, rawC);
@@ -473,14 +486,14 @@ export function ChargeRadiationSandbox() {
     // Draggable history is accumulated from live drag events and is not analytically
     // reconstructible; it is left as-is and the tick adjusts the window on subsequent
     // frames via setMaxHistoryTime / pruneToWindow.
-    if (mode === 'moving_charge' || mode === 'oscillating' || mode === 'dipole' || mode === 'hydrogen' || mode === 'particle_beam') {
+    if (mode === 'moving_charge' || mode === 'oscillating' || mode === 'dipole' || mode === 'hydrogen' || mode === 'particle_beam' || mode === 'neutral_wire') {
       rebuildAnalyticHistoryAtCurrentTime(mode);
     }
   }, [rebuildAnalyticHistoryAtCurrentTime]);
 
   const handleDemoModeChange = useCallback((newMode: DemoMode) => {
     // When switching to a mode with a higher c minimum, bump c up before the reseed.
-    if (newMode === 'moving_charge' || newMode === 'oscillating' || newMode === 'dipole' || newMode === 'hydrogen' || newMode === 'particle_beam') {
+    if (newMode === 'moving_charge' || newMode === 'oscillating' || newMode === 'dipole' || newMode === 'hydrogen' || newMode === 'particle_beam' || newMode === 'neutral_wire') {
       const cMin = minCForMode(newMode);
       if (configRef.current.c < cMin) {
         configRef.current = { ...configRef.current, c: cMin };
@@ -648,7 +661,7 @@ export function ChargeRadiationSandbox() {
       }
 
       // ── Multi-charge analytic branch: record all charge states simultaneously.
-      if (mode === 'dipole' || mode === 'hydrogen' || mode === 'particle_beam') {
+      if (mode === 'dipole' || mode === 'hydrogen' || mode === 'particle_beam' || mode === 'neutral_wire') {
         const config = configRef.current;
         const runtimes = chargeRuntimesRef.current;
         const horizonSpeed = maxHistorySpeed(mode);
@@ -817,7 +830,7 @@ export function ChargeRadiationSandbox() {
   // GPU bound applies in WebGL-active scenes the same way moving_charge does.
   const cMin =
     (demoMode === 'dipole' || demoMode === 'hydrogen') ? minCForMode(demoMode) :
-    webGLReady === true && (demoMode === 'moving_charge' || demoMode === 'oscillating' || demoMode === 'particle_beam') ? minCForMode(demoMode) :
+    webGLReady === true && (demoMode === 'moving_charge' || demoMode === 'oscillating' || demoMode === 'particle_beam' || demoMode === 'neutral_wire') ? minCForMode(demoMode) :
     0.65;
 
   return (
@@ -842,7 +855,7 @@ export function ChargeRadiationSandbox() {
         ghostVel={demoMode === 'moving_charge' ? { x: SUDDEN_STOP_V, y: 0 } : undefined}
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 17 }}
       />
-      {(demoMode === 'moving_charge' || demoMode === 'oscillating' || demoMode === 'dipole' || demoMode === 'hydrogen' || demoMode === 'draggable' || demoMode === 'particle_beam') && (
+      {(demoMode === 'moving_charge' || demoMode === 'oscillating' || demoMode === 'dipole' || demoMode === 'hydrogen' || demoMode === 'draggable' || demoMode === 'particle_beam' || demoMode === 'neutral_wire') && (
         webGLReady === true ? (
           // WebGL path: per-pixel retarded-time solve for heatmap-capable modes.
           // WavefrontWebGLCanvas supports up to MAX_CHARGES=32 independent histories

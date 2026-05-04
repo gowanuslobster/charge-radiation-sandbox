@@ -57,6 +57,12 @@ const MODE_CARDS: ModeCard[] = [
     desc: 'A finite line of like-signed positive charges in uniform translation. Both E and B are present, but the beam is not neutral.',
     hint: 'Pick Velocity B on the Magnetic heatmap to see the superposed transverse field of seven moving charges, with visible end effects. Distinct from a neutral wire.',
   },
+  {
+    mode: 'neutral_wire',
+    title: 'Neutral wire',
+    desc: 'A finite, initially-neutral, sliding-carrier segment: a stationary positive lattice with two transversely offset moving negative streams. At reset, each longitudinal slice is net-neutral; as time advances, the negative streams drift relative to the positive lattice and the wire-like cancellation degrades.',
+    hint: 'Pick Velocity B on the Magnetic heatmap to see a current-like transverse field. Compare against Particle beam at t = 0 (post-reset) to see external E reduced in the bulk region. Press Reset to return to the canonical configuration.',
+  },
 ];
 
 export function StartPanel({ onSelectMode }: Props) {

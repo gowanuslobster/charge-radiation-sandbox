@@ -51,6 +51,13 @@ export type UseSandboxCameraResult = {
   /** Reset zoom=1, offsetX=0, offsetY=0 and publish updated viewBounds. */
   resetCamera(): void;
   /**
+   * Set zoom directly without consulting the DOM. Offsets are left at their
+   * current values; intended to be called immediately after resetCamera() to
+   * apply a per-mode default zoom around the canonical (0, 0) center. Does
+   * not depend on container measurement having completed.
+   */
+  setInitialZoom(zoom: number): void;
+  /**
    * Shift the view by a discrete step given in CSS pixels.
    * Sign convention matches drag pan: positive screenDx shifts view left (world moves right);
    * positive screenDy shifts view up (world moves down on screen).
@@ -299,6 +306,15 @@ export function useSandboxCamera({
     publishViewBounds();
   }, [publishViewBounds]);
 
+  const setInitialZoom = useCallback(
+    (z: number) => {
+      const clamped = Math.max(minZoom, Math.min(maxZoom, z));
+      zoomRef.current = clamped;
+      publishViewBounds();
+    },
+    [minZoom, maxZoom, publishViewBounds],
+  );
+
   return {
     viewBounds,
     defaultBounds,
@@ -311,6 +327,7 @@ export function useSandboxCamera({
     handleGlobalPointerMove,
     handleGlobalPointerUp,
     resetCamera,
+    setInitialZoom,
     panBy,
   };
 }

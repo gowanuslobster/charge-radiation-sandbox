@@ -55,8 +55,9 @@ The current official scope does not include:
   is instantaneous and in sandbox units)
 - time-averaged field displays
 
-M1–M12 are complete. Remaining work is tracked as future directions rather than
-official v1 milestone scope.
+M1–M12 are complete. M13 is in progress: M13-A (renderer expansion + Particle
+Beam mode) is complete; M13-B/C/D are planned. Remaining work beyond M13 is
+tracked as future directions rather than official v1 milestone scope.
 
 ## Canonical Demo Modes
 
@@ -103,6 +104,22 @@ analytic-history architecture as the other demos.
 same LW superposition machinery. This connects the sandbox to atomic and
 molecular intuition while keeping the physics model explicit: the source motion
 is imposed, and the emitted fields are computed from that history.
+
+### Particle Beam
+
+A finite line of N = 7 like-signed positive charges in uniform translation along
++x. All charges share the same velocity vector and zero acceleration; the beam
+is centered on the origin at t = 0 with even spacing along x
+(`PARTICLE_BEAM_SPACING = 0.5`, `PARTICLE_BEAM_VELOCITY = 0.6`). The beam is
+intentionally not neutral — there is no compensating negative-charge population
+in this mode. That arrives in M13-B as a separate neutral-wire approximation.
+
+**What the student learns:** the superposed transverse magnetic structure of a
+finite co-moving line of like-signed charges, with end effects intentionally
+visible at the leading and trailing edges. `Velocity B` is the informative
+channel; `Accel B` is near zero everywhere because no charge accelerates. The
+visual is deliberately distinct from a continuous current-carrying neutral
+wire — it is the bound moving-charge field of a finite, non-neutral beam.
 
 ## Milestones
 
@@ -433,6 +450,91 @@ Implementation notes:
   `'electric'`, the threshold contract for the two styles, and a Poynting
   compression invariant (raw magnitudes 100× apart yield stem lengths
   within a small bounded ratio after compression)
+
+### M13: Line-of-charges source family + multi-charge heatmap renderer expansion — in progress
+
+Umbrella milestone introducing the line-of-charges source family. Sub-milestones
+A–D ship incrementally; A is the renderer expansion plus the first new mode.
+
+#### M13-A: Renderer expansion + Particle Beam mode — complete
+
+Two coupled deliverables:
+
+1. **Renderer expansion (family-ready).** `MAX_CHARGES` is bumped from 2 to 32
+   in `WavefrontWebGLCanvas`, large enough to cover M13-A's N=7 beam and
+   M13-B's neutral-wire approximation at the planned M13-D ceiling without a
+   second renderer bump. The shader's `u_historyCounts` and `u_charges`
+   uniform array sizes (previously hard-coded to `[2]`) are switched to
+   `${MAX_CHARGES}` injection, fixing a latent inconsistency that was
+   silently correct only when MAX_CHARGES was 2.
+2. **Particle Beam mode.** A new `DemoMode = 'particle_beam'` emits N = 7
+   identical positive charges (`PARTICLE_BEAM_CHARGE = 1`) in a co-moving,
+   evenly-spaced (`PARTICLE_BEAM_SPACING = 0.5`) line along +x at constant
+   velocity (`PARTICLE_BEAM_VELOCITY = 0.6`, matching `SUDDEN_STOP_V`). At
+   t = 0 the chain is centered on the origin. Every charge has zero
+   acceleration; the mode is non-periodic and goes through Policy A
+   (dynamic EMA) for normalization, with no geometry-specific tuning.
+
+Implementation notes:
+- Per-frame texture upload is restricted to the active-charge texel extent
+  (`chargeCount × ROWS_PER_CHARGE × TEX_WIDTH × 4` floats) so 1- and
+  2-charge modes pay 32 KB and 64 KB per frame respectively, identical to
+  pre-M13-A. Without this restriction the bump to MAX_CHARGES = 32 would
+  have grown the per-frame upload to a fixed 4 MB regardless of
+  `chargeCount`.
+- `sampleDemoChargeStates('particle_beam', t)` returns the analytic
+  positions for all N charges; the multi-charge analytic tick branch
+  (`dipole | hydrogen | particle_beam`) records all charge states each
+  frame.
+- `minCForMode` extends to `'particle_beam'`, sharing the
+  `CMIN_MOVING_CHARGE` bound (peak speed = 0.6, same as `moving_charge`).
+- ControlPanel adds a "Particle beam" button to the Mode picker. The
+  Magnetic heatmap section becomes visible (4 channels, mutually exclusive
+  with each other). Wavefront contours are hidden in this mode — there is
+  no scripted radiation shell to annotate (precedent: `draggable`).
+- Vector modes (E vectors, Poynting S) remain mutually exclusive within
+  the existing Field selector; both are supported under Particle Beam at
+  N = 7. Probe and field lines are independently toggleable.
+
+Pedagogical framing: a finite line of like-signed co-moving charges shows
+superposed transverse velocity-field structure with visible end effects;
+`Accel B` is near zero everywhere (no acceleration). The visual is
+intentionally distinct from a continuous current-carrying wire — the
+neutral-wire approximation arrives in M13-B as a separate mode, where the
+positive lattice and ±ε negative streams produce wire-like cancellation
+behavior.
+
+**Acceptance criteria:**
+- All existing demo modes (`moving_charge`, `oscillating`, `dipole`,
+  `hydrogen`, `draggable`) render visually identical to pre-M13-A.
+  Specifically the 1- and 2-charge modes' per-frame upload cost is
+  unchanged.
+- Particle Beam shows seven evenly-spaced positive charges translating
+  together along +x. `Velocity B` and `Total B` show the superposed
+  transverse magnetic structure with visible finite-length edge effects.
+  `Accel B` is near zero across the visible region.
+- All four magnetic heatmap channels (Off / Total B / Velocity B /
+  Accel B) render without pulsing or washout under scrub, pan, and zoom.
+- Both vector modes (E vectors, Poynting S) render correctly at N = 7;
+  switching between them is responsive.
+- Wavefront contours button is hidden when Particle Beam is selected.
+- Excess-charge dev warning at `WavefrontWebGLCanvas` does not fire
+  (N = 7 ≤ MAX_CHARGES = 32).
+- Perf: at the canonical scene (default c, default zoom, magnetic
+  heatmap = `Accel B`, probe on, field lines off, velocity vectors off),
+  both Run A (E vectors on) and Run B (Poynting S vectors on) sustain
+  ≥ 60 fps median on mid-range hardware and ≥ 30 fps median on a
+  designated low-end device, with no spikes below half-target in a 10 s
+  window.
+
+#### M13-B / M13-C / M13-D — planned
+
+- **B:** Neutral-wire approximation (positive lattice on centerline +
+  symmetric ±ε moving negative streams, each carrying half the
+  compensating charge), N = 7. UI subsection "Line of charges".
+- **C:** Stop-now semantics for the neutral wire — only the moving
+  negative streams halt; positives unaffected.
+- **D:** N knob polish across A/B/C.
 
 ## UI and Interaction Spec
 

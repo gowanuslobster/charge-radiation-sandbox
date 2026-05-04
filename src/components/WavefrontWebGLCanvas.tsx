@@ -10,7 +10,9 @@
 // History is uploaded each frame as a 2D RGBA32F texture (TEX_WIDTH × TEX_HEIGHT).
 // Supports up to MAX_CHARGES independent charge histories. Each charge occupies a
 // contiguous texel slice; the shader solves retarded time independently per charge
-// and sums the three magnetic components.
+// and sums the three magnetic components. Per-frame texSubImage2D upload is restricted
+// to the active-charge texel extent so the upload cost scales with chargeCount, not
+// MAX_CHARGES.
 //
 // Normalization is mode-aware and per-channel (see "Normalization" block below).
 // Two policies: dynamic EMA for transient modes (moving_charge — both pre and
@@ -52,20 +54,25 @@ import {
 //
 // 2D addressing: absolute texel index t → ivec2(t % TEX_WIDTH, t / TEX_WIDTH)
 //
-//   MAX_CHARGES           = 2
+//   MAX_CHARGES           = 32   (family-ready: covers M13-A's N=7 beam and
+//                                 M13-B's neutral-wire approximation at up to
+//                                 N=10 with 3-runtime-per-site geometry)
 //   MAX_HISTORY_SAMPLES   = 4096
 //   CHARGE_TEXEL_STRIDE   = 2 × 4096 = 8192
-//   Total texels          = 2 × 8192 = 16384
-//   TEX_WIDTH × TEX_HEIGHT = 512 × 32 = 16384  ✓ (both ≤ WebGL2 min MAX_TEXTURE_SIZE 2048)
+//   Total texels          = 32 × 8192 = 262144
+//   TEX_WIDTH × TEX_HEIGHT = 512 × 512 = 262144  ✓ (both ≤ WebGL2 min MAX_TEXTURE_SIZE 2048)
 //
-// Charge 0: absolute texels 0–8191       → rows  0–15 of the 512-wide texture
-// Charge 1: absolute texels 8192–16383   → rows 16–31 of the 512-wide texture
+// Charge k occupies absolute texels k·8192 … (k+1)·8192 − 1 → rows k·16 … (k+1)·16 − 1.
+// Per-frame texSubImage2D restricts the upload to chargeCount · 16 rows, so the
+// 1- and 2-charge modes pay 32 KB / 64 KB per frame regardless of MAX_CHARGES.
 
-const MAX_CHARGES         = 2;
+const MAX_CHARGES         = 32;
 const MAX_HISTORY_SAMPLES = 4096;
 const TEX_WIDTH           = 512;
-// Derived: (2 × MAX_CHARGES × MAX_HISTORY_SAMPLES) / TEX_WIDTH = 16384 / 512 = 32
-const TEX_HEIGHT          = (2 * MAX_CHARGES * MAX_HISTORY_SAMPLES) / TEX_WIDTH;  // 32
+// Derived: (2 × MAX_CHARGES × MAX_HISTORY_SAMPLES) / TEX_WIDTH = 262144 / 512 = 512
+const TEX_HEIGHT          = (2 * MAX_CHARGES * MAX_HISTORY_SAMPLES) / TEX_WIDTH;  // 512
+// Each charge's slice spans this many texture rows.
+const ROWS_PER_CHARGE     = (2 * MAX_HISTORY_SAMPLES) / TEX_WIDTH;                // 16
 
 // Fixed iteration counts for GPU loops.
 const BINARY_SEARCH_ITERS = 12;   // ceil(log2(4096))
@@ -140,9 +147,9 @@ const int CHARGE_TEXEL_STRIDE = ${2 * MAX_HISTORY_SAMPLES};
 // ── Uniforms ──────────────────────────────────────────────────────────────────
 uniform sampler2D u_history;            // RGBA32F, TEX_WIDTH × TEX_HEIGHT
 uniform int       u_texWidth;           // TEX_WIDTH constant (for 2D addressing)
-uniform int       u_chargeCount;        // number of active charges (1 or 2)
-uniform int       u_historyCounts[2];   // per-charge valid state count
-uniform float     u_charges[2];         // per-charge signed charge value
+uniform int       u_chargeCount;        // number of active charges (≤ MAX_CHARGES)
+uniform int       u_historyCounts[${MAX_CHARGES}];  // per-charge valid state count
+uniform float     u_charges[${MAX_CHARGES}];        // per-charge signed charge value
 uniform float     u_c;
 uniform vec4      u_worldBounds;        // (minX, maxX, minY, maxY) in world space
 uniform vec2      u_resolution;         // canvas physical pixel size (post-DPR)
@@ -563,7 +570,12 @@ export function WavefrontWebGLCanvas({
         );
       }
       const chargeCount = Math.min(runtimes.length, MAX_CHARGES);
-      staging.fill(0);
+      // Restrict the per-frame zero-fill to the populated extent. The full staging
+      // buffer is sized for MAX_CHARGES (4 MB at MAX_CHARGES=32); without this
+      // restriction the 1- and 2-charge modes would pay a full-buffer fill every
+      // frame purely as a function of the renderer's family-ready capacity.
+      const uploadFloats = chargeCount * ROWS_PER_CHARGE * TEX_WIDTH * 4;
+      staging.fill(0, 0, uploadFloats);
       histCountsArr.fill(0);
       chargeValsArr.fill(0);
 
@@ -594,11 +606,22 @@ export function WavefrontWebGLCanvas({
       }
 
       // ── Upload history texture ──────────────────────────────────────────────
+      // Upload only the rows that hold active-charge data. With MAX_CHARGES=32
+      // and ROWS_PER_CHARGE=16, a single charge uploads 16 rows = 32 KB; seven
+      // charges upload 112 rows = 224 KB. Without this restriction every frame
+      // would push the full 4 MB texture regardless of chargeCount.
+      const uploadHeight = chargeCount > 0 ? chargeCount * ROWS_PER_CHARGE : 0;
       gl.bindTexture(gl.TEXTURE_2D, historyTex);
-      gl.texSubImage2D(
-        gl.TEXTURE_2D, 0, 0, 0, TEX_WIDTH, TEX_HEIGHT,
-        gl.RGBA, gl.FLOAT, staging,
-      );
+      if (uploadHeight > 0) {
+        // WebGL2's srcOffset overload lets the staging buffer be larger than the
+        // upload region, so we can hand `staging` directly without allocating a
+        // per-frame .subarray() view. The driver reads exactly TEX_WIDTH ×
+        // uploadHeight × 4 floats starting at offset 0.
+        gl.texSubImage2D(
+          gl.TEXTURE_2D, 0, 0, 0, TEX_WIDTH, uploadHeight,
+          gl.RGBA, gl.FLOAT, staging, 0,
+        );
+      }
 
       // ── Mode-aware per-channel normalization ────────────────────────────────
       //

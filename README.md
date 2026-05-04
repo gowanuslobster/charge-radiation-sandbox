@@ -21,7 +21,7 @@ After a few minutes of exploration you should be able to see and understand:
 
 ### Starting up
 
-When you open the app you will see a **start panel** with four mode cards. Click any card to begin — the simulation seeds immediately and the panel clears. You can return to this screen at any time with the **← Start screen** button in the Mode section of the control panel.
+When you open the app you will see a **start panel** with six mode cards. Click any card to begin — the simulation seeds immediately and the panel clears. You can return to this screen at any time with the **← Start screen** button in the Mode section of the control panel.
 
 ### The control panel
 
@@ -29,7 +29,7 @@ A floating panel in the upper-left corner gives you all controls:
 
 | Section | What it does |
 |---------|-------------|
-| **Mode** | Switch between the five demo modes (see below). Switching reseeds the simulation cleanly. **← Start screen** — return to the mode-picker panel and reset all settings to defaults (including c). |
+| **Mode** | Switch between the six demo modes (see below). Switching reseeds the simulation cleanly. **← Start screen** — return to the mode-picker panel and reset all settings to defaults (including c). |
 | **Playback** | **Run / Pause** — toggle real-time playback. **Step →** — advance one frame at a time while paused. **Reset** — restart the current mode from t=0, keeping your field layer and overlay choices. |
 | **Speed of light** | Drag the slider to change c (max 3.0). The lower bound is mode-dependent: 0.62 in Oscillating and Dipole, 0.72 in Moving charge and Hydrogen (the GPU history buffer must cover the causal horizon), and 0.65 in Charge at rest. Lowering c slows all field propagation, making retarded-time effects dramatically visible. |
 | **Field** | Toggle which vector layer you see: **Total E** (default), **Velocity E** (Coulomb-like term), **Accel E** (radiation term only), or **Poynting S** (instantaneous energy-flow arrows derived from E × B; aggressively compressed magnitude, mutually exclusive with the E layers). |
@@ -97,6 +97,15 @@ A fixed positive charge sits at the center while a negative charge follows a pre
 - Pause and enable **Field lines** to compare the near-field geometry with the magnetic heatmap.
 - Lower c to exaggerate the causal delay between the orbiting charge and the fields far from the atom.
 
+### Particle beam
+
+A finite line of seven like-signed positive charges in uniform translation along +x. Both E and B are present, but the beam is not neutral — there is no compensating negative-charge population (that arrives in a future neutral-wire mode). Each charge contributes a transverse magnetic velocity field that superposes with the others; finite-length end effects are visible at the beam's leading and trailing edges.
+
+**To try:**
+- Pick **Velocity B** on the **Magnetic heatmap** picker — the bound transverse magnetic structure of the moving line is most informative on this channel. **Accel B** is near zero everywhere because no charge accelerates.
+- Compare with **Moving charge** (single-charge equivalent): same kinematic profile, seven of them in a line. The superposition and end-effect structure are unmistakably different from a single source.
+- The wavefront-contour overlay is hidden in this mode — there is no scripted radiation shell to annotate.
+
 ---
 
 ## Teaching overlays
@@ -106,8 +115,8 @@ All overlays are off by default. They stack freely — you can enable any combin
 | Overlay | Where | What it shows |
 |---------|-------|---------------|
 | **Field lines** | All modes, when paused | Instantaneous streamlines of the total electric field at the paused frame. Not material lines that move with the charge — they are a snapshot of the field at that moment. |
-| **Magnetic heatmap** | Charge at rest, Moving charge, Oscillating, Dipole, Hydrogen | A four-state picker (Off / Total B / Velocity B / Accel B) coloring the chosen Bz channel as a signed warm/cool heatmap. **Accel B** is the radiation magnetic field (Bz from the acceleration term — the pre-M11 "Radiation heatmap"). **Velocity B** is the bound moving-charge magnetic field. **Total B** sums both — useful for seeing the post-stop void in `Moving charge`. Contributions from all active charges are superposed before rendering. |
-| **Wavefront contours** | Moving charge, Oscillating, Dipole, Hydrogen | Contour lines tied to the radiation magnetic field (`bZAccel`) regardless of which heatmap channel is selected. In Oscillating, Dipole, and Hydrogen: zero-crossing lines tracking wave phase. In Moving charge: envelope threshold contour marking the shell boundary. |
+| **Magnetic heatmap** | Charge at rest, Moving charge, Oscillating, Dipole, Hydrogen, Particle beam | A four-state picker (Off / Total B / Velocity B / Accel B) coloring the chosen Bz channel as a signed warm/cool heatmap. **Accel B** is the radiation magnetic field (Bz from the acceleration term — the pre-M11 "Radiation heatmap"). **Velocity B** is the bound moving-charge magnetic field. **Total B** sums both — useful for seeing the post-stop void in `Moving charge` or the superposed transverse field of `Particle beam`. Contributions from all active charges are superposed before rendering. |
+| **Wavefront contours** | Moving charge, Oscillating, Dipole, Hydrogen | Contour lines tied to the radiation magnetic field (`bZAccel`) regardless of which heatmap channel is selected. In Oscillating, Dipole, and Hydrogen: zero-crossing lines tracking wave phase. In Moving charge: envelope threshold contour marking the shell boundary. Hidden in Charge at rest and Particle beam — no scripted radiation shell to annotate. |
 | **Ghost charge** (mini panel) | Moving charge | A marker at the extrapolated would-have-been position after the stop. Shows why the field outside the shell still points toward a charge that is no longer there. |
 | **Ghost field lines** (mini panel) | Moving charge, paused | Streamlines of the extrapolated constant-velocity field — shows what the field would look like if the charge had never stopped. |
 
@@ -118,7 +127,7 @@ All overlays are off by default. They stack freely — you can enable any combin
 ```bash
 npm install
 npm run dev      # start dev server with hot reload at http://localhost:5173
-npm test         # run physics unit tests (Vitest) — 175 tests across 11 suites
+npm test         # run physics unit tests (Vitest) — 219 tests across 14 suites
 npm run lint     # ESLint on all source files
 npm run build    # TypeScript strict type-check + Vite production build
 ```
@@ -197,5 +206,7 @@ Key design decisions:
 | `IDEAS.md` | Liénard-Wiechert math, retarded-time derivation, why FDTD was ruled out |
 | `IDEAS-wavefronts.md` | Design rationale and extended spec for the M6 sampled wavefront overlay |
 | `IDEAS-webGL.md` | Full design spec for the WebGL renderer: data model, texture packing, solver design, c-slider policy |
+| `IDEAS-webGL-efficiency.md` | Single-charge efficiency staging: Phase I DPR cap (done) and the manual-quality-selector follow-up |
+| `IDEAS-line-of-charge-perf-optimization.md` | Multi-charge perf analysis surfaced by M13-A: easy wins (DPR / Newton / probe knobs) and the deferred structural plan (half-res FBO, early-exit Newton, GPU probe) |
 | `SPEC.md` | Milestone definitions and acceptance criteria |
 | `AGENTS.md` | Code style, naming conventions, and architectural constraints |

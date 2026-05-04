@@ -51,6 +51,12 @@ const MODE_CARDS: ModeCard[] = [
     desc: 'A negative charge follows a circular orbit around a fixed positive center, creating a rotating dipole source.',
     hint: 'Pick Accel B on the Magnetic heatmap and turn on contours to watch the signed magnetic radiation pattern rotate outward.',
   },
+  {
+    mode: 'particle_beam',
+    title: 'Particle beam',
+    desc: 'A finite line of like-signed positive charges in uniform translation. Both E and B are present, but the beam is not neutral.',
+    hint: 'Pick Velocity B on the Magnetic heatmap to see the superposed transverse field of seven moving charges, with visible end effects. Distinct from a neutral wire.',
+  },
 ];
 
 export function StartPanel({ onSelectMode }: Props) {

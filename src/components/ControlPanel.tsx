@@ -74,7 +74,10 @@ export function ControlPanel({
 }: Props) {
   const magneticHeatmapVisible =
     demoMode === 'moving_charge' || demoMode === 'oscillating' ||
-    demoMode === 'dipole' || demoMode === 'hydrogen' || demoMode === 'draggable';
+    demoMode === 'dipole' || demoMode === 'hydrogen' || demoMode === 'draggable' ||
+    demoMode === 'particle_beam';
+  // Wavefront contours annotate radiation shells; hidden for modes with no
+  // scripted radiation feature to annotate (draggable, particle_beam).
   const wavefrontContoursVisible =
     demoMode === 'moving_charge' || demoMode === 'oscillating' ||
     demoMode === 'dipole' || demoMode === 'hydrogen';
@@ -118,6 +121,12 @@ export function ControlPanel({
               : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
             Hydrogen
           </button>
+          <button type="button" onClick={() => onDemoModeChange('particle_beam')}
+            className={`${TOGGLE_BASE} ${!noModeActive && demoMode === 'particle_beam'
+              ? 'bg-orange-400 text-black shadow-[0_0_16px_rgba(251,146,60,0.5)]'
+              : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
+            Particle beam
+          </button>
         </div>
         {/* Start Screen button — hidden while no mode is active (already on start screen) */}
         {!noModeActive && (
@@ -151,6 +160,13 @@ export function ControlPanel({
         )}
         {!noModeActive && demoMode === 'hydrogen' && (
           <p className="mt-1.5 text-[11px] text-zinc-400">A negative charge orbits a fixed positive center. This scripted atom acts like a rotating dipole source.</p>
+        )}
+        {!noModeActive && demoMode === 'particle_beam' && (
+          <p className="mt-1.5 text-[11px] text-zinc-400">
+            A finite line of like-signed positive charges in uniform translation. Both E and B
+            are present; the magnetic structure is the superposition of each charge&apos;s
+            transverse velocity field, with visible end effects. Distinct from a neutral wire.
+          </p>
         )}
       </div>
 

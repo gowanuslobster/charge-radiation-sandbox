@@ -6,7 +6,7 @@
 
 import type { KinematicState } from './types';
 
-export type DemoMode = 'moving_charge' | 'oscillating' | 'draggable' | 'dipole' | 'hydrogen';
+export type DemoMode = 'moving_charge' | 'oscillating' | 'draggable' | 'dipole' | 'hydrogen' | 'particle_beam';
 
 // ─── sudden_stop constants ───────────────────────────────────────────────────
 
@@ -56,6 +56,24 @@ export const DIPOLE_OMEGA      = OSCILLATING_OMEGA;     // 4.0 rad/s
 // Peak speed = R·ω = 0.6, matching moving_charge's c-slider lower-bound regime.
 export const HYDROGEN_ORBIT_RADIUS = 0.75; // world units
 export const HYDROGEN_OMEGA        = 0.8;  // rad/s; peak speed = 0.6
+
+// ─── particle_beam constants ─────────────────────────────────────────────────
+//
+// A finite line of N like-signed positive charges in uniform translation along +x.
+// All charges share the same velocity vector and zero acceleration; the beam is
+// centered on the origin at t=0 with even spacing along x.
+//
+// Pedagogical purpose: show the superposed transverse magnetic structure of a
+// finite co-moving beam, with end effects intentionally visible. This is NOT
+// the neutral wire model — that arrives in M13-B as a separate mode.
+//
+// Peak speed = PARTICLE_BEAM_VELOCITY (0.6), matching SUDDEN_STOP_V. Same c-min
+// constraint as moving_charge.
+export const PARTICLE_BEAM_N        = 7;
+export const PARTICLE_BEAM_SPACING  = 0.5;   // world units between adjacent charges
+export const PARTICLE_BEAM_VELOCITY = 0.6;   // +x component, world units / s
+export const PARTICLE_BEAM_CENTER_Y = 0;
+export const PARTICLE_BEAM_CHARGE   = 1;     // all positive
 
 // ─── sampleSuddenStopState ───────────────────────────────────────────────────
 
@@ -125,7 +143,7 @@ export function sampleSuddenStopState(t: number, brakeStartTime: number): Kinema
  *
  * Multi-charge modes are excluded and must be accessed via sampleDemoChargeStates.
  */
-export function sampleSourceState(mode: Exclude<DemoMode, 'dipole' | 'hydrogen'>, t: number): KinematicState {
+export function sampleSourceState(mode: Exclude<DemoMode, 'dipole' | 'hydrogen' | 'particle_beam'>, t: number): KinematicState {
   // draggable: live tick bypasses sampleSourceState entirely and reads from drag refs.
   // This branch exists only to satisfy exhaustiveness and provides the zeroed at-rest
   // baseline (Coulomb field) used when the simulation is paused or freshly seeded.
@@ -200,8 +218,10 @@ function sampleHydrogenState(chargeIndex: 0 | 1, t: number): KinematicState {
 /**
  * Return the charge specs for all charges in `mode` at simulation time t.
  *
- * Single-charge modes return a length-1 array. Multi-charge modes return a
- * length-2 array with charge values +1 (index 0) and −1 (index 1).
+ * Single-charge modes return a length-1 array. dipole and hydrogen return
+ * length-2 arrays with charge values +1 (index 0) and −1 (index 1).
+ * particle_beam returns a length-PARTICLE_BEAM_N array of identical positive
+ * charges in uniform translation.
  *
  * For `draggable` and `moving_charge`, the kinematic state is the analytic
  * baseline — the tick loop overrides it with drag refs / stop-trigger logic
@@ -214,6 +234,23 @@ export function sampleDemoChargeStates(mode: DemoMode, t: number): DemoChargeSpe
       { charge: +1, state: sampleDipoleState(0, t) },
       { charge: -1, state: sampleDipoleState(1, t) },
     ];
+  }
+  if (mode === 'particle_beam') {
+    const specs: DemoChargeSpec[] = new Array(PARTICLE_BEAM_N);
+    const offset0 = -((PARTICLE_BEAM_N - 1) / 2) * PARTICLE_BEAM_SPACING;
+    for (let i = 0; i < PARTICLE_BEAM_N; i++) {
+      const x0 = offset0 + i * PARTICLE_BEAM_SPACING;
+      specs[i] = {
+        charge: PARTICLE_BEAM_CHARGE,
+        state: {
+          t,
+          pos:   { x: x0 + PARTICLE_BEAM_VELOCITY * t, y: PARTICLE_BEAM_CENTER_Y },
+          vel:   { x: PARTICLE_BEAM_VELOCITY, y: 0 },
+          accel: { x: 0, y: 0 },
+        },
+      };
+    }
+    return specs;
   }
   if (mode === 'hydrogen') {
     return [
@@ -245,6 +282,7 @@ export function maxHistorySpeed(mode: DemoMode): number {
   if (mode === 'draggable') return 0;
   if (mode === 'oscillating' || mode === 'dipole') return OSCILLATING_AMPLITUDE * OSCILLATING_OMEGA; // 0.5
   if (mode === 'hydrogen') return HYDROGEN_ORBIT_RADIUS * HYDROGEN_OMEGA; // 0.6
+  if (mode === 'particle_beam') return PARTICLE_BEAM_VELOCITY; // uniform translation
   return SUDDEN_STOP_V; // moving_charge peaks at SUDDEN_STOP_V (pre- and post-stop history)
 }
 

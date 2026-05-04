@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   sampleSourceState,
   sampleSuddenStopState,
+  sampleDemoChargeStates,
   maxHistorySpeed,
   brakingSubstepTimes,
   SUDDEN_STOP_V,
@@ -11,6 +12,11 @@ import {
   SUDDEN_STOP_X_STOP,
   OSCILLATING_AMPLITUDE,
   OSCILLATING_OMEGA,
+  PARTICLE_BEAM_N,
+  PARTICLE_BEAM_SPACING,
+  PARTICLE_BEAM_VELOCITY,
+  PARTICLE_BEAM_CHARGE,
+  PARTICLE_BEAM_CENTER_Y,
 } from './demoModes';
 import { ChargeHistory } from './chargeHistory';
 import { evaluateLienardWiechertField } from './lienardWiechert';
@@ -398,6 +404,66 @@ describe('brakingSubstepTimes: custom brakeStartTime', () => {
     const defaultResult  = brakingSubstepTimes(prev, curr);
     const explicitResult = brakingSubstepTimes(prev, curr, SUDDEN_STOP_T_STOP);
     expect(defaultResult).toEqual(explicitResult);
+  });
+});
+
+// ─── particle_beam ───────────────────────────────────────────────────────────
+
+describe('sampleDemoChargeStates: particle_beam', () => {
+  it('returns PARTICLE_BEAM_N specs at t=0, evenly spaced and symmetric about origin', () => {
+    const specs = sampleDemoChargeStates('particle_beam', 0);
+    expect(specs.length).toBe(PARTICLE_BEAM_N);
+
+    // Even spacing along x
+    for (let i = 1; i < specs.length; i++) {
+      expect(specs[i].state.pos.x - specs[i - 1].state.pos.x).toBeCloseTo(PARTICLE_BEAM_SPACING, 12);
+    }
+
+    // Symmetry about origin (sum of x-positions = 0 for an evenly-spaced symmetric line)
+    const sumX = specs.reduce((acc, s) => acc + s.state.pos.x, 0);
+    expect(sumX).toBeCloseTo(0, 12);
+
+    // All on the centerline
+    for (const s of specs) expect(s.state.pos.y).toBe(PARTICLE_BEAM_CENTER_Y);
+  });
+
+  it('all charges share velocity (PARTICLE_BEAM_VELOCITY, 0), zero acceleration, charge = +1', () => {
+    const specs = sampleDemoChargeStates('particle_beam', 0);
+    for (const s of specs) {
+      expect(s.charge).toBe(PARTICLE_BEAM_CHARGE);
+      expect(s.state.vel.x).toBeCloseTo(PARTICLE_BEAM_VELOCITY, 12);
+      expect(s.state.vel.y).toBe(0);
+      expect(s.state.accel.x).toBe(0);
+      expect(s.state.accel.y).toBe(0);
+    }
+  });
+
+  it('at t > 0 every charge has translated by PARTICLE_BEAM_VELOCITY · t with spacing preserved', () => {
+    const t = 1.5;
+    const at0 = sampleDemoChargeStates('particle_beam', 0);
+    const atT = sampleDemoChargeStates('particle_beam', t);
+    expect(atT.length).toBe(at0.length);
+    for (let i = 0; i < atT.length; i++) {
+      expect(atT[i].state.pos.x - at0[i].state.pos.x).toBeCloseTo(PARTICLE_BEAM_VELOCITY * t, 10);
+      expect(atT[i].state.pos.y).toBe(at0[i].state.pos.y);
+    }
+    // Spacing preserved (uniform translation)
+    for (let i = 1; i < atT.length; i++) {
+      expect(atT[i].state.pos.x - atT[i - 1].state.pos.x).toBeCloseTo(PARTICLE_BEAM_SPACING, 10);
+    }
+  });
+
+  it('state.t is the queried time on every spec', () => {
+    for (const t of [-3, 0, 2.7]) {
+      const specs = sampleDemoChargeStates('particle_beam', t);
+      for (const s of specs) expect(s.state.t).toBe(t);
+    }
+  });
+});
+
+describe('maxHistorySpeed: particle_beam', () => {
+  it('returns PARTICLE_BEAM_VELOCITY (uniform translation peak)', () => {
+    expect(maxHistorySpeed('particle_beam')).toBe(PARTICLE_BEAM_VELOCITY);
   });
 });
 

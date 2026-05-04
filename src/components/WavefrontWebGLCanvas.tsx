@@ -79,8 +79,12 @@ const BINARY_SEARCH_ITERS = 12;   // ceil(log2(4096))
 const NEWTON_ITERS        = 28;   // profiling target range 24–32
 
 // Normalization probe parameters.
-const NORM_PROBE_W   = 32;
-const NORM_PROBE_H   = 32;
+// Phase 1 perf: 32→16 cuts CPU probe cost 4× (256 cells vs 1024). The probe
+// estimates a per-frame normalization peak; halving each axis trades a small
+// amount of robustness against per-frame magnitude jitter for substantial
+// main-thread savings, especially at high charge counts (21 in neutral_wire).
+const NORM_PROBE_W   = 16;
+const NORM_PROBE_H   = 16;
 const NORM_EMA_ALPHA = 0.12;               // temporal smoothing for Policy A modes
 const PERIODIC_NORM_PHASE_SAMPLES = 8;     // Policy B phase sweep count
 
@@ -97,7 +101,20 @@ const CHANNEL_VEL   = 1;
 const CHANNEL_ACCEL = 2;
 
 // Phase I performance cap: limit the effective DPR for this canvas only.
-const WEBGL_MAX_DPR = 1.5;
+// Phase 1 perf: 1.5→1.0 cuts fragment-shader work ~2.25× on HiDPI displays.
+// The signed warm/cool heatmap is band-limited and tolerates the lower
+// resolution well; the contour pass is unaffected (it edge-detects on the
+// same backing buffer but the qualitative read is preserved).
+const WEBGL_MAX_DPR = 1.0;
+
+// Opt-in dev-only perf logging for the heatmap canvas. Off by default; enable
+// per-session by appending ?perfLog=1 to the dev URL. Logs tick duration
+// (median + p95), normalization-probe rate, RAF FPS, and a `skipped=true`
+// tag when the Phase 2 paused-clean skip path runs. The DEV gate keeps the
+// instrumentation tree-shaken from production builds.
+const PERF_LOG_ENABLED = import.meta.env.DEV
+  && typeof window !== 'undefined'
+  && new URLSearchParams(window.location.search).get('perfLog') === '1';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -529,12 +546,46 @@ export function WavefrontWebGLCanvas({
     const prevNormChargeVals = new Float64Array(MAX_CHARGES).fill(NaN);
     let prevNormBounds     = { minX: NaN, maxX: NaN, minY: NaN, maxY: NaN } as typeof bounds;
 
+    // Phase 2 paused-clean skip. Tracks every input that affects the rendered
+    // image. When paused && every tracked input matches the last drawn frame,
+    // the entire RAF body is skipped (no charge packing, no upload, no probe,
+    // no uniforms, no draw). The GPU is otherwise re-running the full per-pixel
+    // retarded-time solve every frame to produce an identical image, which
+    // dominates GPU time and stalls the main thread for input handling. The
+    // skip ends as soon as any tracked input changes (pan/zoom/channel/c/
+    // pause-toggle/sim-epoch/charge-values/contour-toggle) or the user
+    // un-pauses, at which point the next tick draws normally.
+    let lastDrawnInitialized = false;
+    let lastDrawnEpoch       = NaN;
+    let lastDrawnMode        = '' as DemoMode;
+    let lastDrawnC           = NaN;
+    let lastDrawnChargeCount = -1;
+    const lastDrawnChargeVals = new Float64Array(MAX_CHARGES).fill(NaN);
+    const lastDrawnBounds    = { minX: NaN, maxX: NaN, minY: NaN, maxY: NaN } as typeof bounds;
+    let lastDrawnChannel     = '' as MagneticHeatmapMode;
+    let lastDrawnDoContour   = false;
+    let lastDrawnDoHeatmap   = false;
+    let lastDrawnSimTime     = NaN;
+    let lastDrawnPaused      = false;
+
     // ── RAF loop ──────────────────────────────────────────────────────────────
     let rafId    = 0;
     let glAlive  = true;
 
+    // Phase 0 perf instrumentation. Scoped to this canvas. Off by default;
+    // opt in per-session via ?perfLog=1 (see PERF_LOG_ENABLED at module top).
+    // Logs tick duration (median + p95), probe invocation rate, and RAF FPS
+    // every PERF_LOG_INTERVAL_MS. Tagged `skipped=true` for Phase 2 paused-
+    // clean tick skips.
+    const PERF_LOG_INTERVAL_MS = 2000;
+    const perfTickDurations: number[] = [];
+    let   perfProbeCount = 0;
+    let   perfTickCount  = 0;
+    let   perfWindowStart = performance.now();
+
     const tick = () => {
       if (!glAlive) return;
+      const perfTickStart = PERF_LOG_ENABLED ? performance.now() : 0;
 
       const runtimes   = chargeRuntimesRef.current;
       const tCurrent   = simulationTimeRef.current;
@@ -547,8 +598,85 @@ export function WavefrontWebGLCanvas({
       const doHeatmap  = channel !== 'off';
       const paused     = isPausedRef.current;
 
+      const chargeCount = Math.min(runtimes.length, MAX_CHARGES);
+
+      // Phase 2: paused-clean skip. If paused and every tracked input matches
+      // the last drawn frame, skip the entire RAF body. See lastDrawn* state
+      // declarations above for the rationale and the input set.
+      if (paused && lastDrawnInitialized) {
+        let chargesUnchanged = chargeCount === lastDrawnChargeCount;
+        if (chargesUnchanged) {
+          for (let ci = 0; ci < chargeCount; ci++) {
+            if (runtimes[ci].charge !== lastDrawnChargeVals[ci]) { chargesUnchanged = false; break; }
+          }
+        }
+        const boundsUnchanged =
+          curBounds.minX === lastDrawnBounds.minX &&
+          curBounds.maxX === lastDrawnBounds.maxX &&
+          curBounds.minY === lastDrawnBounds.minY &&
+          curBounds.maxY === lastDrawnBounds.maxY;
+        if (
+          epoch === lastDrawnEpoch &&
+          mode === lastDrawnMode &&
+          config.c === lastDrawnC &&
+          chargesUnchanged &&
+          boundsUnchanged &&
+          channel === lastDrawnChannel &&
+          doContour === lastDrawnDoContour &&
+          doHeatmap === lastDrawnDoHeatmap &&
+          tCurrent === lastDrawnSimTime &&
+          paused === lastDrawnPaused
+        ) {
+          if (PERF_LOG_ENABLED) {
+            perfTickDurations.push(performance.now() - perfTickStart);
+            perfTickCount++;
+            const elapsed = performance.now() - perfWindowStart;
+            if (elapsed >= PERF_LOG_INTERVAL_MS && perfTickDurations.length > 0) {
+              const sorted = perfTickDurations.slice().sort((a, b) => a - b);
+              const median = sorted[Math.floor(sorted.length / 2)];
+              const p95 = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))];
+              const fps = perfTickCount * 1000 / elapsed;
+              const probeRate = perfProbeCount * 1000 / elapsed;
+              console.log(
+                `[WebGL perf] tick median=${median.toFixed(2)}ms p95=${p95.toFixed(2)}ms ` +
+                `fps=${fps.toFixed(1)} probe=${probeRate.toFixed(1)}/s ` +
+                `mode=${mode} chargeCount=${chargeCount} channel=${channel} paused=${paused} skipped=true`,
+              );
+              perfTickDurations.length = 0;
+              perfProbeCount = 0;
+              perfTickCount = 0;
+              perfWindowStart = performance.now();
+            }
+          }
+          rafId = requestAnimationFrame(tick);
+          return;
+        }
+      }
+
+      // Helper: capture all inputs that the Phase 2 skip check compares against.
+      // Called both on the no-overlay early-return path and after each full draw.
+      const recordLastDrawn = () => {
+        lastDrawnEpoch = epoch;
+        lastDrawnMode = mode;
+        lastDrawnC = config.c;
+        lastDrawnChargeCount = chargeCount;
+        for (let ci = 0; ci < chargeCount; ci++) lastDrawnChargeVals[ci] = runtimes[ci].charge;
+        for (let ci = chargeCount; ci < MAX_CHARGES; ci++) lastDrawnChargeVals[ci] = NaN;
+        lastDrawnBounds.minX = curBounds.minX;
+        lastDrawnBounds.maxX = curBounds.maxX;
+        lastDrawnBounds.minY = curBounds.minY;
+        lastDrawnBounds.maxY = curBounds.maxY;
+        lastDrawnChannel = channel;
+        lastDrawnDoContour = doContour;
+        lastDrawnDoHeatmap = doHeatmap;
+        lastDrawnSimTime = tCurrent;
+        lastDrawnPaused = paused;
+        lastDrawnInitialized = true;
+      };
+
       if (!doHeatmap && !doContour) {
         gl.clear(gl.COLOR_BUFFER_BIT);
+        recordLastDrawn();
         rafId = requestAnimationFrame(tick);
         return;
       }
@@ -569,7 +697,6 @@ export function WavefrontWebGLCanvas({
           `Route to WavefrontOverlayCanvas for scenes with more than ${MAX_CHARGES} charges.`,
         );
       }
-      const chargeCount = Math.min(runtimes.length, MAX_CHARGES);
       // Restrict the per-frame zero-fill to the populated extent. The full staging
       // buffer is sized for MAX_CHARGES (4 MB at MAX_CHARGES=32); without this
       // restriction the 1- and 2-charge modes would pay a full-buffer fill every
@@ -654,8 +781,9 @@ export function WavefrontWebGLCanvas({
       const period        = periodicModePeriod(mode);
       const policyB       = period !== null;
 
-      const probe = (probeTime: number, maskFactor: number) =>
-        runNormalizationProbe({
+      const probe = (probeTime: number, maskFactor: number) => {
+        if (PERF_LOG_ENABLED) perfProbeCount++;
+        return runNormalizationProbe({
           chargeRuntimes:    runtimes,
           normSamplerStates,
           probeScratch,
@@ -668,6 +796,7 @@ export function WavefrontWebGLCanvas({
           gridH:             NORM_PROBE_H,
           maskRadiusFactor:  maskFactor,
         });
+      };
 
       if (policyB) {
         // Policy B: phase-invariant cache. Recompute only on invalidation;
@@ -781,6 +910,30 @@ export function WavefrontWebGLCanvas({
       gl.bindVertexArray(vao);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
       gl.bindVertexArray(null);
+
+      recordLastDrawn();
+
+      if (PERF_LOG_ENABLED) {
+        perfTickDurations.push(performance.now() - perfTickStart);
+        perfTickCount++;
+        const elapsed = performance.now() - perfWindowStart;
+        if (elapsed >= PERF_LOG_INTERVAL_MS && perfTickDurations.length > 0) {
+          const sorted = perfTickDurations.slice().sort((a, b) => a - b);
+          const median = sorted[Math.floor(sorted.length / 2)];
+          const p95 = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))];
+          const fps = perfTickCount * 1000 / elapsed;
+          const probeRate = perfProbeCount * 1000 / elapsed;
+          console.log(
+            `[WebGL perf] tick median=${median.toFixed(2)}ms p95=${p95.toFixed(2)}ms ` +
+            `fps=${fps.toFixed(1)} probe=${probeRate.toFixed(1)}/s ` +
+            `mode=${mode} chargeCount=${chargeCount} channel=${channel} paused=${paused}`,
+          );
+          perfTickDurations.length = 0;
+          perfProbeCount = 0;
+          perfTickCount = 0;
+          perfWindowStart = performance.now();
+        }
+      }
 
       rafId = requestAnimationFrame(tick);
     };

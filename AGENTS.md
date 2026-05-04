@@ -243,6 +243,16 @@ This project uses TypeScript project references (`tsconfig.json` → `tsconfig.a
 
 Similarly, **the Vite dev server (`npm run dev`) does not type-check**. Code that breaks the build can run fine on localhost. Never treat a passing dev server as evidence that the build is clean.
 
+### Build-vintage timestamp
+
+A visible `last code change` stamp is rendered at the top of the floating control panel (defined in `ControlPanel.tsx` as the `LAST_CODE_CHANGE_STAMP` and `LAST_CODE_CHANGE_DATETIME` constants and rendered inside a semantic `<time dateTime="…">` element). Its purpose is to let a manual browser check confirm at a glance which build vintage is currently running — without it, a stale dev-server cache, an HMR miss, or a non-rebuilt production bundle can silently mask whether an edit is live. Convention mirrors wave-optics-sandbox.
+
+The standard:
+
+- Refresh the static `last code change` stamp every time the codebase is changed in a way that affects the running app. The timestamp should be updated in the same pass as the code change so manual browser checks always show the current build vintage.
+- When updating that `last code change` stamp, read the real current local time from the system clock at edit time rather than inferring or approximating it. Use the local timezone abbreviation (PDT/PST as appropriate for Pacific time), and keep the human-readable stamp and the `dateTime` attribute consistent with that exact system-derived timestamp.
+- Pure-documentation changes (README, AGENTS.md, IDEAS docs, SPEC notes that don't change shipped behavior) do not require a bump. The trigger is "affects the running app."
+
 ### Other verification habits
 
 - Prefer targeted lint on touched files before full lint when repo-wide issues are possible.

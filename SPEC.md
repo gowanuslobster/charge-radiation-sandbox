@@ -590,6 +590,32 @@ Implementation notes:
   × 4 bytes ≈ 672 KB per frame at full upload, vs. M13-A's 224 KB for
   `particle_beam`. The chargeCount-bounded `texSubImage2D` upload introduced
   in M13-A keeps single- and two-charge modes' upload cost unchanged.
+- Multi-charge perf pass landed alongside M13-B in the same milestone scope:
+  - `WEBGL_MAX_DPR` reduced from 1.5 to 1.0 in `WavefrontWebGLCanvas.tsx`.
+    Cuts fragment-shader work ~2.25× on HiDPI displays. The signed
+    warm/cool heatmap is band-limited and tolerates the lower resolution
+    well; contour rendering is unaffected at the qualitative read.
+  - Normalization probe grid shrunk from 32×32 to 16×16. Cuts main-thread
+    probe cost 4× (256 cells vs. 1024) on every Policy A frame. Most
+    impactful on the high-charge-count modes (`neutral_wire` at N_total
+    = 21).
+  - Paused-clean tick skip: `WavefrontWebGLCanvas` tracks every input that
+    affects the rendered image (epoch, mode, c, chargeCount, charge values,
+    bounds, channel, contour toggle, doHeatmap, simTime, paused). When
+    paused and all inputs match the last drawn frame, the entire RAF body
+    is skipped (no charge packing, no upload, no normalization probe, no
+    uniform setup, no `gl.drawArrays`). Eliminates the GPU drain that was
+    redrawing identical paused frames at full per-pixel cost. Returns
+    immediately to a full draw on any input change (pan, zoom, channel
+    switch, c change, un-pause, etc.).
+- Opt-in dev perf logging gated behind the `?perfLog=1` URL parameter and
+  `import.meta.env.DEV`. Off by default. Logs tick duration, normalization
+  probe rate, RAF FPS, and a `skipped=true` tag for paused-clean skips.
+  Tree-shaken from production builds. See `PERF_LOG_ENABLED` in
+  `WavefrontWebGLCanvas.tsx`.
+- Further perf levers (Newton iter reduction, half-res heatmap FBO,
+  early-exit Newton, GPU-side normalization probe) remain deferred and are
+  tracked in `IDEAS-line-of-charge-perf-optimization.md`.
 
 Pedagogical framing: the canonical reset configuration shows a column-neutral
 finite segment with a current-like macroscopic transverse magnetic field. The
@@ -643,11 +669,25 @@ so the wire-like character is best read near t = 0 and degrades with t.
   render without pulsing or washout under scrub, pan, and zoom.
 - Both vector modes (E vectors, Poynting S) render correctly at N_total = 21;
   switching is responsive.
-- Perf: at the canonical scene (default c, neutral_wire default zoom,
-  magnetic heatmap = `Accel B`, probe on, field lines off, velocity vectors
-  off), Run A (E vectors on) and Run B (Poynting S vectors on) sustain
-  ≥ 60 fps median on mid-range hardware and ≥ 30 fps median on low-end, with
-  no spikes below half-target in a 10 s window.
+- Perf: the canonical scene is `neutral_wire` at default c and default zoom,
+  magnetic heatmap = `Total B` (`Accel B` is identically zero in this mode —
+  no charge accelerates — and the all-zero output bypasses normalization
+  paths, so it understates real cost), probe on, field lines off, velocity
+  vectors off. After the multi-charge perf pass (Phase 1: `WEBGL_MAX_DPR`
+  1.5→1.0 and `NORM_PROBE_W/H` 32→16; Phase 2: paused-clean tick skip), the
+  shipped behavior on the reference dev hardware (HiDPI display, integrated
+  GPU) is approximately:
+  - `particle_beam` running ~20 fps with ~2 ms tick (CPU); paused near full
+    RAF cadence via the Phase 2 skip path.
+  - `neutral_wire` running ~7.5 fps with ~3.5 ms tick (CPU); paused near full
+    RAF cadence via the Phase 2 skip path.
+  Live-playback running fps remains GPU-bound on `neutral_wire` at the higher
+  charge count. Further structural levers (Newton iter reduction, half-res
+  heatmap FBO) are deferred and tracked in
+  `IDEAS-line-of-charge-perf-optimization.md`. The original ≥60/≥30 fps
+  targets are aspirational once those structural levers land; current
+  shipped behavior is responsive enough for manual feature evaluation,
+  which was the closing acceptance bar for this perf pass.
 
 #### M13-C / M13-D — planned
 

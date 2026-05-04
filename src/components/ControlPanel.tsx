@@ -60,6 +60,14 @@ const TOGGLE_BASE = 'rounded-md px-3 py-2 text-sm font-medium transition-all dur
 // Shared base classes for icon buttons (zoom ±, pan arrows).
 const ICON_BASE = 'flex h-7 w-7 items-center justify-center rounded-md text-sm text-white/85 bg-white/[0.12] hover:bg-white/20 transition-colors duration-200';
 
+// Visible build-vintage marker. Bumped manually in the same diff as any code
+// change that affects the running app, so a manual browser refresh visibly
+// confirms which edits are live. Read from the real system clock at edit
+// time; keep the human-readable stamp and the dateTime attribute consistent.
+// Convention mirrors wave-optics-sandbox/AGENTS.md.
+const LAST_CODE_CHANGE_STAMP = '2026-05-04 14:25 PDT';
+const LAST_CODE_CHANGE_DATETIME = '2026-05-04T14:25:53-07:00';
+
 export function ControlPanel({
   demoMode, fieldLayer, isPaused, c, stopTriggered, readout,
   magneticHeatmapMode, showWavefrontContours, showStreamlines, showVelocityVectors,
@@ -86,6 +94,11 @@ export function ControlPanel({
       className="absolute left-4 top-4 z-20 flex flex-col gap-3 rounded-2xl border border-orange-400/20 bg-black/65 p-4 text-sm text-zinc-200 backdrop-blur-md select-none pointer-events-auto max-w-xs"
       onClick={(e) => e.stopPropagation()}
     >
+
+      {/* Build-vintage stamp. See LAST_CODE_CHANGE_STAMP definition for the bump rule. */}
+      <p className="text-[10px] text-zinc-500">
+        last code change <time dateTime={LAST_CODE_CHANGE_DATETIME}>{LAST_CODE_CHANGE_STAMP}</time>
+      </p>
 
       {/* Mode */}
       <div>

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   sampleSourceState,
   sampleSuddenStopState,
+  sampleDemoChargeStates,
   maxHistorySpeed,
   brakingSubstepTimes,
   SUDDEN_STOP_V,
@@ -11,7 +12,16 @@ import {
   SUDDEN_STOP_X_STOP,
   OSCILLATING_AMPLITUDE,
   OSCILLATING_OMEGA,
+  WATER_O_CHARGE,
+  WATER_H_CHARGE,
+  WATER_BOND_LENGTH,
+  WATER_HOH_ANGLE_RAD,
+  WATER_STRETCH_AMPLITUDE,
+  WATER_STRETCH_OMEGA,
+  WATER_BEND_AMPLITUDE_RAD,
+  WATER_BEND_OMEGA,
 } from './demoModes';
+import { minCForMode } from '@/rendering/wavefrontWebGLConfig';
 import { ChargeHistory } from './chargeHistory';
 import { evaluateLienardWiechertField } from './lienardWiechert';
 
@@ -400,4 +410,143 @@ describe('brakingSubstepTimes: custom brakeStartTime', () => {
     expect(defaultResult).toEqual(explicitResult);
   });
 });
+
+// ─── water modes (M14) ───────────────────────────────────────────────────────
+//
+// Geometry safety preconditions and policy assertions live at module scope so
+// they fail loudly the moment a future tuning pushes any constant past its
+// safe window — independently of the per-mode behavioral tests below.
+
+describe('water modes: geometry safety preconditions', () => {
+  it('water_bend: theta(t) stays in (0, pi) so sin(theta/2) > 0 and the H_+x / H_-x labels are stable across all t', () => {
+    expect(WATER_HOH_ANGLE_RAD - WATER_BEND_AMPLITUDE_RAD).toBeGreaterThan(0);
+    expect(WATER_HOH_ANGLE_RAD + WATER_BEND_AMPLITUDE_RAD).toBeLessThan(Math.PI);
+  });
+
+  it('water_stretch: L(t) stays positive so the H atom never crosses O', () => {
+    expect(WATER_BOND_LENGTH - WATER_STRETCH_AMPLITUDE).toBeGreaterThan(0);
+  });
+});
+
+describe('water modes: policy assertions', () => {
+  it('both modes share CMIN_OSCILLATING because peak H speed <= 0.5', () => {
+    // Direct policy contract: water rides oscillating's c-min bucket.
+    expect(maxHistorySpeed('water_stretch')).toBeLessThanOrEqual(0.5);
+    expect(maxHistorySpeed('water_bend')).toBeLessThanOrEqual(0.5);
+    // Downstream consequence: minCForMode resolves to CMIN_OSCILLATING (= 0.62).
+    expect(minCForMode('water_stretch')).toBeCloseTo(0.62, 6);
+    expect(minCForMode('water_bend')).toBeCloseTo(0.62, 6);
+  });
+
+  it('maxHistorySpeed: stretch = A·ω, bend = L₀·Δθ·ω/2', () => {
+    expect(maxHistorySpeed('water_stretch')).toBeCloseTo(WATER_STRETCH_AMPLITUDE * WATER_STRETCH_OMEGA, 12);
+    expect(maxHistorySpeed('water_bend')).toBeCloseTo(WATER_BOND_LENGTH * WATER_BEND_AMPLITUDE_RAD * WATER_BEND_OMEGA / 2, 12);
+  });
+});
+
+// Per-mode behavioral tests, parametrized so stretch and bend share the same
+// battery (charge count, net neutrality, fixed O, mirror symmetry, c-min
+// margin sweep, periodicity, stable label ordering).
+const WATER_MODES = [
+  {
+    name:   'water_stretch' as const,
+    omega:  WATER_STRETCH_OMEGA,
+  },
+  {
+    name:   'water_bend' as const,
+    omega:  WATER_BEND_OMEGA,
+  },
+] as const;
+
+for (const { name, omega } of WATER_MODES) {
+  describe(`${name}: per-mode behavioral tests`, () => {
+    const T = (2 * Math.PI) / omega;          // one period in sandbox seconds
+    const SAMPLES = 25;                        // t-sweep density
+    const tSweep: number[] = [];
+    for (let i = 0; i < SAMPLES; i++) tSweep.push((i / (SAMPLES - 1)) * T);
+
+    it('returns 3 charge specs', () => {
+      for (const t of tSweep) {
+        expect(sampleDemoChargeStates(name, t).length).toBe(3);
+      }
+    });
+
+    it('net charge is zero', () => {
+      const specs = sampleDemoChargeStates(name, 0);
+      const sum = specs.reduce((acc, s) => acc + s.charge, 0);
+      expect(sum).toBeCloseTo(0, 12);
+    });
+
+    it('O at index 0 is fixed (pos, vel, accel all zero) across one period', () => {
+      for (const t of tSweep) {
+        const specs = sampleDemoChargeStates(name, t);
+        expect(specs[0].charge).toBe(WATER_O_CHARGE);
+        expect(specs[0].state.pos.x).toBe(0);
+        expect(specs[0].state.pos.y).toBe(0);
+        expect(specs[0].state.vel.x).toBe(0);
+        expect(specs[0].state.vel.y).toBe(0);
+        expect(specs[0].state.accel.x).toBe(0);
+        expect(specs[0].state.accel.y).toBe(0);
+      }
+    });
+
+    it('mirror symmetry across the C₂ (y) axis: H_+x and H_-x have equal-magnitude opposite-sign x components and equal y components', () => {
+      for (const t of tSweep) {
+        const specs = sampleDemoChargeStates(name, t);
+        const hPlus  = specs[1].state;
+        const hMinus = specs[2].state;
+        expect(hPlus.pos.x).toBeCloseTo(-hMinus.pos.x, 12);
+        expect(hPlus.pos.y).toBeCloseTo( hMinus.pos.y, 12);
+        expect(hPlus.vel.x).toBeCloseTo(-hMinus.vel.x, 12);
+        expect(hPlus.vel.y).toBeCloseTo( hMinus.vel.y, 12);
+        expect(hPlus.accel.x).toBeCloseTo(-hMinus.accel.x, 12);
+        expect(hPlus.accel.y).toBeCloseTo( hMinus.accel.y, 12);
+      }
+    });
+
+    it('c-min margin sweep: peak speed across all three charges over one period stays below minCForMode - 0.1', () => {
+      const cMinMargin = minCForMode(name) - 0.1;
+      let peakSpeed = 0;
+      for (const t of tSweep) {
+        const specs = sampleDemoChargeStates(name, t);
+        for (const s of specs) {
+          const sp = Math.hypot(s.state.vel.x, s.state.vel.y);
+          if (sp > peakSpeed) peakSpeed = sp;
+        }
+      }
+      expect(peakSpeed).toBeLessThan(cMinMargin);
+    });
+
+    it('periodicity: state(t + T) ≈ state(t) for all 3 charges at several t', () => {
+      const probeTimes = [0, T * 0.137, T * 0.413, T * 0.781];
+      for (const t of probeTimes) {
+        const a = sampleDemoChargeStates(name, t);
+        const b = sampleDemoChargeStates(name, t + T);
+        for (let ci = 0; ci < 3; ci++) {
+          expect(a[ci].charge).toBe(b[ci].charge);
+          expect(a[ci].state.pos.x).toBeCloseTo(b[ci].state.pos.x, 10);
+          expect(a[ci].state.pos.y).toBeCloseTo(b[ci].state.pos.y, 10);
+          expect(a[ci].state.vel.x).toBeCloseTo(b[ci].state.vel.x, 10);
+          expect(a[ci].state.vel.y).toBeCloseTo(b[ci].state.vel.y, 10);
+          expect(a[ci].state.accel.x).toBeCloseTo(b[ci].state.accel.x, 10);
+          expect(a[ci].state.accel.y).toBeCloseTo(b[ci].state.accel.y, 10);
+        }
+      }
+    });
+
+    it('stable label ordering preserved across t: index 0 = O (charge < 0), index 1 = H_+x (charge > 0, pos.x > 0), index 2 = H_-x (charge > 0, pos.x < 0)', () => {
+      for (const t of tSweep) {
+        const specs = sampleDemoChargeStates(name, t);
+        expect(specs[0].charge).toBeLessThan(0);
+        expect(specs[0].charge).toBe(WATER_O_CHARGE);
+        expect(specs[1].charge).toBeGreaterThan(0);
+        expect(specs[1].charge).toBe(WATER_H_CHARGE);
+        expect(specs[1].state.pos.x).toBeGreaterThan(0);
+        expect(specs[2].charge).toBeGreaterThan(0);
+        expect(specs[2].charge).toBe(WATER_H_CHARGE);
+        expect(specs[2].state.pos.x).toBeLessThan(0);
+      }
+    });
+  });
+}
 

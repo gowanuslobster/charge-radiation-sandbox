@@ -6,7 +6,7 @@
 
 import type { KinematicState } from './types';
 
-export type DemoMode = 'moving_charge' | 'oscillating' | 'draggable' | 'dipole' | 'hydrogen';
+export type DemoMode = 'moving_charge' | 'oscillating' | 'draggable' | 'dipole' | 'hydrogen' | 'water_stretch' | 'water_bend';
 
 // ─── sudden_stop constants ───────────────────────────────────────────────────
 
@@ -56,6 +56,51 @@ export const DIPOLE_OMEGA      = OSCILLATING_OMEGA;     // 4.0 rad/s
 // Peak speed = R·ω = 0.6, matching moving_charge's c-slider lower-bound regime.
 export const HYDROGEN_ORBIT_RADIUS = 0.75; // world units
 export const HYDROGEN_OMEGA        = 0.8;  // rad/s; peak speed = 0.6
+
+// ─── water molecule constants ────────────────────────────────────────────────
+//
+// Three-charge H₂O-like source for two vibrational normal modes (M14):
+// `water_stretch` (symmetric stretch) and `water_bend` (scissoring). Each mode
+// modulates the time-varying dipole moment along the C₂ symmetry axis, so
+// both are 2D-IR-active and produce dipole-pattern radiation.
+//
+// Charge index ordering is [O, H₊x, H₋x] (indices 0, 1, 2). This ordering
+// must be preserved across all t because the WebGL history-texture slot
+// assignments depend on it (per-charge texel slices are persistent across
+// frames; reordering would invalidate the persisted history).
+//
+// Equilibrium geometry: O at origin; H atoms at
+// (±sin(θ₀/2)·L₀, −cos(θ₀/2)·L₀). C₂ axis along y; H atoms hang below O so
+// the molecule reads like a textbook drawing. Equilibrium dipole points
+// along −y with magnitude 2·|q_H|·L₀·cos(θ₀/2).
+//
+// Approximation: oxygen is held FIXED at the origin for both modes. This is
+// scripted teaching motion, not normal-coordinate mass-weighted COM-conserving
+// molecular dynamics — in real H₂O all three atoms move and the COM is
+// conserved. Holding O fixed keeps the kinematics closed-form and the
+// dipole-radiation story unchanged for pedagogy. (Same precedent as hydrogen
+// mode, which holds the central +q fixed instead of solving Coulomb orbital
+// dynamics.)
+//
+// Frequency choice: real H₂O symmetric stretch (~3657 cm⁻¹) is about 2.3×
+// the bend frequency (~1595 cm⁻¹). We use 2.0× (stretch ω = 4.0,
+// bend ω = 2.0) to keep the IR-spectroscopy intuition that vibrational
+// modes have characteristic frequencies, while keeping the bend mode
+// visually responsive in sandbox time.
+//
+// Peak speeds for both modes are ≤ 0.5, so both share `CMIN_OSCILLATING`:
+//   stretch: peak |dH/dt| = A·ω = 0.4
+//   bend:    peak |dH/dt| = L₀·Δθ·ω/2 = 0.18
+export const WATER_O_CHARGE             = -0.8;
+export const WATER_H_CHARGE             = +0.4;
+export const WATER_BOND_LENGTH          = 0.6;                    // L₀, world units
+export const WATER_HOH_ANGLE_RAD        = (105 * Math.PI) / 180;  // θ₀ ≈ 1.833 rad
+
+export const WATER_STRETCH_AMPLITUDE    = 0.1;   // A, fraction of L₀ added to bond length
+export const WATER_STRETCH_OMEGA        = 4.0;   // rad/s; T_stretch ≈ π/2 ≈ 1.57 s
+
+export const WATER_BEND_AMPLITUDE_RAD   = 0.3;   // Δθ ≈ 17°
+export const WATER_BEND_OMEGA           = 2.0;   // rad/s; T_bend ≈ π ≈ 3.14 s
 
 // ─── sampleSuddenStopState ───────────────────────────────────────────────────
 
@@ -198,6 +243,95 @@ function sampleHydrogenState(chargeIndex: 0 | 1, t: number): KinematicState {
 }
 
 /**
+ * Exact kinematic state for the water symmetric-stretch mode.
+ *
+ * Charge index ordering: 0 = O (fixed at origin), 1 = H₊x, 2 = H₋x.
+ *
+ * Both bond lengths breathe in phase: L(t) = L₀ + A·sin(ω·t). The H atoms
+ * move radially along their respective bond directions at fixed angle θ₀/2
+ * from the C₂ axis, mirrored across that axis.
+ *
+ * H₊x position: ( L(t)·sin(θ₀/2),  −L(t)·cos(θ₀/2) )
+ * H₋x position: (−L(t)·sin(θ₀/2),  −L(t)·cos(θ₀/2) )
+ *
+ * Velocity and acceleration follow analytically from dL/dt and d²L/dt².
+ */
+function sampleWaterStretchState(chargeIndex: 0 | 1 | 2, t: number): KinematicState {
+  if (chargeIndex === 0) {
+    return { t, pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 }, accel: { x: 0, y: 0 } };
+  }
+
+  const halfAngle = WATER_HOH_ANGLE_RAD / 2;
+  const sinHalf   = Math.sin(halfAngle);
+  const cosHalf   = Math.cos(halfAngle);
+  const sign      = chargeIndex === 1 ? +1 : -1;  // index 1 → +x, index 2 → −x
+
+  const A = WATER_STRETCH_AMPLITUDE;
+  const w = WATER_STRETCH_OMEGA;
+  const L  = WATER_BOND_LENGTH + A * Math.sin(w * t);
+  const Lp = A * w * Math.cos(w * t);                // dL/dt
+  const Lpp = -A * w * w * Math.sin(w * t);          // d²L/dt²
+
+  return {
+    t,
+    pos:   { x:  sign * L   * sinHalf, y: -L   * cosHalf },
+    vel:   { x:  sign * Lp  * sinHalf, y: -Lp  * cosHalf },
+    accel: { x:  sign * Lpp * sinHalf, y: -Lpp * cosHalf },
+  };
+}
+
+/**
+ * Exact kinematic state for the water bend (scissoring) mode.
+ *
+ * Charge index ordering: 0 = O (fixed at origin), 1 = H₊x, 2 = H₋x.
+ *
+ * Bond lengths are fixed at L₀; the H–O–H angle modulates as
+ * θ(t) = θ₀ + Δθ·sin(ω·t). Each H atom moves along an arc of radius L₀
+ * around O. The mirror symmetry across the C₂ axis is preserved at all t.
+ *
+ * H₊x position: (  L₀·sin(θ(t)/2), −L₀·cos(θ(t)/2) )
+ * H₋x position: ( −L₀·sin(θ(t)/2), −L₀·cos(θ(t)/2) )
+ *
+ * Let φ(t) = θ(t)/2. Then by the chain rule:
+ *   dx/dt    = ±L₀·cos(φ)·φ'
+ *   d²x/dt²  = ±L₀·(−sin(φ)·(φ')² + cos(φ)·φ'')
+ *   dy/dt    =  L₀·sin(φ)·φ'
+ *   d²y/dt²  =  L₀·(cos(φ)·(φ')² + sin(φ)·φ'')
+ * where φ' = (Δθ·ω/2)·cos(ω·t) and φ'' = −(Δθ·ω²/2)·sin(ω·t).
+ */
+function sampleWaterBendState(chargeIndex: 0 | 1 | 2, t: number): KinematicState {
+  if (chargeIndex === 0) {
+    return { t, pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 }, accel: { x: 0, y: 0 } };
+  }
+
+  const sign = chargeIndex === 1 ? +1 : -1;
+  const L    = WATER_BOND_LENGTH;
+  const D    = WATER_BEND_AMPLITUDE_RAD;
+  const w    = WATER_BEND_OMEGA;
+
+  const theta   = WATER_HOH_ANGLE_RAD + D * Math.sin(w * t);
+  const phi     = theta / 2;
+  const sinPhi  = Math.sin(phi);
+  const cosPhi  = Math.cos(phi);
+
+  const phiP    = (D * w / 2) * Math.cos(w * t);            // dφ/dt
+  const phiPP   = -(D * w * w / 2) * Math.sin(w * t);       // d²φ/dt²
+
+  // y-component: H_y = -L·cos(φ). Note the sign flips when differentiating cos.
+  //   dH_y/dt   =  L·sin(φ)·φ'
+  //   d²H_y/dt² =  L·(cos(φ)·(φ')² + sin(φ)·φ'')
+  // x-component: H_x = sign·L·sin(φ).
+  //   dH_x/dt   = sign·L·cos(φ)·φ'
+  //   d²H_x/dt² = sign·L·(−sin(φ)·(φ')² + cos(φ)·φ'')
+  return {
+    t,
+    pos:   { x:  sign * L * sinPhi,                                 y: -L * cosPhi                                  },
+    vel:   { x:  sign * L * cosPhi * phiP,                          y:  L * sinPhi * phiP                           },
+    accel: { x:  sign * L * (-sinPhi * phiP * phiP + cosPhi * phiPP), y:  L * (cosPhi * phiP * phiP + sinPhi * phiPP) },
+  };
+}
+
+/**
  * Return the charge specs for all charges in `mode` at simulation time t.
  *
  * Single-charge modes return a length-1 array. Multi-charge modes return a
@@ -219,6 +353,22 @@ export function sampleDemoChargeStates(mode: DemoMode, t: number): DemoChargeSpe
     return [
       { charge: +1, state: sampleHydrogenState(0, t) },
       { charge: -1, state: sampleHydrogenState(1, t) },
+    ];
+  }
+  // Water modes: charges are returned in the locked order [O, H₊x, H₋x] so
+  // the WebGL history-texture slot assignments stay stable across frames.
+  if (mode === 'water_stretch') {
+    return [
+      { charge: WATER_O_CHARGE, state: sampleWaterStretchState(0, t) },
+      { charge: WATER_H_CHARGE, state: sampleWaterStretchState(1, t) },
+      { charge: WATER_H_CHARGE, state: sampleWaterStretchState(2, t) },
+    ];
+  }
+  if (mode === 'water_bend') {
+    return [
+      { charge: WATER_O_CHARGE, state: sampleWaterBendState(0, t) },
+      { charge: WATER_H_CHARGE, state: sampleWaterBendState(1, t) },
+      { charge: WATER_H_CHARGE, state: sampleWaterBendState(2, t) },
     ];
   }
   return [{ charge: 1, state: sampleSourceState(mode, t) }];
@@ -245,6 +395,11 @@ export function maxHistorySpeed(mode: DemoMode): number {
   if (mode === 'draggable') return 0;
   if (mode === 'oscillating' || mode === 'dipole') return OSCILLATING_AMPLITUDE * OSCILLATING_OMEGA; // 0.5
   if (mode === 'hydrogen') return HYDROGEN_ORBIT_RADIUS * HYDROGEN_OMEGA; // 0.6
+  // Water modes: peak H-atom speed.
+  //   stretch: |dH/dt|_max = A·ω
+  //   bend:    |dH/dt|_max = L₀·Δθ·ω/2
+  if (mode === 'water_stretch') return WATER_STRETCH_AMPLITUDE * WATER_STRETCH_OMEGA;                  // 0.4
+  if (mode === 'water_bend')    return WATER_BOND_LENGTH * WATER_BEND_AMPLITUDE_RAD * WATER_BEND_OMEGA / 2; // 0.18
   return SUDDEN_STOP_V; // moving_charge peaks at SUDDEN_STOP_V (pre- and post-stop history)
 }
 

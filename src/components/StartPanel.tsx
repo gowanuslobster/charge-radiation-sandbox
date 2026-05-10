@@ -51,6 +51,18 @@ const MODE_CARDS: ModeCard[] = [
     desc: 'A negative charge follows a circular orbit around a fixed positive center, creating a rotating dipole source.',
     hint: 'Pick Accel B on the Magnetic heatmap and turn on contours to watch the signed magnetic radiation pattern rotate outward.',
   },
+  {
+    mode: 'water_stretch',
+    title: 'Water — stretch',
+    desc: 'A three-charge H₂O-like source with both O–H bonds breathing in phase. Oxygen is held fixed; this is scripted vibrational motion, not molecular dynamics.',
+    hint: 'Pick Accel B on the Magnetic heatmap and turn on contours to see the dipole-pattern radiation along the C₂ axis. Compare wavelength against the bend mode at the same c.',
+  },
+  {
+    mode: 'water_bend',
+    title: 'Water — bend',
+    desc: 'Same three-charge H₂O-like source with bond lengths fixed; the H–O–H angle scissors back and forth. Oxygen held fixed; scripted vibrational motion.',
+    hint: 'Bend runs at half the stretch frequency, so the radiated wave train has roughly twice the wavelength at the same c — the IR-spectroscopy intuition that vibrational modes have characteristic frequencies.',
+  },
 ];
 
 export function StartPanel({ onSelectMode }: Props) {

@@ -10,7 +10,9 @@
 // History is uploaded each frame as a 2D RGBA32F texture (TEX_WIDTH × TEX_HEIGHT).
 // Supports up to MAX_CHARGES independent charge histories. Each charge occupies a
 // contiguous texel slice; the shader solves retarded time independently per charge
-// and sums the three magnetic components.
+// and sums the three magnetic components. Per-frame texSubImage2D upload is
+// restricted to the active-charge texel extent so the upload cost scales with
+// chargeCount, not MAX_CHARGES.
 //
 // Normalization is mode-aware and per-channel (see "Normalization" block below).
 // Two policies: dynamic EMA for transient modes (moving_charge — both pre and
@@ -27,6 +29,8 @@ import {
   DIPOLE_OMEGA,
   HYDROGEN_OMEGA,
   OSCILLATING_OMEGA,
+  WATER_STRETCH_OMEGA,
+  WATER_BEND_OMEGA,
 } from '@/physics/demoModes';
 import type { MagneticHeatmapMode } from '@/rendering/displayModes';
 import type { WorldBounds } from '@/rendering/worldSpace';
@@ -52,28 +56,43 @@ import {
 //
 // 2D addressing: absolute texel index t → ivec2(t % TEX_WIDTH, t / TEX_WIDTH)
 //
-//   MAX_CHARGES           = 2
+//   MAX_CHARGES           = 32   (family-ready: covers M14 water modes at N=3
+//                                 and any future small-molecule mode up to 32
+//                                 active charges. Per-frame upload cost is
+//                                 chargeCount-bounded by row-restricted
+//                                 texSubImage2D, so the bump is cost-neutral
+//                                 for the existing 1- and 2-charge modes.)
 //   MAX_HISTORY_SAMPLES   = 4096
 //   CHARGE_TEXEL_STRIDE   = 2 × 4096 = 8192
-//   Total texels          = 2 × 8192 = 16384
-//   TEX_WIDTH × TEX_HEIGHT = 512 × 32 = 16384  ✓ (both ≤ WebGL2 min MAX_TEXTURE_SIZE 2048)
+//   Total texels          = 32 × 8192 = 262144
+//   TEX_WIDTH × TEX_HEIGHT = 512 × 512 = 262144  ✓ (both ≤ WebGL2 min MAX_TEXTURE_SIZE 2048)
 //
-// Charge 0: absolute texels 0–8191       → rows  0–15 of the 512-wide texture
-// Charge 1: absolute texels 8192–16383   → rows 16–31 of the 512-wide texture
+// Charge k occupies absolute texels k·8192 … (k+1)·8192 − 1 → rows k·16 …
+// (k+1)·16 − 1. Per-frame texSubImage2D restricts the upload to
+// chargeCount · 16 rows, so the 1- and 2-charge modes pay 128 KB / 256 KB
+// per frame respectively (16 bytes/RGBA32F texel × 512 × {16,32}). Without
+// row restriction the full 32-charge texture would be 4 MB per frame.
 
-const MAX_CHARGES         = 2;
+const MAX_CHARGES         = 32;
 const MAX_HISTORY_SAMPLES = 4096;
 const TEX_WIDTH           = 512;
-// Derived: (2 × MAX_CHARGES × MAX_HISTORY_SAMPLES) / TEX_WIDTH = 16384 / 512 = 32
-const TEX_HEIGHT          = (2 * MAX_CHARGES * MAX_HISTORY_SAMPLES) / TEX_WIDTH;  // 32
+// Derived: (2 × MAX_CHARGES × MAX_HISTORY_SAMPLES) / TEX_WIDTH = 262144 / 512 = 512
+const TEX_HEIGHT          = (2 * MAX_CHARGES * MAX_HISTORY_SAMPLES) / TEX_WIDTH;  // 512
+// Each charge's slice spans this many texture rows.
+const ROWS_PER_CHARGE     = (2 * MAX_HISTORY_SAMPLES) / TEX_WIDTH;                // 16
 
 // Fixed iteration counts for GPU loops.
 const BINARY_SEARCH_ITERS = 12;   // ceil(log2(4096))
 const NEWTON_ITERS        = 28;   // profiling target range 24–32
 
 // Normalization probe parameters.
-const NORM_PROBE_W   = 32;
-const NORM_PROBE_H   = 32;
+// Phase-1 perf: 32→16 cuts CPU probe cost 4× (256 cells vs 1024). The probe
+// estimates a per-frame normalization peak; halving each axis trades a small
+// amount of robustness against per-frame magnitude jitter for substantial
+// main-thread savings, especially at higher charge counts (e.g. M14 water
+// at N=3 and any future small-molecule modes).
+const NORM_PROBE_W   = 16;
+const NORM_PROBE_H   = 16;
 const NORM_EMA_ALPHA = 0.12;               // temporal smoothing for Policy A modes
 const PERIODIC_NORM_PHASE_SAMPLES = 8;     // Policy B phase sweep count
 
@@ -89,8 +108,21 @@ const CHANNEL_TOTAL = 0;
 const CHANNEL_VEL   = 1;
 const CHANNEL_ACCEL = 2;
 
-// Phase I performance cap: limit the effective DPR for this canvas only.
-const WEBGL_MAX_DPR = 1.5;
+// Phase-1 perf cap: limit the effective DPR for this canvas only.
+// 1.5→1.0 cuts fragment-shader work ~2.25× on HiDPI displays. The signed
+// warm/cool heatmap is band-limited and tolerates the lower resolution well;
+// the contour pass is unaffected at the qualitative read.
+const WEBGL_MAX_DPR = 1.0;
+
+// Opt-in dev-only perf logging for the heatmap canvas. Off by default; enable
+// per-session by appending ?perfLog=1 to the dev URL. Logs tick duration
+// (median + p95), normalization-probe rate, RAF FPS, and a `skipped=true`
+// tag when the Phase-2 paused-clean skip path runs. The DEV gate keeps the
+// instrumentation disabled in production builds (the conditional reads false
+// in production; bundle elimination of the guarded code is not claimed).
+const PERF_LOG_ENABLED = import.meta.env.DEV
+  && typeof window !== 'undefined'
+  && new URLSearchParams(window.location.search).get('perfLog') === '1';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -140,13 +172,13 @@ const int CHARGE_TEXEL_STRIDE = ${2 * MAX_HISTORY_SAMPLES};
 // ── Uniforms ──────────────────────────────────────────────────────────────────
 uniform sampler2D u_history;            // RGBA32F, TEX_WIDTH × TEX_HEIGHT
 uniform int       u_texWidth;           // TEX_WIDTH constant (for 2D addressing)
-uniform int       u_chargeCount;        // number of active charges (1 or 2)
-uniform int       u_historyCounts[2];   // per-charge valid state count
-uniform float     u_charges[2];         // per-charge signed charge value
+uniform int       u_chargeCount;        // number of active charges (≤ MAX_CHARGES)
+uniform int       u_historyCounts[${MAX_CHARGES}];  // per-charge valid state count
+uniform float     u_charges[${MAX_CHARGES}];        // per-charge signed charge value
 uniform float     u_c;
 uniform vec4      u_worldBounds;        // (minX, maxX, minY, maxY) in world space
 uniform vec2      u_resolution;         // canvas physical pixel size (post-DPR)
-uniform bool      u_isSigned;           // true = zero-crossing contour (oscillating, dipole, hydrogen)
+uniform bool      u_isSigned;           // true = zero-crossing contour (oscillating, dipole, hydrogen, water_stretch, water_bend)
                                         // false = envelope contour (moving_charge)
 uniform float     u_heatmapPeak;        // normalization ceiling for the selected heatmap channel
 uniform float     u_accelPeak;          // normalization ceiling for the bZAccel contour branch
@@ -379,7 +411,7 @@ void main() {
   // regardless of which channel the heatmap is displaying.
   if (u_showContour) {
     if (u_isSigned) {
-      // oscillating, dipole, and hydrogen: zero-crossing contour on summed bZAccel
+      // oscillating, dipole, hydrogen, water_stretch, water_bend: zero-crossing contour on summed bZAccel
       float norm         = sumAccel / u_accelPeak;
       float contourWidth = fwidth(norm) * 1.5;
       float contourMask  = 1.0 - smoothstep(0.0, contourWidth, abs(norm));
@@ -405,9 +437,12 @@ void main() {
 // ── Mode period lookup (Policy B) ─────────────────────────────────────────────
 
 function periodicModePeriod(mode: DemoMode): number | null {
-  if (mode === 'oscillating') return (2 * Math.PI) / OSCILLATING_OMEGA;
-  if (mode === 'dipole')      return (2 * Math.PI) / DIPOLE_OMEGA;
-  if (mode === 'hydrogen')    return (2 * Math.PI) / HYDROGEN_OMEGA;
+  if (mode === 'oscillating')    return (2 * Math.PI) / OSCILLATING_OMEGA;
+  if (mode === 'dipole')         return (2 * Math.PI) / DIPOLE_OMEGA;
+  if (mode === 'hydrogen')       return (2 * Math.PI) / HYDROGEN_OMEGA;
+  // Water modes: prescribed sinusoidal driving, period = 2π/ω.
+  if (mode === 'water_stretch')  return (2 * Math.PI) / WATER_STRETCH_OMEGA;
+  if (mode === 'water_bend')     return (2 * Math.PI) / WATER_BEND_OMEGA;
   return null;
 }
 
@@ -522,12 +557,51 @@ export function WavefrontWebGLCanvas({
     const prevNormChargeVals = new Float64Array(MAX_CHARGES).fill(NaN);
     let prevNormBounds     = { minX: NaN, maxX: NaN, minY: NaN, maxY: NaN } as typeof bounds;
 
+    // Phase-2 paused-clean skip. Tracks every input that affects the rendered
+    // image. When paused && every tracked input matches the last drawn frame,
+    // the entire RAF body is skipped (no charge packing, no upload, no probe,
+    // no uniforms, no draw). The GPU is otherwise re-running the full per-pixel
+    // retarded-time solve every frame to produce an identical image, which
+    // dominates GPU time and stalls the main thread for input handling. The
+    // skip ends as soon as any tracked input changes (pan/zoom/channel/c/
+    // pause-toggle/sim-epoch/charge-values/contour-toggle) or the user
+    // un-pauses, at which point the next tick draws normally.
+    //
+    // fieldLayer is intentionally NOT tracked — it only affects
+    // VectorFieldCanvas, not the heatmap. charge values ARE tracked for
+    // forward compatibility (no current UI changes them, but a future
+    // charge-magnitude slider would benefit).
+    let lastDrawnInitialized = false;
+    let lastDrawnEpoch       = NaN;
+    let lastDrawnMode        = '' as DemoMode;
+    let lastDrawnC           = NaN;
+    let lastDrawnChargeCount = -1;
+    const lastDrawnChargeVals = new Float64Array(MAX_CHARGES).fill(NaN);
+    const lastDrawnBounds    = { minX: NaN, maxX: NaN, minY: NaN, maxY: NaN } as typeof bounds;
+    let lastDrawnChannel     = '' as MagneticHeatmapMode;
+    let lastDrawnDoContour   = false;
+    let lastDrawnDoHeatmap   = false;
+    let lastDrawnSimTime     = NaN;
+    let lastDrawnPaused      = false;
+
     // ── RAF loop ──────────────────────────────────────────────────────────────
     let rafId    = 0;
     let glAlive  = true;
 
+    // Phase-0 perf instrumentation. Scoped to this canvas. Off by default;
+    // opt in per-session via ?perfLog=1 (see PERF_LOG_ENABLED at module top).
+    // Logs tick duration (median + p95), probe invocation rate, and RAF FPS
+    // every PERF_LOG_INTERVAL_MS. Tagged `skipped=true` for Phase-2
+    // paused-clean tick skips.
+    const PERF_LOG_INTERVAL_MS = 2000;
+    const perfTickDurations: number[] = [];
+    let   perfProbeCount = 0;
+    let   perfTickCount  = 0;
+    let   perfWindowStart = performance.now();
+
     const tick = () => {
       if (!glAlive) return;
+      const perfTickStart = PERF_LOG_ENABLED ? performance.now() : 0;
 
       const runtimes   = chargeRuntimesRef.current;
       const tCurrent   = simulationTimeRef.current;
@@ -540,8 +614,85 @@ export function WavefrontWebGLCanvas({
       const doHeatmap  = channel !== 'off';
       const paused     = isPausedRef.current;
 
+      const chargeCountThisTick = Math.min(runtimes.length, MAX_CHARGES);
+
+      // Phase-2 paused-clean skip. If paused and every tracked input matches
+      // the last drawn frame, skip the entire RAF body. See lastDrawn* state
+      // declarations above for rationale and the input set.
+      if (paused && lastDrawnInitialized) {
+        let chargesUnchanged = chargeCountThisTick === lastDrawnChargeCount;
+        if (chargesUnchanged) {
+          for (let ci = 0; ci < chargeCountThisTick; ci++) {
+            if (runtimes[ci].charge !== lastDrawnChargeVals[ci]) { chargesUnchanged = false; break; }
+          }
+        }
+        const boundsUnchanged =
+          curBounds.minX === lastDrawnBounds.minX &&
+          curBounds.maxX === lastDrawnBounds.maxX &&
+          curBounds.minY === lastDrawnBounds.minY &&
+          curBounds.maxY === lastDrawnBounds.maxY;
+        if (
+          epoch === lastDrawnEpoch &&
+          mode === lastDrawnMode &&
+          config.c === lastDrawnC &&
+          chargesUnchanged &&
+          boundsUnchanged &&
+          channel === lastDrawnChannel &&
+          doContour === lastDrawnDoContour &&
+          doHeatmap === lastDrawnDoHeatmap &&
+          tCurrent === lastDrawnSimTime &&
+          paused === lastDrawnPaused
+        ) {
+          if (PERF_LOG_ENABLED) {
+            perfTickDurations.push(performance.now() - perfTickStart);
+            perfTickCount++;
+            const elapsed = performance.now() - perfWindowStart;
+            if (elapsed >= PERF_LOG_INTERVAL_MS && perfTickDurations.length > 0) {
+              const sorted = perfTickDurations.slice().sort((a, b) => a - b);
+              const median = sorted[Math.floor(sorted.length / 2)];
+              const p95 = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))];
+              const fps = perfTickCount * 1000 / elapsed;
+              const probeRate = perfProbeCount * 1000 / elapsed;
+              console.log(
+                `[WebGL perf] tick median=${median.toFixed(2)}ms p95=${p95.toFixed(2)}ms ` +
+                `fps=${fps.toFixed(1)} probe=${probeRate.toFixed(1)}/s ` +
+                `mode=${mode} chargeCount=${chargeCountThisTick} channel=${channel} paused=${paused} skipped=true`,
+              );
+              perfTickDurations.length = 0;
+              perfProbeCount = 0;
+              perfTickCount = 0;
+              perfWindowStart = performance.now();
+            }
+          }
+          rafId = requestAnimationFrame(tick);
+          return;
+        }
+      }
+
+      // Helper: capture all inputs that the Phase-2 skip check compares against.
+      // Called both on the no-overlay early-return path and after each full draw.
+      const recordLastDrawn = () => {
+        lastDrawnEpoch = epoch;
+        lastDrawnMode = mode;
+        lastDrawnC = config.c;
+        lastDrawnChargeCount = chargeCountThisTick;
+        for (let ci = 0; ci < chargeCountThisTick; ci++) lastDrawnChargeVals[ci] = runtimes[ci].charge;
+        for (let ci = chargeCountThisTick; ci < MAX_CHARGES; ci++) lastDrawnChargeVals[ci] = NaN;
+        lastDrawnBounds.minX = curBounds.minX;
+        lastDrawnBounds.maxX = curBounds.maxX;
+        lastDrawnBounds.minY = curBounds.minY;
+        lastDrawnBounds.maxY = curBounds.maxY;
+        lastDrawnChannel = channel;
+        lastDrawnDoContour = doContour;
+        lastDrawnDoHeatmap = doHeatmap;
+        lastDrawnSimTime = tCurrent;
+        lastDrawnPaused = paused;
+        lastDrawnInitialized = true;
+      };
+
       if (!doHeatmap && !doContour) {
         gl.clear(gl.COLOR_BUFFER_BIT);
+        recordLastDrawn();
         rafId = requestAnimationFrame(tick);
         return;
       }
@@ -549,12 +700,13 @@ export function WavefrontWebGLCanvas({
       // ── Pack history into staging buffer ────────────────────────────────────
       //
       // Each charge's states are packed into a contiguous slice of TEX_WIDTH × TEX_HEIGHT.
-      // Charge k's texel block starts at absolute texel k × CHARGE_TEXEL_STRIDE.
-      // staging.fill(0) clears all slots so stale data beyond histCount is harmless.
-      // Clamp to the texture capacity. If more runtimes arrive (e.g. a future 3-charge
-      // demo), the excess charges are silently dropped and the heatmap will be wrong.
-      // The dev warning below surfaces this immediately so the routing in
-      // ChargeRadiationSandbox can be updated to use the CPU fallback instead.
+      // Charge k's texel block starts at absolute texel k × CHARGE_TEXEL_STRIDE
+      // (= rows k·ROWS_PER_CHARGE … (k+1)·ROWS_PER_CHARGE − 1 of the texture).
+      // Clamp to the texture capacity. If more runtimes arrive (beyond
+      // MAX_CHARGES), the excess charges are silently dropped and the heatmap
+      // will be wrong. The dev warning below surfaces this immediately so the
+      // routing in ChargeRadiationSandbox can be updated to use the CPU
+      // fallback instead.
       if (import.meta.env.DEV && runtimes.length > MAX_CHARGES) {
         console.warn(
           `[WavefrontWebGLCanvas] ${runtimes.length} charge runtimes supplied but shader ` +
@@ -562,8 +714,21 @@ export function WavefrontWebGLCanvas({
           `Route to WavefrontOverlayCanvas for scenes with more than ${MAX_CHARGES} charges.`,
         );
       }
-      const chargeCount = Math.min(runtimes.length, MAX_CHARGES);
-      staging.fill(0);
+      const chargeCount = chargeCountThisTick;
+
+      // Bounded zero-fill of the staging buffer: only the active uploaded
+      // extent. The full staging buffer is sized for MAX_CHARGES (4 MB at
+      // MAX_CHARGES=32); without this restriction the 1- and 2-charge modes
+      // would pay a full-buffer fill every frame purely as a function of the
+      // renderer's family-ready capacity. Safe to bound because the shader
+      // never reads texels past u_chargeCount (audited at M14-A.2).
+      const uploadFloats = chargeCount * ROWS_PER_CHARGE * TEX_WIDTH * 4;
+      staging.fill(0, 0, uploadFloats);
+
+      // Unbounded full-array zero-fill of the small uniform arrays. Defensive
+      // (cheap at MAX_CHARGES=32) — if a future shader edit ever reads
+      // u_charges[ci] or u_historyCounts[ci] for ci >= u_chargeCount, the read
+      // returns 0 and contributes nothing, rather than leaking stale data.
       histCountsArr.fill(0);
       chargeValsArr.fill(0);
 
@@ -594,11 +759,22 @@ export function WavefrontWebGLCanvas({
       }
 
       // ── Upload history texture ──────────────────────────────────────────────
+      // Upload only the rows that hold active-charge data. With MAX_CHARGES=32
+      // and ROWS_PER_CHARGE=16, a single charge uploads 16 rows = 128 KB;
+      // two charges upload 32 rows = 256 KB. Without this restriction every
+      // frame would push the full 4 MB texture regardless of chargeCount.
+      const uploadHeight = chargeCount * ROWS_PER_CHARGE;
       gl.bindTexture(gl.TEXTURE_2D, historyTex);
-      gl.texSubImage2D(
-        gl.TEXTURE_2D, 0, 0, 0, TEX_WIDTH, TEX_HEIGHT,
-        gl.RGBA, gl.FLOAT, staging,
-      );
+      if (uploadHeight > 0) {
+        // WebGL2's srcOffset overload lets the staging buffer be larger than
+        // the upload region, so we hand `staging` directly without allocating
+        // a per-frame .subarray() view. The driver reads exactly
+        // TEX_WIDTH × uploadHeight × 4 floats starting at offset 0.
+        gl.texSubImage2D(
+          gl.TEXTURE_2D, 0, 0, 0, TEX_WIDTH, uploadHeight,
+          gl.RGBA, gl.FLOAT, staging, 0,
+        );
+      }
 
       // ── Mode-aware per-channel normalization ────────────────────────────────
       //
@@ -631,8 +807,9 @@ export function WavefrontWebGLCanvas({
       const period        = periodicModePeriod(mode);
       const policyB       = period !== null;
 
-      const probe = (probeTime: number, maskFactor: number) =>
-        runNormalizationProbe({
+      const probe = (probeTime: number, maskFactor: number) => {
+        if (PERF_LOG_ENABLED) perfProbeCount++;
+        return runNormalizationProbe({
           chargeRuntimes:    runtimes,
           normSamplerStates,
           probeScratch,
@@ -645,6 +822,7 @@ export function WavefrontWebGLCanvas({
           gridH:             NORM_PROBE_H,
           maskRadiusFactor:  maskFactor,
         });
+      };
 
       if (policyB) {
         // Policy B: phase-invariant cache. Recompute only on invalidation;
@@ -739,10 +917,14 @@ export function WavefrontWebGLCanvas({
         gl.uniform2f(uniforms['u_resolution'], canvas.width, canvas.height);
       }
       if (uniforms['u_isSigned'] !== undefined) {
-        // Signed zero-crossing contour for periodic modes; envelope for moving_charge.
-        // (draggable hides the contour toggle entirely; value is irrelevant there.)
-        gl.uniform1i(uniforms['u_isSigned'],
-          (mode === 'oscillating' || mode === 'dipole' || mode === 'hydrogen') ? 1 : 0);
+        // Signed zero-crossing contour for periodic modes (oscillating, dipole,
+        // hydrogen, water_stretch, water_bend); envelope-threshold contour for
+        // moving_charge. (draggable hides the contour toggle entirely; value is
+        // irrelevant there.)
+        const isPeriodicSigned =
+          mode === 'oscillating' || mode === 'dipole' || mode === 'hydrogen' ||
+          mode === 'water_stretch' || mode === 'water_bend';
+        gl.uniform1i(uniforms['u_isSigned'], isPeriodicSigned ? 1 : 0);
       }
       if (uniforms['u_heatmapPeak'] !== undefined) gl.uniform1f(uniforms['u_heatmapPeak'], heatmapPeak);
       if (uniforms['u_accelPeak']   !== undefined) gl.uniform1f(uniforms['u_accelPeak'],   accelPeak);
@@ -758,6 +940,30 @@ export function WavefrontWebGLCanvas({
       gl.bindVertexArray(vao);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
       gl.bindVertexArray(null);
+
+      recordLastDrawn();
+
+      if (PERF_LOG_ENABLED) {
+        perfTickDurations.push(performance.now() - perfTickStart);
+        perfTickCount++;
+        const elapsed = performance.now() - perfWindowStart;
+        if (elapsed >= PERF_LOG_INTERVAL_MS && perfTickDurations.length > 0) {
+          const sorted = perfTickDurations.slice().sort((a, b) => a - b);
+          const median = sorted[Math.floor(sorted.length / 2)];
+          const p95 = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))];
+          const fps = perfTickCount * 1000 / elapsed;
+          const probeRate = perfProbeCount * 1000 / elapsed;
+          console.log(
+            `[WebGL perf] tick median=${median.toFixed(2)}ms p95=${p95.toFixed(2)}ms ` +
+            `fps=${fps.toFixed(1)} probe=${probeRate.toFixed(1)}/s ` +
+            `mode=${mode} chargeCount=${chargeCount} channel=${channel} paused=${paused}`,
+          );
+          perfTickDurations.length = 0;
+          perfProbeCount = 0;
+          perfTickCount = 0;
+          perfWindowStart = performance.now();
+        }
+      }
 
       rafId = requestAnimationFrame(tick);
     };

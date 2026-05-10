@@ -60,6 +60,13 @@ const TOGGLE_BASE = 'rounded-md px-3 py-2 text-sm font-medium transition-all dur
 // Shared base classes for icon buttons (zoom ±, pan arrows).
 const ICON_BASE = 'flex h-7 w-7 items-center justify-center rounded-md text-sm text-white/85 bg-white/[0.12] hover:bg-white/20 transition-colors duration-200';
 
+// Build-vintage stamp shown at the top of the control panel. Bumped on any
+// change that affects the running app so a manual browser check can confirm
+// the live build vintage at a glance. See AGENTS.md "Build-vintage timestamp"
+// for the bump rule.
+const LAST_CODE_CHANGE_STAMP    = '2026-05-09 15:56 PDT';
+const LAST_CODE_CHANGE_DATETIME = '2026-05-09T15:56:03-07:00';
+
 export function ControlPanel({
   demoMode, fieldLayer, isPaused, c, stopTriggered, readout,
   magneticHeatmapMode, showWavefrontContours, showStreamlines, showVelocityVectors,
@@ -74,15 +81,22 @@ export function ControlPanel({
 }: Props) {
   const magneticHeatmapVisible =
     demoMode === 'moving_charge' || demoMode === 'oscillating' ||
-    demoMode === 'dipole' || demoMode === 'hydrogen' || demoMode === 'draggable';
+    demoMode === 'dipole' || demoMode === 'hydrogen' || demoMode === 'draggable' ||
+    demoMode === 'water_stretch' || demoMode === 'water_bend';
   const wavefrontContoursVisible =
     demoMode === 'moving_charge' || demoMode === 'oscillating' ||
-    demoMode === 'dipole' || demoMode === 'hydrogen';
+    demoMode === 'dipole' || demoMode === 'hydrogen' ||
+    demoMode === 'water_stretch' || demoMode === 'water_bend';
   return (
     <div
       className="absolute left-4 top-4 z-20 flex flex-col gap-3 rounded-2xl border border-orange-400/20 bg-black/65 p-4 text-sm text-zinc-200 backdrop-blur-md select-none pointer-events-auto max-w-xs"
       onClick={(e) => e.stopPropagation()}
     >
+
+      {/* Build-vintage stamp. See LAST_CODE_CHANGE_STAMP definition for the bump rule. */}
+      <p className="text-[10px] text-zinc-500">
+        last code change <time dateTime={LAST_CODE_CHANGE_DATETIME}>{LAST_CODE_CHANGE_STAMP}</time>
+      </p>
 
       {/* Mode */}
       <div>
@@ -117,6 +131,22 @@ export function ControlPanel({
               ? 'bg-orange-400 text-black shadow-[0_0_16px_rgba(251,146,60,0.5)]'
               : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
             Hydrogen
+          </button>
+        </div>
+        {/* Water molecule subsection — vibrational normal modes (M14). */}
+        <p className="mb-1 mt-2 text-[10px] font-medium uppercase tracking-[0.15em] text-zinc-500">Water molecule</p>
+        <div className="flex flex-wrap gap-1.5">
+          <button type="button" onClick={() => onDemoModeChange('water_stretch')}
+            className={`${TOGGLE_BASE} ${!noModeActive && demoMode === 'water_stretch'
+              ? 'bg-orange-400 text-black shadow-[0_0_16px_rgba(251,146,60,0.5)]'
+              : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
+            Stretch
+          </button>
+          <button type="button" onClick={() => onDemoModeChange('water_bend')}
+            className={`${TOGGLE_BASE} ${!noModeActive && demoMode === 'water_bend'
+              ? 'bg-orange-400 text-black shadow-[0_0_16px_rgba(251,146,60,0.5)]'
+              : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
+            Bend
           </button>
         </div>
         {/* Start Screen button — hidden while no mode is active (already on start screen) */}

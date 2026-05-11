@@ -54,13 +54,13 @@ const MODE_CARDS: ModeCard[] = [
   {
     mode: 'water_stretch',
     title: 'Water — stretch',
-    desc: 'A three-charge H₂O-like source with both O–H bonds breathing in phase. Oxygen is held fixed; this is scripted vibrational motion, not molecular dynamics.',
+    desc: 'A three-charge H₂O-like source with both O–H bonds breathing in phase. All three atoms move; the molecule\'s center of mass stays fixed — this is a scripted normal-mode displacement, not full molecular dynamics.',
     hint: 'Pick Accel B on the Magnetic heatmap and turn on contours to see the dipole-pattern radiation along the C₂ axis. Compare wavelength against the bend mode at the same c.',
   },
   {
     mode: 'water_bend',
     title: 'Water — bend',
-    desc: 'Same three-charge H₂O-like source with bond lengths fixed; the H–O–H angle scissors back and forth. Oxygen held fixed; scripted vibrational motion.',
+    desc: 'Same three-charge H₂O-like source; the H–O–H angle scissors back and forth while the bond lengths are preserved to first order. All three atoms move with the center of mass fixed — a scripted normal-mode displacement.',
     hint: 'Bend runs at half the stretch frequency, so the radiated wave train has roughly twice the wavelength at the same c — the IR-spectroscopy intuition that vibrational modes have characteristic frequencies.',
   },
 ];

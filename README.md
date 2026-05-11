@@ -99,9 +99,9 @@ A fixed positive charge sits at the center while a negative charge follows a pre
 
 ### Water molecule (stretch and bend)
 
-Two vibrational normal modes of an H₂O-like three-charge source: a negative oxygen at the origin and two positive hydrogens at the equilibrium geometry (bond length 0.6, H–O–H angle 105°). **Stretch** breathes both O–H bonds in phase; **Bend** holds the bond lengths fixed and scissors the angle. Both modulate the molecule's dipole moment along the C₂ symmetry axis, so both produce dipole-pattern radiation in 2D — the classic IR-active behavior of water.
+Two vibrational normal modes of an H₂O-like three-charge source: a negative oxygen and two positive hydrogens at the equilibrium geometry (bond length 0.6, H–O–H angle 105°, mass ratio 16:1). **Stretch** breathes both O–H bonds in phase along their bond directions; **Bend** moves the atoms along the first-order bend normal mode, opening and closing the H–O–H angle while preserving bond lengths to first order in displacement amplitude. Both modulate the molecule's dipole moment along the C₂ symmetry axis, so both produce dipole-pattern radiation in 2D — the classic IR-active behavior of water.
 
-This is a teaching model: the oxygen is held fixed and the atomic trajectories are scripted vibrational motions. It is not center-of-mass-conserving molecular dynamics.
+This is a teaching model: all three atoms move as scripted normal-mode displacements with the mass-weighted center of mass held at the world origin by construction. It is not full molecular dynamics — the trajectories are prescribed sinusoids, not the result of solving equations of motion.
 
 **To try:**
 - Open **Stretch**, pick **Accel B** on the **Magnetic heatmap** picker, enable **Wavefront contours**, and watch the dipole-pattern radiation peak along ±x (perpendicular to the C₂ axis).

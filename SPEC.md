@@ -56,9 +56,10 @@ The current official scope does not include:
 - time-averaged field displays
 
 M1–M14 are complete (M13 was scoped, started, and mothballed; the
-infrastructure pieces from that branch were ported forward in M14-A).
-Remaining work is tracked as future directions rather than official v1
-milestone scope.
+infrastructure pieces from that branch were ported forward in M14-A). M15 is
+in progress (15-A landed COM-conserving normal-mode displacements for water;
+15-B will add the antisymmetric stretch as a third water mode). Remaining
+work is tracked as future directions rather than official v1 milestone scope.
 
 ## Canonical Demo Modes
 
@@ -108,13 +109,14 @@ is imposed, and the emitted fields are computed from that history.
 
 ### Water — Symmetric Stretch
 
-A three-charge H₂O-like source: a negative oxygen at the origin and two
-positive hydrogens at the equilibrium geometry (bond length 0.6 sandbox units,
-H–O–H angle 105°). Both O–H bonds breathe in phase as
-`L(t) = L₀ + A·sin(ω·t)`, modulating the molecule's dipole moment along the C₂
-symmetry axis. Oxygen is held fixed; this is scripted vibrational motion, not
-center-of-mass-conserving molecular dynamics. The radiated field shows the
-characteristic dipole pattern peaked perpendicular to the C₂ axis.
+A three-charge H₂O-like source: a negative oxygen and two positive hydrogens
+at COM-centered equilibrium geometry (bond length 0.6 sandbox units, H–O–H
+angle 105°, mass ratio 16:1). Both O–H bonds breathe in phase along their
+equilibrium bond directions, modulating the molecule's dipole moment along
+the C₂ symmetry axis. All three atoms move; the mass-weighted center of mass
+stays at the world origin by construction (M15-A). This is a scripted
+normal-mode displacement, not full molecular dynamics. The radiated field
+shows the characteristic dipole pattern peaked perpendicular to the C₂ axis.
 
 **What the student learns:** vibrational motion with a time-varying dipole
 moment radiates by the same LW machinery as the other modes. This is the IR
@@ -123,8 +125,10 @@ spectroscopy intuition — a vibration that modulates the dipole moment is
 
 ### Water — Bend (Scissoring)
 
-Same three-charge H₂O-like source, with bond lengths fixed at L₀ and the H–O–H
-angle modulating as `θ(t) = θ₀ + Δθ·sin(ω·t)`. Bend runs at half the stretch
+Same three-charge H₂O-like source. The atoms move along the first-order
+bend normal mode — the H–O–H angle opens and closes while the O–H bond
+lengths are preserved to first order in displacement amplitude. O takes
+the mass-weighted COM-restoring counter-displacement along the C₂ axis. Bend runs at half the stretch
 frequency (ω_bend = 2.0, ω_stretch = 4.0), mirroring the directional ratio of
 real H₂O. The dipole-pattern orientation matches stretch (along the C₂ axis),
 but the radiated wave train has roughly twice the wavelength at the same `c`.
@@ -565,6 +569,82 @@ Acceptance criteria (M14-B):
   mirror symmetry across the C₂ axis; c-min margin sweep; periodicity
   `state(t + 2π/ω) ≈ state(t)`; stable label ordering preserved across `t`).
 - All M1–M12 and M14-A acceptance gates continue to pass.
+
+### M15: COM-corrected water modes and antisymmetric stretch — in progress
+
+M15 supersedes M14's runtime water-mode implementation while preserving the
+M14 history above. It lands in two sub-phases:
+
+- **M15-A — complete.** Replace the fixed-O scripted approximation of M14's
+  `water_stretch` and `water_bend` with mass-weighted COM-conserving
+  normal-mode displacements. All three atoms move; the molecule's center of
+  mass stays at the world origin by construction. M14 frequencies and atom
+  charge values are preserved. M15-A is a substantive physics correction to
+  shipped behavior — the M14 milestone block above documents the original
+  fixed-O implementation as shipped.
+- **M15-B — planned.** Add a third water mode (`water_asym_stretch`) with the
+  antisymmetric stretch normal-mode pattern, built on the M15-A equilibrium
+  and displacement-vector foundation.
+
+Implementation notes (M15-A):
+- Atomic masses use the exact ratio `m_O : m_H = 16 : 1` (¹⁶O / ¹H
+  approximation; the small isotopic correction is pedagogically irrelevant
+  and would only make tests noisier).
+- COM-centered equilibrium positions, below-O orientation (matching M14's
+  textbook drawing):
+    - `r_O_eq  = (0,             +L₀·cos(θ₀/2)/9)`
+    - `r_H±_eq = (±L₀·sin(θ₀/2), -(8/9)·L₀·cos(θ₀/2))`
+- Normal-mode displacement vectors satisfy
+  `m_O·δ_O + m_H·(δ_H+ + δ_H-) = 0` by construction. Each atom moves as
+  `r_atom(t) = r_atom_eq + A·sin(ω·t)·δ_atom`.
+- Symmetric stretch basis: H atoms displace along their outward bond
+  directions; O takes the COM-restoring counter-displacement along the C₂
+  axis (`δ_O = (0, +cos(θ₀/2)/8)`).
+- Bend basis: the first-order bend normal mode, derived by linearizing the
+  COM-centered equilibrium positions with respect to the half-angle φ at
+  fixed bond length L₀. Unnormalized:
+  `δ_H± ∝ (±cos(θ₀/2), (8/9)·sin(θ₀/2))`,
+  `δ_O  ∝ (0,          -sin(θ₀/2)/9)`.
+  Two properties hold by construction: (i) mass-weighted COM conservation
+  (`m_O·(-sinφ/9) + 2·m_H·(8/9)·sinφ = 0` with m_O = 16, m_H = 1); and
+  (ii) first-order O–H bond-length preservation
+  (`u · (δ_H± - δ_O) = 0` where u is the equilibrium bond unit vector).
+  The basis is normalized by `N = √(cos²(θ₀/2) + (64/81)·sin²(θ₀/2))` so
+  `|δ_H| = 1` and the `maxHistorySpeed = A·ω` contract is preserved
+  (`WATER_BEND_NORM` exports this constant). Bond-length conservation is
+  first-order only; the second-order deviation goes as `O(A²/L₀)` and stays
+  in the pedagogical noise floor for small A.
+- `WATER_BEND_AMPLITUDE` is a world-unit displacement amplitude paired with
+  the normalized COM-linearized bend basis. The value `0.09` matches the M14
+  peak H speed of `0.18` (= A·ω); the back-compat alias
+  `WATER_BEND_AMPLITUDE_RAD` is derived from `2·A_bend/L₀ = 0.3` and remains
+  numerically equal to the M14 angular amplitude.
+- `maxHistorySpeed(mode) = A·ω · max_atom |δ_atom|`. H δ vectors are unit
+  length and O δ norms are ≤ 1/8, so H binds and the entries reduce to
+  `A·ω`. Both modes share `CMIN_OSCILLATING = 0.62` (unchanged from M14;
+  no `minCForMode` change required because the empirical peak speed stays
+  in the existing bucket).
+- StartPanel water-card copy is updated to remove the "oxygen is held fixed"
+  language and describe the COM-conserving normal-mode displacements (still
+  scripted, still not full molecular dynamics).
+
+Acceptance criteria (M15-A):
+- All M14 acceptance gates continue to pass (label ordering, mirror symmetry,
+  periodicity, c-min margin, magnetic heatmap channels, vector modes,
+  wavefront contours).
+- Mass-weighted COM-conservation test passes for position, velocity, and
+  acceleration across the full period for both modes:
+  `m_O·r_O + m_H·(r_H+ + r_H-) ≈ 0`.
+- Equilibrium-position tests assert O sits at `+L₀·cos(θ/2)/9` above the
+  origin and H atoms at `-(8/9)·L₀·cos(θ/2)` below.
+- Empirical maxHistorySpeed test samples all three atoms at quarter-period
+  offsets plus a dense interior grid and asserts observed peak speed ≤
+  `maxHistorySpeed(mode)` and ≤ 0.5 for both modes.
+- StartPanel cards no longer claim O is fixed.
+- Visual check on dev server confirms the molecule sits with COM at world
+  origin (small upward shift from the M14 O-at-origin frame is expected) and
+  that the radiation pattern remains primarily oriented along ±x for both
+  modes (perpendicular to the C₂ axis).
 
 ## UI and Interaction Spec
 

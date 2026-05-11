@@ -18,8 +18,14 @@ import {
   WATER_HOH_ANGLE_RAD,
   WATER_STRETCH_AMPLITUDE,
   WATER_STRETCH_OMEGA,
+  WATER_BEND_AMPLITUDE,
   WATER_BEND_AMPLITUDE_RAD,
   WATER_BEND_OMEGA,
+  WATER_M_O,
+  WATER_M_H,
+  WATER_O_EQ_Y,
+  WATER_H_EQ_X,
+  WATER_H_EQ_Y,
 } from './demoModes';
 import { minCForMode } from '@/rendering/wavefrontWebGLConfig';
 import { ChargeHistory } from './chargeHistory';
@@ -438,10 +444,171 @@ describe('water modes: policy assertions', () => {
     expect(minCForMode('water_bend')).toBeCloseTo(0.62, 6);
   });
 
-  it('maxHistorySpeed: stretch = A·ω, bend = L₀·Δθ·ω/2', () => {
+  it('maxHistorySpeed: stretch = A_stretch·ω_stretch, bend = A_bend·ω_bend (H δ binds the budget)', () => {
     expect(maxHistorySpeed('water_stretch')).toBeCloseTo(WATER_STRETCH_AMPLITUDE * WATER_STRETCH_OMEGA, 12);
-    expect(maxHistorySpeed('water_bend')).toBeCloseTo(WATER_BOND_LENGTH * WATER_BEND_AMPLITUDE_RAD * WATER_BEND_OMEGA / 2, 12);
+    expect(maxHistorySpeed('water_bend')).toBeCloseTo(WATER_BEND_AMPLITUDE * WATER_BEND_OMEGA, 12);
   });
+});
+
+// ─── water modes: COM conservation (M15-A) ───────────────────────────────────
+//
+// All three atoms move; the mass-weighted COM stays at the world origin at
+// all t by construction. Empirically verified across position, velocity, and
+// acceleration to catch sign errors and coefficient drift independently.
+
+describe('water modes: mass-weighted COM is conserved at world origin (position, velocity, acceleration)', () => {
+  const WATER_MODES_FOR_COM = [
+    { name: 'water_stretch' as const, omega: WATER_STRETCH_OMEGA },
+    { name: 'water_bend'    as const, omega: WATER_BEND_OMEGA    },
+  ];
+
+  for (const { name, omega } of WATER_MODES_FOR_COM) {
+    it(`${name}: m_O·r_O + m_H·(r_H+ + r_H-) ≈ 0 across the full period`, () => {
+      const T = (2 * Math.PI) / omega;
+      const SAMPLES = 41; // dense sweep, avoids aliasing to extrema only
+      for (let i = 0; i < SAMPLES; i++) {
+        const t = (i / (SAMPLES - 1)) * T;
+        const specs = sampleDemoChargeStates(name, t);
+        const o  = specs[0].state;
+        const hp = specs[1].state;
+        const hm = specs[2].state;
+
+        const comX = WATER_M_O * o.pos.x + WATER_M_H * (hp.pos.x + hm.pos.x);
+        const comY = WATER_M_O * o.pos.y + WATER_M_H * (hp.pos.y + hm.pos.y);
+        expect(comX).toBeCloseTo(0, 10);
+        expect(comY).toBeCloseTo(0, 10);
+
+        const comVx = WATER_M_O * o.vel.x + WATER_M_H * (hp.vel.x + hm.vel.x);
+        const comVy = WATER_M_O * o.vel.y + WATER_M_H * (hp.vel.y + hm.vel.y);
+        expect(comVx).toBeCloseTo(0, 10);
+        expect(comVy).toBeCloseTo(0, 10);
+
+        const comAx = WATER_M_O * o.accel.x + WATER_M_H * (hp.accel.x + hm.accel.x);
+        const comAy = WATER_M_O * o.accel.y + WATER_M_H * (hp.accel.y + hm.accel.y);
+        expect(comAx).toBeCloseTo(0, 10);
+        expect(comAy).toBeCloseTo(0, 10);
+      }
+    });
+  }
+});
+
+describe('water modes: equilibrium positions (COM-centered, below-O orientation)', () => {
+  it('O equilibrium sits slightly above world origin: y_O = +L₀·cos(θ/2)/9', () => {
+    const expected = +WATER_BOND_LENGTH * Math.cos(WATER_HOH_ANGLE_RAD / 2) / 9;
+    expect(WATER_O_EQ_Y).toBeCloseTo(expected, 12);
+    expect(WATER_O_EQ_Y).toBeGreaterThan(0);
+  });
+
+  it('H equilibrium sits below origin: y_H = -(8/9)·L₀·cos(θ/2), x_H = ±L₀·sin(θ/2)', () => {
+    const expectedY = -(8 / 9) * WATER_BOND_LENGTH * Math.cos(WATER_HOH_ANGLE_RAD / 2);
+    const expectedX = WATER_BOND_LENGTH * Math.sin(WATER_HOH_ANGLE_RAD / 2);
+    expect(WATER_H_EQ_Y).toBeCloseTo(expectedY, 12);
+    expect(WATER_H_EQ_X).toBeCloseTo(expectedX, 12);
+    expect(WATER_H_EQ_Y).toBeLessThan(0);
+    expect(WATER_H_EQ_X).toBeGreaterThan(0);
+  });
+
+  it('at t = 0 the molecule sits at its equilibrium positions for both modes', () => {
+    for (const name of ['water_stretch', 'water_bend'] as const) {
+      const specs = sampleDemoChargeStates(name, 0);
+      expect(specs[0].state.pos.x).toBeCloseTo(0,             12);
+      expect(specs[0].state.pos.y).toBeCloseTo(WATER_O_EQ_Y,  12);
+      expect(specs[1].state.pos.x).toBeCloseTo(+WATER_H_EQ_X, 12);
+      expect(specs[1].state.pos.y).toBeCloseTo(WATER_H_EQ_Y,  12);
+      expect(specs[2].state.pos.x).toBeCloseTo(-WATER_H_EQ_X, 12);
+      expect(specs[2].state.pos.y).toBeCloseTo(WATER_H_EQ_Y,  12);
+    }
+  });
+});
+
+describe('water_bend: O–H bond length is preserved to first order in displacement amplitude', () => {
+  // The bend normal mode is defined by the property that, to first order in
+  // the displacement amplitude, only the H-O-H angle changes and the O-H
+  // bond lengths are conserved. This is equivalent to the relative O-H
+  // displacement being tangent to the equilibrium bond direction:
+  //   u · (δ_H± - δ_O) = 0
+  // where u is the equilibrium bond unit vector. Equivalently, the
+  // relative O-H velocity at peak velocity (t = 0, cos(ω·t) = 1) is
+  // perpendicular to u. This test asserts the velocity form so a future
+  // basis edit that breaks first-order bond-length conservation regresses
+  // here loudly.
+  it('relative O–H velocity at peak velocity is perpendicular to the equilibrium bond direction (both H atoms)', () => {
+    const specs = sampleDemoChargeStates('water_bend', 0);
+    const o  = specs[0].state;
+    const hp = specs[1].state;
+    const hm = specs[2].state;
+
+    // Equilibrium bond unit vectors from O_eq to H±_eq.
+    const bondLen = Math.hypot(WATER_H_EQ_X - 0, WATER_H_EQ_Y - WATER_O_EQ_Y);
+    expect(bondLen).toBeCloseTo(WATER_BOND_LENGTH, 12);
+    const uPlusX  = (WATER_H_EQ_X      - 0) / bondLen;
+    const uPlusY  = (WATER_H_EQ_Y - WATER_O_EQ_Y) / bondLen;
+    const uMinusX = (-WATER_H_EQ_X     - 0) / bondLen;
+    const uMinusY = (WATER_H_EQ_Y - WATER_O_EQ_Y) / bondLen;
+
+    // Relative O–H velocity at peak |cos(ω·t)| = 1 (here t=0).
+    const vRelPlusX  = hp.vel.x - o.vel.x;
+    const vRelPlusY  = hp.vel.y - o.vel.y;
+    const vRelMinusX = hm.vel.x - o.vel.x;
+    const vRelMinusY = hm.vel.y - o.vel.y;
+
+    // u · v_rel must be ≈ 0 for first-order bond-length preservation.
+    expect(uPlusX  * vRelPlusX  + uPlusY  * vRelPlusY ).toBeCloseTo(0, 12);
+    expect(uMinusX * vRelMinusX + uMinusY * vRelMinusY).toBeCloseTo(0, 12);
+  });
+
+  // Direct numerical confirmation: at small finite A·sin(ω·t), the bond
+  // length should differ from L₀ by O(A²/L₀), not O(A). Sample bond
+  // length deviation at a small phase fraction and verify it shrinks
+  // quadratically when the phase is halved.
+  it('bond length deviation from L₀ scales as O(phase²) — not O(phase) — for small phases', () => {
+    const T = (2 * Math.PI) / WATER_BEND_OMEGA;
+    const samplePhase = (frac: number) => {
+      const t = frac * T;
+      const specs = sampleDemoChargeStates('water_bend', t);
+      const o  = specs[0].state.pos;
+      const hp = specs[1].state.pos;
+      const bondLen = Math.hypot(hp.x - o.x, hp.y - o.y);
+      return Math.abs(bondLen - WATER_BOND_LENGTH);
+    };
+    const dev1 = samplePhase(0.005);   // small phase
+    const dev2 = samplePhase(0.0025);  // half the phase
+    // Linear behavior would give dev1/dev2 ≈ 2; quadratic gives ≈ 4.
+    // Allow some margin: the ratio must be clearly > 3.
+    expect(dev1 / dev2).toBeGreaterThan(3);
+  });
+});
+
+describe('water modes: empirical peak speed ≤ maxHistorySpeed(mode) ≤ 0.5', () => {
+  // Velocities for both modes are proportional to cos(ω·t), so sampling at
+  // quarter-period offsets (t = T/4, 3T/4, 5T/4, ...) is guaranteed to hit
+  // the analytic extrema. The interior dense grid is a regression check.
+  const WATER_MODES_FOR_SPEED = [
+    { name: 'water_stretch' as const, omega: WATER_STRETCH_OMEGA },
+    { name: 'water_bend'    as const, omega: WATER_BEND_OMEGA    },
+  ];
+
+  for (const { name, omega } of WATER_MODES_FOR_SPEED) {
+    it(`${name}: observed peak speed ≤ maxHistorySpeed(mode), and ≤ 0.5`, () => {
+      const T = (2 * Math.PI) / omega;
+      const quarterPeriodOffsets = [T * 0.25, T * 0.75, T * 1.25, T * 1.75];
+      const denseGrid: number[] = [];
+      const DENSE = 51;
+      for (let i = 0; i < DENSE; i++) denseGrid.push((i / (DENSE - 1)) * T);
+
+      let peak = 0;
+      for (const t of [...quarterPeriodOffsets, ...denseGrid]) {
+        const specs = sampleDemoChargeStates(name, t);
+        for (const s of specs) {
+          const sp = Math.hypot(s.state.vel.x, s.state.vel.y);
+          if (sp > peak) peak = sp;
+        }
+      }
+      const budget = maxHistorySpeed(name);
+      expect(peak).toBeLessThanOrEqual(budget + 1e-9);
+      expect(peak).toBeLessThanOrEqual(0.5 + 1e-9);
+    });
+  }
 });
 
 // Per-mode behavioral tests, parametrized so stretch and bend share the same
@@ -477,16 +644,13 @@ for (const { name, omega } of WATER_MODES) {
       expect(sum).toBeCloseTo(0, 12);
     });
 
-    it('O at index 0 is fixed (pos, vel, accel all zero) across one period', () => {
+    it('O at index 0 moves only along the C₂ (y) axis across one period (M15-A: stretch and bend both have δ_O along y)', () => {
       for (const t of tSweep) {
         const specs = sampleDemoChargeStates(name, t);
         expect(specs[0].charge).toBe(WATER_O_CHARGE);
-        expect(specs[0].state.pos.x).toBe(0);
-        expect(specs[0].state.pos.y).toBe(0);
-        expect(specs[0].state.vel.x).toBe(0);
-        expect(specs[0].state.vel.y).toBe(0);
-        expect(specs[0].state.accel.x).toBe(0);
-        expect(specs[0].state.accel.y).toBe(0);
+        expect(specs[0].state.pos.x).toBeCloseTo(0, 12);
+        expect(specs[0].state.vel.x).toBeCloseTo(0, 12);
+        expect(specs[0].state.accel.x).toBeCloseTo(0, 12);
       }
     });
 

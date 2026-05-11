@@ -13,8 +13,11 @@ dist-ssr
 *.local
 
 # Local AI/tooling metadata
-.codex
+.codex/
 .claude/
+
+# my own agents logging folder
+.agents/
 
 # Environment files
 .env

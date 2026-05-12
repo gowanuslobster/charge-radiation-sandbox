@@ -31,7 +31,7 @@ A floating panel in the upper-left corner gives you all controls:
 |---------|-------------|
 | **Mode** | Switch between the demo modes (see below). Switching reseeds the simulation cleanly. **← Start screen** — return to the mode-picker panel and reset all settings to defaults (including c). |
 | **Playback** | **Run / Pause** — toggle real-time playback. **Step →** — advance one frame at a time while paused. **Reset** — restart the current mode from t=0, keeping your field layer and overlay choices. |
-| **Speed of light** | Drag the slider to change c (max 3.0). The lower bound is mode-dependent: 0.62 in Oscillating, Dipole, and the two Water modes; 0.72 in Moving charge and Hydrogen (the GPU history buffer must cover the causal horizon); 0.65 in Charge at rest. Lowering c slows all field propagation, making retarded-time effects dramatically visible. |
+| **Speed of light** | Drag the slider to change c (max 3.0). The lower bound is mode-dependent: 0.62 in Oscillating, Dipole, and the three Water modes; 0.72 in Moving charge and Hydrogen (the GPU history buffer must cover the causal horizon); 0.65 in Charge at rest. Lowering c slows all field propagation, making retarded-time effects dramatically visible. |
 | **Field** | Toggle which vector layer you see: **Total E** (default), **Velocity E** (Coulomb-like term), **Accel E** (radiation term only), or **Poynting S** (instantaneous energy-flow arrows derived from E × B; aggressively compressed magnitude, mutually exclusive with the E layers). |
 | **Overlays** | See the Overlays section below. |
 | **Camera** | Reset view, zoom ±, and pan arrows. You can also scroll-to-zoom and right/middle-drag to pan directly on the canvas. |
@@ -97,15 +97,22 @@ A fixed positive charge sits at the center while a negative charge follows a pre
 - Pause and enable **Field lines** to compare the near-field geometry with the magnetic heatmap.
 - Lower c to exaggerate the causal delay between the orbiting charge and the fields far from the atom.
 
-### Water molecule (stretch and bend)
+### Water molecule (three vibrational modes)
 
-Two vibrational normal modes of an H₂O-like three-charge source: a negative oxygen and two positive hydrogens at the equilibrium geometry (bond length 0.6, H–O–H angle 105°, mass ratio 16:1). **Stretch** breathes both O–H bonds in phase along their bond directions; **Bend** moves the atoms along the first-order bend normal mode, opening and closing the H–O–H angle while preserving bond lengths to first order in displacement amplitude. Both modulate the molecule's dipole moment along the C₂ symmetry axis, so both produce dipole-pattern radiation in 2D — the classic IR-active behavior of water.
+Three vibrational normal-mode analogues of an H₂O-like three-charge source: a negative oxygen and two positive hydrogens at the equilibrium geometry (bond length 0.6, H–O–H angle 105°, mass ratio 16:1).
+
+- **Stretch** (ν₁, symmetric stretch) breathes both O–H bonds in phase along their bond directions.
+- **Bend** (ν₂, scissoring) moves the atoms along the first-order bend normal mode, opening and closing the H–O–H angle while preserving bond lengths to first order in displacement amplitude.
+- **Antisymmetric stretch** (ν₃) stretches one O–H bond while the other compresses, antiphase. Also called "asymmetric stretch" in introductory texts.
+
+Stretch and bend modulate the dipole moment along the C₂ symmetry axis, so they radiate primarily along ±x (perpendicular to the C₂ axis). Antisymmetric stretch modulates the dipole along the H–H axis instead, so it radiates primarily along ±y — parallel to the C₂ axis, a 90° rotation from the stretch and bend radiation pattern. That orientation difference is a core IR-spectroscopy distinction: different normal modes of the same molecule have different radiation patterns as well as different frequencies.
 
 This is a teaching model: all three atoms move as scripted normal-mode displacements with the mass-weighted center of mass held at the world origin by construction. It is not full molecular dynamics — the trajectories are prescribed sinusoids, not the result of solving equations of motion.
 
 **To try:**
 - Open **Stretch**, pick **Accel B** on the **Magnetic heatmap** picker, enable **Wavefront contours**, and watch the dipole-pattern radiation peak along ±x (perpendicular to the C₂ axis).
 - Switch to **Bend** at the same `c` and compare wavelengths — bend runs at half the stretch frequency, so its wave train has roughly twice the wavelength. This is the same intuition that lets IR spectroscopy distinguish vibrational modes by their characteristic frequencies.
+- Switch to **Antisymmetric stretch** and notice the radiation pattern rotates 90°. Stretch and bend point dipoles along the C₂ axis; antisymmetric stretch points the dipole along the H–H axis. This is the spectroscopic distinction between ν₁ and ν₃ made visible.
 - Enable **Velocity B** to see the bound magnetic field structure of the moving hydrogens.
 
 ---
@@ -117,8 +124,8 @@ All overlays are off by default. They stack freely — you can enable any combin
 | Overlay | Where | What it shows |
 |---------|-------|---------------|
 | **Field lines** | All modes, when paused | Instantaneous streamlines of the total electric field at the paused frame. Not material lines that move with the charge — they are a snapshot of the field at that moment. |
-| **Magnetic heatmap** | Charge at rest, Moving charge, Oscillating, Dipole, Hydrogen, Water (stretch and bend) | A four-state picker (Off / Total B / Velocity B / Accel B) coloring the chosen Bz channel as a signed warm/cool heatmap. **Accel B** is the radiation magnetic field (Bz from the acceleration term — the pre-M11 "Radiation heatmap"). **Velocity B** is the bound moving-charge magnetic field. **Total B** sums both — useful for seeing the post-stop void in `Moving charge`. Contributions from all active charges are superposed before rendering. |
-| **Wavefront contours** | Moving charge, Oscillating, Dipole, Hydrogen, Water (stretch and bend) | Contour lines tied to the radiation magnetic field (`bZAccel`) regardless of which heatmap channel is selected. In Oscillating, Dipole, Hydrogen, and the Water modes: zero-crossing lines tracking wave phase. In Moving charge: envelope threshold contour marking the shell boundary. |
+| **Magnetic heatmap** | Charge at rest, Moving charge, Oscillating, Dipole, Hydrogen, Water (all three modes) | A four-state picker (Off / Total B / Velocity B / Accel B) coloring the chosen Bz channel as a signed warm/cool heatmap. **Accel B** is the radiation magnetic field (Bz from the acceleration term — the pre-M11 "Radiation heatmap"). **Velocity B** is the bound moving-charge magnetic field. **Total B** sums both — useful for seeing the post-stop void in `Moving charge`. Contributions from all active charges are superposed before rendering. |
+| **Wavefront contours** | Moving charge, Oscillating, Dipole, Hydrogen, Water (all three modes) | Contour lines tied to the radiation magnetic field (`bZAccel`) regardless of which heatmap channel is selected. In Oscillating, Dipole, Hydrogen, and the Water modes: zero-crossing lines tracking wave phase. In Moving charge: envelope threshold contour marking the shell boundary. |
 | **Ghost charge** (mini panel) | Moving charge | A marker at the extrapolated would-have-been position after the stop. Shows why the field outside the shell still points toward a charge that is no longer there. |
 | **Ghost field lines** (mini panel) | Moving charge, paused | Streamlines of the extrapolated constant-velocity field — shows what the field would look like if the charge had never stopped. |
 

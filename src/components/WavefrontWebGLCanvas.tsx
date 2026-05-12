@@ -31,6 +31,7 @@ import {
   OSCILLATING_OMEGA,
   WATER_STRETCH_OMEGA,
   WATER_BEND_OMEGA,
+  WATER_ASYM_STRETCH_OMEGA,
 } from '@/physics/demoModes';
 import type { MagneticHeatmapMode } from '@/rendering/displayModes';
 import type { WorldBounds } from '@/rendering/worldSpace';
@@ -178,7 +179,7 @@ uniform float     u_charges[${MAX_CHARGES}];        // per-charge signed charge 
 uniform float     u_c;
 uniform vec4      u_worldBounds;        // (minX, maxX, minY, maxY) in world space
 uniform vec2      u_resolution;         // canvas physical pixel size (post-DPR)
-uniform bool      u_isSigned;           // true = zero-crossing contour (oscillating, dipole, hydrogen, water_stretch, water_bend)
+uniform bool      u_isSigned;           // true = zero-crossing contour (oscillating, dipole, hydrogen, water_stretch, water_bend, water_asym_stretch)
                                         // false = envelope contour (moving_charge)
 uniform float     u_heatmapPeak;        // normalization ceiling for the selected heatmap channel
 uniform float     u_accelPeak;          // normalization ceiling for the bZAccel contour branch
@@ -411,7 +412,7 @@ void main() {
   // regardless of which channel the heatmap is displaying.
   if (u_showContour) {
     if (u_isSigned) {
-      // oscillating, dipole, hydrogen, water_stretch, water_bend: zero-crossing contour on summed bZAccel
+      // oscillating, dipole, hydrogen, water_stretch, water_bend, water_asym_stretch: zero-crossing contour on summed bZAccel
       float norm         = sumAccel / u_accelPeak;
       float contourWidth = fwidth(norm) * 1.5;
       float contourMask  = 1.0 - smoothstep(0.0, contourWidth, abs(norm));
@@ -437,12 +438,13 @@ void main() {
 // ── Mode period lookup (Policy B) ─────────────────────────────────────────────
 
 function periodicModePeriod(mode: DemoMode): number | null {
-  if (mode === 'oscillating')    return (2 * Math.PI) / OSCILLATING_OMEGA;
-  if (mode === 'dipole')         return (2 * Math.PI) / DIPOLE_OMEGA;
-  if (mode === 'hydrogen')       return (2 * Math.PI) / HYDROGEN_OMEGA;
+  if (mode === 'oscillating')        return (2 * Math.PI) / OSCILLATING_OMEGA;
+  if (mode === 'dipole')             return (2 * Math.PI) / DIPOLE_OMEGA;
+  if (mode === 'hydrogen')           return (2 * Math.PI) / HYDROGEN_OMEGA;
   // Water modes: prescribed sinusoidal driving, period = 2π/ω.
-  if (mode === 'water_stretch')  return (2 * Math.PI) / WATER_STRETCH_OMEGA;
-  if (mode === 'water_bend')     return (2 * Math.PI) / WATER_BEND_OMEGA;
+  if (mode === 'water_stretch')      return (2 * Math.PI) / WATER_STRETCH_OMEGA;
+  if (mode === 'water_bend')         return (2 * Math.PI) / WATER_BEND_OMEGA;
+  if (mode === 'water_asym_stretch') return (2 * Math.PI) / WATER_ASYM_STRETCH_OMEGA;
   return null;
 }
 
@@ -918,12 +920,13 @@ export function WavefrontWebGLCanvas({
       }
       if (uniforms['u_isSigned'] !== undefined) {
         // Signed zero-crossing contour for periodic modes (oscillating, dipole,
-        // hydrogen, water_stretch, water_bend); envelope-threshold contour for
-        // moving_charge. (draggable hides the contour toggle entirely; value is
-        // irrelevant there.)
+        // hydrogen, water_stretch, water_bend, water_asym_stretch);
+        // envelope-threshold contour for moving_charge. (draggable hides the
+        // contour toggle entirely; value is irrelevant there.)
         const isPeriodicSigned =
           mode === 'oscillating' || mode === 'dipole' || mode === 'hydrogen' ||
-          mode === 'water_stretch' || mode === 'water_bend';
+          mode === 'water_stretch' || mode === 'water_bend' ||
+          mode === 'water_asym_stretch';
         gl.uniform1i(uniforms['u_isSigned'], isPeriodicSigned ? 1 : 0);
       }
       if (uniforms['u_heatmapPeak'] !== undefined) gl.uniform1f(uniforms['u_heatmapPeak'], heatmapPeak);

@@ -6,7 +6,16 @@
 
 import type { KinematicState } from './types';
 
-export type DemoMode = 'moving_charge' | 'oscillating' | 'draggable' | 'dipole' | 'hydrogen' | 'water_stretch' | 'water_bend';
+export type DemoMode = 'moving_charge' | 'oscillating' | 'draggable' | 'dipole' | 'hydrogen' | 'water_stretch' | 'water_bend' | 'water_asym_stretch';
+
+// Multi-charge modes are the ones whose `sampleDemoChargeStates` branch returns
+// multiple charges with their own per-charge sampleX(chargeIndex, t) helpers.
+// They are NOT accessible through `sampleSourceState`, which is single-charge
+// only. Listing them in one place lets the type system enforce that constraint
+// for `sampleSourceState` (which would otherwise silently fall through to the
+// oscillating branch for a multi-charge mode name).
+type MultiChargeDemoMode = 'dipole' | 'hydrogen' | 'water_stretch' | 'water_bend' | 'water_asym_stretch';
+type SingleChargeDemoMode = Exclude<DemoMode, MultiChargeDemoMode>;
 
 // ─── sudden_stop constants ───────────────────────────────────────────────────
 
@@ -169,6 +178,21 @@ export const WATER_BEND_OMEGA           = 2.0;   // rad/s; T_bend ≈ π ≈ 3.1
 // window via the world-unit amplitude: |Δφ_peak| = A_bend/L₀.
 export const WATER_BEND_AMPLITUDE_RAD   = (2 * WATER_BEND_AMPLITUDE) / WATER_BOND_LENGTH; // = 0.3, matches M14
 
+// Antisymmetric stretch (M15-B). Bond 1 stretches outward along its bond
+// unit vector while bond 2 compresses along its bond unit vector (in
+// magnitude). The COM-restoring O displacement is along -x̂, giving a
+// time-varying dipole along x̂ (perpendicular to the C₂ axis, distinguishing
+// asym from sym/bend which dipole along ŷ).
+//
+// ω chosen close to ω_stretch but distinct (4.2 vs 4.0) so students see the
+// IR-spectroscopy lesson that ν₁ and ν₃ are nearby but not identical (real
+// H₂O: ν₃/ν₁ ≈ 3756/3657 ≈ 1.027; sandbox: 4.2/4.0 = 1.05).
+//
+// H δ vectors are unit length without normalization: δ_H+ = (sin(θ₀/2), -cos(θ₀/2)),
+// δ_H- = (sin(θ₀/2), +cos(θ₀/2)). So peak H speed = A·ω = 0.1·4.2 = 0.42, ≤ 0.5.
+export const WATER_ASYM_STRETCH_AMPLITUDE = 0.1;   // A, world-unit displacement along bond
+export const WATER_ASYM_STRETCH_OMEGA     = 4.2;   // rad/s; T ≈ 1.50 s
+
 // ─── sampleSuddenStopState ───────────────────────────────────────────────────
 
 /**
@@ -237,7 +261,7 @@ export function sampleSuddenStopState(t: number, brakeStartTime: number): Kinema
  *
  * Multi-charge modes are excluded and must be accessed via sampleDemoChargeStates.
  */
-export function sampleSourceState(mode: Exclude<DemoMode, 'dipole' | 'hydrogen'>, t: number): KinematicState {
+export function sampleSourceState(mode: SingleChargeDemoMode, t: number): KinematicState {
   // draggable: live tick bypasses sampleSourceState entirely and reads from drag refs.
   // This branch exists only to satisfy exhaustiveness and provides the zeroed at-rest
   // baseline (Coulomb field) used when the simulation is paused or freshly seeded.
@@ -439,6 +463,87 @@ function sampleWaterBendState(chargeIndex: 0 | 1 | 2, t: number): KinematicState
 }
 
 /**
+ * Exact kinematic state for the water antisymmetric-stretch mode (M15-B, ν₃).
+ *
+ * Charge index ordering: 0 = O, 1 = H₊x, 2 = H₋x. All three atoms move;
+ * the mass-weighted COM stays at the world origin at all t by construction.
+ *
+ * Normal-mode displacement basis around the COM-centered equilibrium.
+ * Each H displaces along its outward bond unit vector with opposite-sign
+ * scalar amplitudes: H+ moves outward (bond 1 stretches) while H- moves
+ * inward (bond 2 compresses), or vice versa. O takes the COM-restoring
+ * counter-displacement along -x̂.
+ *   δ_H+ = (+sin(θ₀/2), -cos(θ₀/2))   [unit length, along H+ outward bond]
+ *   δ_H- = (+sin(θ₀/2), +cos(θ₀/2))   [unit length, along H- inward bond — compressing]
+ *   δ_O  = (-sin(θ₀/2)/8, 0)           [COM-restoring counter-displacement along -x̂]
+ *
+ * Three key properties hold by construction:
+ *
+ *   1. Mass-weighted COM is conserved:
+ *      m_O·(-sin(θ₀/2)/8) + m_H·(2·sin(θ₀/2)) = -2·sin(θ₀/2) + 2·sin(θ₀/2) = 0.
+ *
+ *   2. Antisymmetric bond-length change to first order in A:
+ *      |b_1| - L₀ ≈ +A·sin(ω·t)·(1 + sin²(θ₀/2)/8)
+ *      |b_2| - L₀ ≈ -A·sin(ω·t)·(1 + sin²(θ₀/2)/8)
+ *      The symmetric combination (r_1 + r_2) is conserved to first order; only
+ *      the antisymmetric combination (r_1 - r_2) is excited. At finite A the
+ *      O(A²) corrections to each bond length need not be exactly equal in
+ *      magnitude, but they are quadratic and small.
+ *
+ *   3. Interior H-O-H angle preserved to first order: both bond directions
+ *      pick up the same first-order CCW rotation of magnitude
+ *      ≈ A·sin(θ₀/2)·cos(θ₀/2)/(8·L₀), so the angle between them is
+ *      unchanged. The whole molecule appears to rotate slightly in the body
+ *      frame (≈ 0.6° peak at A=0.1) — a consequence of imposing translational
+ *      COM conservation without simultaneously imposing angular-momentum
+ *      conservation. This is acceptable for the scripted teaching motion and
+ *      visually negligible. (Eckart conditions would null it in real physics.)
+ *
+ * Position: r_atom(t) = r_atom_eq + A·sin(ω·t)·δ_atom
+ * Velocity: A·ω·cos(ω·t)·δ_atom
+ * Accel:   -A·ω²·sin(ω·t)·δ_atom
+ *
+ * Peak H speed = A·ω·|δ_H| = A·ω = 0.42 (H δ is unit length, so H binds the
+ * maxHistorySpeed budget). Time-varying dipole oscillates along x̂,
+ * distinguishing asym from sym/bend (which dipole along ŷ).
+ */
+function sampleWaterAsymStretchState(chargeIndex: 0 | 1 | 2, t: number): KinematicState {
+  const halfAngle = WATER_HOH_ANGLE_RAD / 2;
+  const sinHalf   = Math.sin(halfAngle);
+  const cosHalf   = Math.cos(halfAngle);
+
+  const A = WATER_ASYM_STRETCH_AMPLITUDE;
+  const w = WATER_ASYM_STRETCH_OMEGA;
+  const s   =  Math.sin(w * t);
+  const sp  =  w * Math.cos(w * t);
+  const spp = -w * w * Math.sin(w * t);
+
+  if (chargeIndex === 0) {
+    // O: δ_O = (-sin(θ/2)/8, 0); equilibrium at (0, +cos(θ/2)·L₀/9).
+    const dx = -sinHalf / 8;
+    return {
+      t,
+      pos:   { x: A * s   * dx, y: WATER_O_EQ_Y },
+      vel:   { x: A * sp  * dx, y: 0           },
+      accel: { x: A * spp * dx, y: 0           },
+    };
+  }
+
+  // H atoms: δ_H+ = (sin(θ/2), -cos(θ/2)),   δ_H- = (sin(θ/2), +cos(θ/2));
+  // equilibrium at (±L₀·sin(θ/2), -(8/9)·L₀·cos(θ/2)).
+  // dx is the same for both H atoms (positive); dy flips sign with chargeIndex.
+  const sign = chargeIndex === 1 ? +1 : -1;
+  const dx   = +sinHalf;
+  const dy   = -sign * cosHalf;
+  return {
+    t,
+    pos:   { x: sign * WATER_H_EQ_X + A * s   * dx, y: WATER_H_EQ_Y + A * s   * dy },
+    vel:   { x:                       A * sp  * dx, y:                A * sp  * dy },
+    accel: { x:                       A * spp * dx, y:                A * spp * dy },
+  };
+}
+
+/**
  * Return the charge specs for all charges in `mode` at simulation time t.
  *
  * Single-charge modes return a length-1 array. Multi-charge modes return a
@@ -478,6 +583,13 @@ export function sampleDemoChargeStates(mode: DemoMode, t: number): DemoChargeSpe
       { charge: WATER_H_CHARGE, state: sampleWaterBendState(2, t) },
     ];
   }
+  if (mode === 'water_asym_stretch') {
+    return [
+      { charge: WATER_O_CHARGE, state: sampleWaterAsymStretchState(0, t) },
+      { charge: WATER_H_CHARGE, state: sampleWaterAsymStretchState(1, t) },
+      { charge: WATER_H_CHARGE, state: sampleWaterAsymStretchState(2, t) },
+    ];
+  }
   return [{ charge: 1, state: sampleSourceState(mode, t) }];
 }
 
@@ -502,13 +614,15 @@ export function maxHistorySpeed(mode: DemoMode): number {
   if (mode === 'draggable') return 0;
   if (mode === 'oscillating' || mode === 'dipole') return OSCILLATING_AMPLITUDE * OSCILLATING_OMEGA; // 0.5
   if (mode === 'hydrogen') return HYDROGEN_ORBIT_RADIUS * HYDROGEN_OMEGA; // 0.6
-  // Water modes (M15-A): peak speed = A·ω · max_atom |δ_atom|. H δ vectors are
+  // Water modes (M15): peak speed = A·ω · max_atom |δ_atom|. H δ vectors are
   // unit length and O δ norms ≤ 1/8, so H always binds and the value reduces
   // to A·ω per mode.
-  //   stretch: 0.4   (A_stretch = 0.10, ω_stretch = 4.0)
-  //   bend:    0.18  (A_bend    = 0.09, ω_bend    = 2.0; matches the M14 peak)
-  if (mode === 'water_stretch') return WATER_STRETCH_AMPLITUDE * WATER_STRETCH_OMEGA;  // 0.4
-  if (mode === 'water_bend')    return WATER_BEND_AMPLITUDE    * WATER_BEND_OMEGA;     // 0.18
+  //   stretch:      0.4   (A_stretch = 0.10, ω_stretch = 4.0)
+  //   bend:         0.18  (A_bend    = 0.09, ω_bend    = 2.0; matches the M14 peak)
+  //   asym_stretch: 0.42  (A_asym    = 0.10, ω_asym    = 4.2; M15-B)
+  if (mode === 'water_stretch')      return WATER_STRETCH_AMPLITUDE      * WATER_STRETCH_OMEGA;       // 0.4
+  if (mode === 'water_bend')         return WATER_BEND_AMPLITUDE         * WATER_BEND_OMEGA;          // 0.18
+  if (mode === 'water_asym_stretch') return WATER_ASYM_STRETCH_AMPLITUDE * WATER_ASYM_STRETCH_OMEGA;  // 0.42
   return SUDDEN_STOP_V; // moving_charge peaks at SUDDEN_STOP_V (pre- and post-stop history)
 }
 

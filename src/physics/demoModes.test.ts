@@ -21,6 +21,7 @@ import {
   WATER_BEND_AMPLITUDE,
   WATER_BEND_AMPLITUDE_RAD,
   WATER_BEND_OMEGA,
+  WATER_ASYM_STRETCH_OMEGA,
   WATER_M_O,
   WATER_M_H,
   WATER_O_EQ_Y,
@@ -458,8 +459,9 @@ describe('water modes: policy assertions', () => {
 
 describe('water modes: mass-weighted COM is conserved at world origin (position, velocity, acceleration)', () => {
   const WATER_MODES_FOR_COM = [
-    { name: 'water_stretch' as const, omega: WATER_STRETCH_OMEGA },
-    { name: 'water_bend'    as const, omega: WATER_BEND_OMEGA    },
+    { name: 'water_stretch'      as const, omega: WATER_STRETCH_OMEGA      },
+    { name: 'water_bend'         as const, omega: WATER_BEND_OMEGA         },
+    { name: 'water_asym_stretch' as const, omega: WATER_ASYM_STRETCH_OMEGA },
   ];
 
   for (const { name, omega } of WATER_MODES_FOR_COM) {
@@ -508,8 +510,8 @@ describe('water modes: equilibrium positions (COM-centered, below-O orientation)
     expect(WATER_H_EQ_X).toBeGreaterThan(0);
   });
 
-  it('at t = 0 the molecule sits at its equilibrium positions for both modes', () => {
-    for (const name of ['water_stretch', 'water_bend'] as const) {
+  it('at t = 0 the molecule sits at its equilibrium positions for all three modes', () => {
+    for (const name of ['water_stretch', 'water_bend', 'water_asym_stretch'] as const) {
       const specs = sampleDemoChargeStates(name, 0);
       expect(specs[0].state.pos.x).toBeCloseTo(0,             12);
       expect(specs[0].state.pos.y).toBeCloseTo(WATER_O_EQ_Y,  12);
@@ -580,24 +582,27 @@ describe('water_bend: O–H bond length is preserved to first order in displacem
 });
 
 describe('water modes: empirical peak speed ≤ maxHistorySpeed(mode) ≤ 0.5', () => {
-  // Velocities for both modes are proportional to cos(ω·t), so sampling at
-  // quarter-period offsets (t = T/4, 3T/4, 5T/4, ...) is guaranteed to hit
-  // the analytic extrema. The interior dense grid is a regression check.
+  // Velocity for each mode is A·ω·cos(ω·t)·δ_atom, so |v| peaks where
+  // |cos(ω·t)| = 1, i.e. at t = 0, T/2, T, ... — the cosine extrema. The
+  // interior dense grid is a regression check. (M15-A originally used
+  // quarter-period offsets, which sample at the sin extrema — displacement
+  // peaks, velocity zeros; back-fixed in M15-B.)
   const WATER_MODES_FOR_SPEED = [
-    { name: 'water_stretch' as const, omega: WATER_STRETCH_OMEGA },
-    { name: 'water_bend'    as const, omega: WATER_BEND_OMEGA    },
+    { name: 'water_stretch'      as const, omega: WATER_STRETCH_OMEGA      },
+    { name: 'water_bend'         as const, omega: WATER_BEND_OMEGA         },
+    { name: 'water_asym_stretch' as const, omega: WATER_ASYM_STRETCH_OMEGA },
   ];
 
   for (const { name, omega } of WATER_MODES_FOR_SPEED) {
     it(`${name}: observed peak speed ≤ maxHistorySpeed(mode), and ≤ 0.5`, () => {
       const T = (2 * Math.PI) / omega;
-      const quarterPeriodOffsets = [T * 0.25, T * 0.75, T * 1.25, T * 1.75];
+      const velocityExtrema = [0, T / 2, T];
       const denseGrid: number[] = [];
       const DENSE = 51;
       for (let i = 0; i < DENSE; i++) denseGrid.push((i / (DENSE - 1)) * T);
 
       let peak = 0;
-      for (const t of [...quarterPeriodOffsets, ...denseGrid]) {
+      for (const t of [...velocityExtrema, ...denseGrid]) {
         const specs = sampleDemoChargeStates(name, t);
         for (const s of specs) {
           const sp = Math.hypot(s.state.vel.x, s.state.vel.y);
@@ -611,22 +616,23 @@ describe('water modes: empirical peak speed ≤ maxHistorySpeed(mode) ≤ 0.5', 
   }
 });
 
-// Per-mode behavioral tests, parametrized so stretch and bend share the same
-// battery (charge count, net neutrality, fixed O, mirror symmetry, c-min
-// margin sweep, periodicity, stable label ordering).
-const WATER_MODES = [
-  {
-    name:   'water_stretch' as const,
-    omega:  WATER_STRETCH_OMEGA,
-  },
-  {
-    name:   'water_bend' as const,
-    omega:  WATER_BEND_OMEGA,
-  },
+// Per-mode behavioral tests. Split into two sweeps: universal tests that
+// apply to all three water modes, and mirror-symmetric tests that only
+// apply to symmetric stretch and bend (asym stretch breaks mirror symmetry
+// across the C₂ axis and moves O along x̂, not ŷ).
+const WATER_MODES_UNIVERSAL = [
+  { name: 'water_stretch'      as const, omega: WATER_STRETCH_OMEGA      },
+  { name: 'water_bend'         as const, omega: WATER_BEND_OMEGA         },
+  { name: 'water_asym_stretch' as const, omega: WATER_ASYM_STRETCH_OMEGA },
 ] as const;
 
-for (const { name, omega } of WATER_MODES) {
-  describe(`${name}: per-mode behavioral tests`, () => {
+const WATER_MODES_MIRROR_SYMMETRIC = [
+  { name: 'water_stretch' as const, omega: WATER_STRETCH_OMEGA },
+  { name: 'water_bend'    as const, omega: WATER_BEND_OMEGA    },
+] as const;
+
+for (const { name, omega } of WATER_MODES_UNIVERSAL) {
+  describe(`${name}: universal behavioral tests`, () => {
     const T = (2 * Math.PI) / omega;          // one period in sandbox seconds
     const SAMPLES = 25;                        // t-sweep density
     const tSweep: number[] = [];
@@ -642,30 +648,6 @@ for (const { name, omega } of WATER_MODES) {
       const specs = sampleDemoChargeStates(name, 0);
       const sum = specs.reduce((acc, s) => acc + s.charge, 0);
       expect(sum).toBeCloseTo(0, 12);
-    });
-
-    it('O at index 0 moves only along the C₂ (y) axis across one period (M15-A: stretch and bend both have δ_O along y)', () => {
-      for (const t of tSweep) {
-        const specs = sampleDemoChargeStates(name, t);
-        expect(specs[0].charge).toBe(WATER_O_CHARGE);
-        expect(specs[0].state.pos.x).toBeCloseTo(0, 12);
-        expect(specs[0].state.vel.x).toBeCloseTo(0, 12);
-        expect(specs[0].state.accel.x).toBeCloseTo(0, 12);
-      }
-    });
-
-    it('mirror symmetry across the C₂ (y) axis: H_+x and H_-x have equal-magnitude opposite-sign x components and equal y components', () => {
-      for (const t of tSweep) {
-        const specs = sampleDemoChargeStates(name, t);
-        const hPlus  = specs[1].state;
-        const hMinus = specs[2].state;
-        expect(hPlus.pos.x).toBeCloseTo(-hMinus.pos.x, 12);
-        expect(hPlus.pos.y).toBeCloseTo( hMinus.pos.y, 12);
-        expect(hPlus.vel.x).toBeCloseTo(-hMinus.vel.x, 12);
-        expect(hPlus.vel.y).toBeCloseTo( hMinus.vel.y, 12);
-        expect(hPlus.accel.x).toBeCloseTo(-hMinus.accel.x, 12);
-        expect(hPlus.accel.y).toBeCloseTo( hMinus.accel.y, 12);
-      }
     });
 
     it('c-min margin sweep: peak speed across all three charges over one period stays below minCForMode - 0.1', () => {
@@ -713,4 +695,206 @@ for (const { name, omega } of WATER_MODES) {
     });
   });
 }
+
+for (const { name, omega } of WATER_MODES_MIRROR_SYMMETRIC) {
+  describe(`${name}: mirror-symmetric behavioral tests (stretch and bend only)`, () => {
+    const T = (2 * Math.PI) / omega;
+    const SAMPLES = 25;
+    const tSweep: number[] = [];
+    for (let i = 0; i < SAMPLES; i++) tSweep.push((i / (SAMPLES - 1)) * T);
+
+    it('O at index 0 moves only along the C₂ (y) axis across one period (δ_O is along ŷ)', () => {
+      for (const t of tSweep) {
+        const specs = sampleDemoChargeStates(name, t);
+        expect(specs[0].charge).toBe(WATER_O_CHARGE);
+        expect(specs[0].state.pos.x).toBeCloseTo(0, 12);
+        expect(specs[0].state.vel.x).toBeCloseTo(0, 12);
+        expect(specs[0].state.accel.x).toBeCloseTo(0, 12);
+      }
+    });
+
+    it('mirror symmetry across the C₂ (y) axis: H_+x and H_-x have equal-magnitude opposite-sign x components and equal y components', () => {
+      for (const t of tSweep) {
+        const specs = sampleDemoChargeStates(name, t);
+        const hPlus  = specs[1].state;
+        const hMinus = specs[2].state;
+        expect(hPlus.pos.x).toBeCloseTo(-hMinus.pos.x, 12);
+        expect(hPlus.pos.y).toBeCloseTo( hMinus.pos.y, 12);
+        expect(hPlus.vel.x).toBeCloseTo(-hMinus.vel.x, 12);
+        expect(hPlus.vel.y).toBeCloseTo( hMinus.vel.y, 12);
+        expect(hPlus.accel.x).toBeCloseTo(-hMinus.accel.x, 12);
+        expect(hPlus.accel.y).toBeCloseTo( hMinus.accel.y, 12);
+      }
+    });
+  });
+}
+
+// ─── water_asym_stretch: mode-specific tests (M15-B) ─────────────────────────
+//
+// Asym stretch breaks the mirror symmetry that sym stretch and bend preserve:
+// O moves along x̂ (not ŷ), and the H atoms do NOT have antimirror x-components.
+// These tests assert the asym-specific invariants.
+
+describe('water_asym_stretch: O moves only along the H-H (x) axis', () => {
+  it('δ_O is along -x̂; O position, velocity, accel have y = WATER_O_EQ_Y (static) and vary along x', () => {
+    const T = (2 * Math.PI) / WATER_ASYM_STRETCH_OMEGA;
+    const SAMPLES = 25;
+    for (let i = 0; i < SAMPLES; i++) {
+      const t = (i / (SAMPLES - 1)) * T;
+      const specs = sampleDemoChargeStates('water_asym_stretch', t);
+      expect(specs[0].charge).toBe(WATER_O_CHARGE);
+      // y stays at equilibrium throughout
+      expect(specs[0].state.pos.y).toBeCloseTo(WATER_O_EQ_Y, 12);
+      expect(specs[0].state.vel.y).toBeCloseTo(0, 12);
+      expect(specs[0].state.accel.y).toBeCloseTo(0, 12);
+    }
+    // x varies (not constant)
+    const tQuarter = T / 4; // sin(ω·t) = 1 → displacement extremum
+    const sQuarter = sampleDemoChargeStates('water_asym_stretch', tQuarter);
+    expect(Math.abs(sQuarter[0].state.pos.x)).toBeGreaterThan(0);
+  });
+});
+
+describe('water_asym_stretch: antisymmetric bond-length change', () => {
+  const T = (2 * Math.PI) / WATER_ASYM_STRETCH_OMEGA;
+
+  function bondLengths(t: number): { b1: number; b2: number } {
+    const specs = sampleDemoChargeStates('water_asym_stretch', t);
+    const o  = specs[0].state.pos;
+    const hp = specs[1].state.pos;
+    const hm = specs[2].state.pos;
+    return {
+      b1: Math.hypot(hp.x - o.x, hp.y - o.y),
+      b2: Math.hypot(hm.x - o.x, hm.y - o.y),
+    };
+  }
+
+  it('sign: at positive amplitude phase b1 > L₀ and b2 < L₀; mirror at negative phase', () => {
+    const { b1: b1Pos, b2: b2Pos } = bondLengths(T / 4);   // sin(ω·t) = +1
+    const { b1: b1Neg, b2: b2Neg } = bondLengths(3 * T / 4); // sin(ω·t) = -1
+    expect(b1Pos).toBeGreaterThan(WATER_BOND_LENGTH);
+    expect(b2Pos).toBeLessThan(WATER_BOND_LENGTH);
+    expect(b1Neg).toBeLessThan(WATER_BOND_LENGTH);
+    expect(b2Neg).toBeGreaterThan(WATER_BOND_LENGTH);
+  });
+
+  it('antisymmetric dominates symmetric: at peak amplitude |sum/(diff)| is small (≤ 0.1)', () => {
+    const { b1, b2 } = bondLengths(T / 4);
+    const d1 = b1 - WATER_BOND_LENGTH;
+    const d2 = b2 - WATER_BOND_LENGTH;
+    // First-order contributions cancel in d1 + d2; only O(A²) survives.
+    // (d1 - d2) is the antisymmetric, first-order in A.
+    const ratio = Math.abs((d1 + d2) / (d1 - d2));
+    expect(ratio).toBeLessThan(0.1);
+  });
+
+  it('scaling: antisymmetric difference ~ phase (linear), symmetric sum ~ phase² (quadratic)', () => {
+    // Use phase fractions large enough to avoid floating-point cancellation
+    // in the symmetric O(A²) term but small enough to stay first-order.
+    const phaseSmall = 0.02 * T;
+    const phaseHalf  = 0.01 * T;
+    const { b1: b1S, b2: b2S } = bondLengths(phaseSmall);
+    const { b1: b1H, b2: b2H } = bondLengths(phaseHalf);
+    const diffSmall = (b1S - WATER_BOND_LENGTH) - (b2S - WATER_BOND_LENGTH);
+    const diffHalf  = (b1H - WATER_BOND_LENGTH) - (b2H - WATER_BOND_LENGTH);
+    const sumSmall  = (b1S - WATER_BOND_LENGTH) + (b2S - WATER_BOND_LENGTH);
+    const sumHalf   = (b1H - WATER_BOND_LENGTH) + (b2H - WATER_BOND_LENGTH);
+
+    // Antisymmetric difference: phase ratio = 2, so diffSmall / diffHalf ≈ 2.
+    expect(diffSmall / diffHalf).toBeGreaterThan(1.7);
+    expect(diffSmall / diffHalf).toBeLessThan(2.3);
+
+    // Symmetric sum: phase ratio² = 4, so sumSmall / sumHalf ≈ 4. Allow
+    // a wide margin (clearly > 2, ideally > 3) to confirm quadratic scaling.
+    expect(Math.abs(sumSmall) / Math.abs(sumHalf)).toBeGreaterThan(3);
+  });
+});
+
+describe('water_asym_stretch: interior H-O-H angle preserved to first order', () => {
+  // The bond angle θ(t) = angle between b_1 and b_2 should be conserved to
+  // first order in A. At peak velocity (t = 0, cos(ω·t) = 1), the rate of
+  // change of θ should be ≈ 0. Equivalently, both bond directions rotate by
+  // the same first-order CCW angle so the angle BETWEEN them is unchanged.
+  it('dθ/dt ≈ 0 at peak velocity (t = 0)', () => {
+    const specs = sampleDemoChargeStates('water_asym_stretch', 0);
+    const o  = specs[0].state;
+    const hp = specs[1].state;
+    const hm = specs[2].state;
+
+    // Bond vectors at t = 0 (equilibrium).
+    const b1x = hp.pos.x - o.pos.x;
+    const b1y = hp.pos.y - o.pos.y;
+    const b2x = hm.pos.x - o.pos.x;
+    const b2y = hm.pos.y - o.pos.y;
+
+    // Bond-vector velocities (relative O–H velocities) at peak velocity.
+    const db1x = hp.vel.x - o.vel.x;
+    const db1y = hp.vel.y - o.vel.y;
+    const db2x = hm.vel.x - o.vel.x;
+    const db2y = hm.vel.y - o.vel.y;
+
+    // The bond angle θ = angle between b_1 and b_2 has time derivative
+    //   dθ/dt = (d/dt arctan2(b_1y, b_1x)) - (d/dt arctan2(b_2y, b_2x))
+    // For a vector (x, y) with derivative (ẋ, ẏ):
+    //   d/dt arctan2(y, x) = (x·ẏ - y·ẋ) / (x² + y²)
+    const dAlpha1 = (b1x * db1y - b1y * db1x) / (b1x * b1x + b1y * b1y);
+    const dAlpha2 = (b2x * db2y - b2y * db2x) / (b2x * b2x + b2y * b2y);
+    const dTheta = dAlpha1 - dAlpha2;
+
+    // To first order in A, dTheta should be 0. With our scripted basis the
+    // small body-frame rotation is common to both bonds, so it cancels in
+    // the difference.
+    expect(Math.abs(dTheta)).toBeLessThan(1e-12);
+  });
+});
+
+// ─── Dipole orientation across all three water modes (M15-B) ─────────────────
+//
+// The time-varying dipole moment p(t) = Σ q_i · r_i(t) distinguishes the
+// modes spectroscopically: sym stretch and bend dipole along ŷ (so they
+// radiate primarily along ±x̂), asym stretch dipoles along x̂ (radiating
+// primarily along ±ŷ). The dipole's time-derivative magnitude must dominate
+// in the named axis; the orthogonal axis carries only static contributions
+// (the equilibrium dipole, which doesn't radiate).
+
+describe('water modes: time-varying dipole orientation distinguishes modes', () => {
+  function timeVaryingDipoleRange(name: 'water_stretch' | 'water_bend' | 'water_asym_stretch'):
+    { rangeX: number; rangeY: number } {
+    const omega = name === 'water_stretch'      ? WATER_STRETCH_OMEGA
+                : name === 'water_bend'         ? WATER_BEND_OMEGA
+                :                                 WATER_ASYM_STRETCH_OMEGA;
+    const T = (2 * Math.PI) / omega;
+    const SAMPLES = 32;
+    let pxMin = +Infinity, pxMax = -Infinity, pyMin = +Infinity, pyMax = -Infinity;
+    for (let i = 0; i < SAMPLES; i++) {
+      const t = (i / SAMPLES) * T;
+      const specs = sampleDemoChargeStates(name, t);
+      let px = 0, py = 0;
+      for (const s of specs) {
+        px += s.charge * s.state.pos.x;
+        py += s.charge * s.state.pos.y;
+      }
+      if (px < pxMin) pxMin = px;
+      if (px > pxMax) pxMax = px;
+      if (py < pyMin) pyMin = py;
+      if (py > pyMax) pyMax = py;
+    }
+    return { rangeX: pxMax - pxMin, rangeY: pyMax - pyMin };
+  }
+
+  it('water_stretch: dipole y-range dominates (rangeY > 5·rangeX)', () => {
+    const { rangeX, rangeY } = timeVaryingDipoleRange('water_stretch');
+    expect(rangeY).toBeGreaterThan(5 * rangeX);
+  });
+
+  it('water_bend: dipole y-range dominates (rangeY > 5·rangeX)', () => {
+    const { rangeX, rangeY } = timeVaryingDipoleRange('water_bend');
+    expect(rangeY).toBeGreaterThan(5 * rangeX);
+  });
+
+  it('water_asym_stretch: dipole x-range dominates (rangeX > 5·rangeY)', () => {
+    const { rangeX, rangeY } = timeVaryingDipoleRange('water_asym_stretch');
+    expect(rangeX).toBeGreaterThan(5 * rangeY);
+  });
+});
 

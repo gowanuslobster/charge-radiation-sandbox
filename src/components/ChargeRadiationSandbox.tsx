@@ -85,11 +85,23 @@ export function ChargeRadiationSandbox() {
   const [showVelocityVectors, setShowVelocityVectors] = useState(true);
 
   // WebGL capability detection. null = detecting, true = WebGL2+RGBA32F ready, false = fallback.
+  //
+  // Dev-only debug override: appending ?forceFallback=1 to the URL forces
+  // webGLReady = false so the CPU WavefrontOverlayCanvas path renders even on
+  // hardware that supports WebGL. Used to verify fallback-path correctness
+  // (period table, signed-contour predicate, etc.) without hardware that lacks
+  // WebGL2 + RGBA32F. Gated behind import.meta.env.DEV; never active in
+  // production builds.
   const [webGLReady, setWebGLReady] = useState<boolean | null>(null);
   useEffect(() => {
+    const forceFallback = import.meta.env.DEV
+      && typeof window !== 'undefined'
+      && new URLSearchParams(window.location.search).get('forceFallback') === '1';
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (forceFallback) { setWebGLReady(false); return; }
+
     const probe = document.createElement('canvas');
     const gl = probe.getContext('webgl2');
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!gl) { setWebGLReady(false); return; }
     // Verify RGBA32F texture support (not guaranteed on all WebGL2 contexts)
     const tex = gl.createTexture();
@@ -388,14 +400,14 @@ export function ChargeRadiationSandbox() {
   // Replaces:  historyRef.current (fresh ChargeHistory with correct window).
   // Increments: simEpochRef.current so paused canvases re-solve the current frame.
   const rebuildAnalyticHistoryAtCurrentTime = useCallback(
-    (mode: 'moving_charge' | 'oscillating' | 'dipole' | 'hydrogen' | 'water_stretch' | 'water_bend') => {
+    (mode: 'moving_charge' | 'oscillating' | 'dipole' | 'hydrogen' | 'water_stretch' | 'water_bend' | 'water_asym_stretch') => {
       const T      = simTimeRef.current;
       const config = configRef.current;     // already updated before this call
       const DT     = 0.05;                  // step spacing matches initial reseed
 
       // ── Multi-charge analytic modes: rebuild all charge histories simultaneously.
       // Water modes are 3-charge analytic sources and ride this same branch.
-      if (mode === 'dipole' || mode === 'hydrogen' || mode === 'water_stretch' || mode === 'water_bend') {
+      if (mode === 'dipole' || mode === 'hydrogen' || mode === 'water_stretch' || mode === 'water_bend' || mode === 'water_asym_stretch') {
         const horizonSpeed = maxHistorySpeed(mode);
         const chargeStates0 = sampleDemoChargeStates(mode, T);
         const historyWindow = Math.max(
@@ -460,7 +472,7 @@ export function ChargeRadiationSandbox() {
     // Enforce per-mode c minimum (Policy A conservative global minimum).
     // Prevents the causal horizon from exceeding the GPU history buffer for visible pixels.
     const mode = demoModeRef.current;
-    const cMin = (mode === 'moving_charge' || mode === 'oscillating' || mode === 'dipole' || mode === 'hydrogen' || mode === 'water_stretch' || mode === 'water_bend')
+    const cMin = (mode === 'moving_charge' || mode === 'oscillating' || mode === 'dipole' || mode === 'hydrogen' || mode === 'water_stretch' || mode === 'water_bend' || mode === 'water_asym_stretch')
       ? minCForMode(mode)
       : 0.15;
     const newC = Math.max(cMin, rawC);
@@ -474,14 +486,14 @@ export function ChargeRadiationSandbox() {
     // Draggable history is accumulated from live drag events and is not analytically
     // reconstructible; it is left as-is and the tick adjusts the window on subsequent
     // frames via setMaxHistoryTime / pruneToWindow.
-    if (mode === 'moving_charge' || mode === 'oscillating' || mode === 'dipole' || mode === 'hydrogen' || mode === 'water_stretch' || mode === 'water_bend') {
+    if (mode === 'moving_charge' || mode === 'oscillating' || mode === 'dipole' || mode === 'hydrogen' || mode === 'water_stretch' || mode === 'water_bend' || mode === 'water_asym_stretch') {
       rebuildAnalyticHistoryAtCurrentTime(mode);
     }
   }, [rebuildAnalyticHistoryAtCurrentTime]);
 
   const handleDemoModeChange = useCallback((newMode: DemoMode) => {
     // When switching to a mode with a higher c minimum, bump c up before the reseed.
-    if (newMode === 'moving_charge' || newMode === 'oscillating' || newMode === 'dipole' || newMode === 'hydrogen' || newMode === 'water_stretch' || newMode === 'water_bend') {
+    if (newMode === 'moving_charge' || newMode === 'oscillating' || newMode === 'dipole' || newMode === 'hydrogen' || newMode === 'water_stretch' || newMode === 'water_bend' || newMode === 'water_asym_stretch') {
       const cMin = minCForMode(newMode);
       if (configRef.current.c < cMin) {
         configRef.current = { ...configRef.current, c: cMin };
@@ -650,7 +662,7 @@ export function ChargeRadiationSandbox() {
 
       // ── Multi-charge analytic branch: record all charge states simultaneously.
       // Water modes (3-charge analytic) ride this same branch.
-      if (mode === 'dipole' || mode === 'hydrogen' || mode === 'water_stretch' || mode === 'water_bend') {
+      if (mode === 'dipole' || mode === 'hydrogen' || mode === 'water_stretch' || mode === 'water_bend' || mode === 'water_asym_stretch') {
         const config = configRef.current;
         const runtimes = chargeRuntimesRef.current;
         const horizonSpeed = maxHistorySpeed(mode);
@@ -812,12 +824,12 @@ export function ChargeRadiationSandbox() {
   // ─── Render ─────────────────────────────────────────────────────────────────
 
   // c-slider lower bound.
-  // Multi-charge modes (dipole, hydrogen, water_stretch, water_bend) use the
-  // GPU-history bound regardless of WebGL availability. For moving_charge and
-  // oscillating the GPU bound is stricter than the physics bound, so it only
-  // applies when WebGL is active.
+  // Multi-charge modes (dipole, hydrogen, water_stretch, water_bend,
+  // water_asym_stretch) use the GPU-history bound regardless of WebGL
+  // availability. For moving_charge and oscillating the GPU bound is stricter
+  // than the physics bound, so it only applies when WebGL is active.
   const cMin =
-    (demoMode === 'dipole' || demoMode === 'hydrogen' || demoMode === 'water_stretch' || demoMode === 'water_bend') ? minCForMode(demoMode) :
+    (demoMode === 'dipole' || demoMode === 'hydrogen' || demoMode === 'water_stretch' || demoMode === 'water_bend' || demoMode === 'water_asym_stretch') ? minCForMode(demoMode) :
     webGLReady === true && (demoMode === 'moving_charge' || demoMode === 'oscillating') ? minCForMode(demoMode) :
     0.65;
 
@@ -843,7 +855,7 @@ export function ChargeRadiationSandbox() {
         ghostVel={demoMode === 'moving_charge' ? { x: SUDDEN_STOP_V, y: 0 } : undefined}
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 17 }}
       />
-      {(demoMode === 'moving_charge' || demoMode === 'oscillating' || demoMode === 'dipole' || demoMode === 'hydrogen' || demoMode === 'draggable' || demoMode === 'water_stretch' || demoMode === 'water_bend') && (
+      {(demoMode === 'moving_charge' || demoMode === 'oscillating' || demoMode === 'dipole' || demoMode === 'hydrogen' || demoMode === 'draggable' || demoMode === 'water_stretch' || demoMode === 'water_bend' || demoMode === 'water_asym_stretch') && (
         webGLReady === true ? (
           // WebGL path: per-pixel retarded-time solve for heatmap-capable modes.
           // WavefrontWebGLCanvas supports up to MAX_CHARGES=32 independent histories

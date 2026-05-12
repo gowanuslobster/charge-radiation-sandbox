@@ -64,8 +64,8 @@ const ICON_BASE = 'flex h-7 w-7 items-center justify-center rounded-md text-sm t
 // change that affects the running app so a manual browser check can confirm
 // the live build vintage at a glance. See AGENTS.md "Build-vintage timestamp"
 // for the bump rule.
-const LAST_CODE_CHANGE_STAMP    = '2026-05-11 15:08 EDT';
-const LAST_CODE_CHANGE_DATETIME = '2026-05-11T15:08:01-04:00';
+const LAST_CODE_CHANGE_STAMP    = '2026-05-11 18:48 EDT';
+const LAST_CODE_CHANGE_DATETIME = '2026-05-11T18:48:15-04:00';
 
 export function ControlPanel({
   demoMode, fieldLayer, isPaused, c, stopTriggered, readout,
@@ -82,11 +82,13 @@ export function ControlPanel({
   const magneticHeatmapVisible =
     demoMode === 'moving_charge' || demoMode === 'oscillating' ||
     demoMode === 'dipole' || demoMode === 'hydrogen' || demoMode === 'draggable' ||
-    demoMode === 'water_stretch' || demoMode === 'water_bend';
+    demoMode === 'water_stretch' || demoMode === 'water_bend' ||
+    demoMode === 'water_asym_stretch';
   const wavefrontContoursVisible =
     demoMode === 'moving_charge' || demoMode === 'oscillating' ||
     demoMode === 'dipole' || demoMode === 'hydrogen' ||
-    demoMode === 'water_stretch' || demoMode === 'water_bend';
+    demoMode === 'water_stretch' || demoMode === 'water_bend' ||
+    demoMode === 'water_asym_stretch';
   return (
     <div
       className="absolute left-4 top-4 z-20 flex flex-col gap-3 rounded-2xl border border-orange-400/20 bg-black/65 p-4 text-sm text-zinc-200 backdrop-blur-md select-none pointer-events-auto max-w-xs"
@@ -133,14 +135,21 @@ export function ControlPanel({
             Hydrogen
           </button>
         </div>
-        {/* Water molecule subsection — vibrational normal modes (M14). */}
-        <p className="mb-1 mt-2 text-[10px] font-medium uppercase tracking-[0.15em] text-zinc-500">Water molecule</p>
+        {/* Water molecule vibrational modes — labels short to fit one line; the
+            subsection header provides the "water molecule" context. */}
+        <p className="mb-1 mt-2 text-[10px] font-medium uppercase tracking-[0.15em] text-zinc-500">Water Molecule Vibrational Modes</p>
         <div className="flex flex-wrap gap-1.5">
           <button type="button" onClick={() => onDemoModeChange('water_stretch')}
             className={`${TOGGLE_BASE} ${!noModeActive && demoMode === 'water_stretch'
               ? 'bg-orange-400 text-black shadow-[0_0_16px_rgba(251,146,60,0.5)]'
               : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
-            Stretch
+            Sym
+          </button>
+          <button type="button" onClick={() => onDemoModeChange('water_asym_stretch')}
+            className={`${TOGGLE_BASE} ${!noModeActive && demoMode === 'water_asym_stretch'
+              ? 'bg-orange-400 text-black shadow-[0_0_16px_rgba(251,146,60,0.5)]'
+              : 'bg-orange-400/20 text-orange-200 hover:bg-orange-400/35'}`}>
+            Asym
           </button>
           <button type="button" onClick={() => onDemoModeChange('water_bend')}
             className={`${TOGGLE_BASE} ${!noModeActive && demoMode === 'water_bend'

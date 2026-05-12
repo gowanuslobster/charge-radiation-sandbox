@@ -31,6 +31,7 @@ import {
   buildStreamlines,
   buildGhostHistory,
   deriveGhostSeedAnglesFromRealLines,
+  selectFieldLineSources,
 } from '@/physics/streamlineTracer';
 import type { ChargeRuntime } from '@/physics/chargeRuntime';
 import {
@@ -293,15 +294,26 @@ export function StreamlineCanvas({
               tracedLines = [];
             }
           } else {
-            // Multi-charge: trace from each charge's position in the combined field.
+            // Multi-charge: seed only one polarity per the textbook field-line
+            // rule (see selectFieldLineSources). Opposite-sign charges become
+            // sinks so lines arrive cleanly at their target charge instead of
+            // overshooting through the softened singularity and oscillating.
+            const sources = selectFieldLineSources(chargeRuntimes);
+            const seedDirSign = sources[0]?.dirSign ?? +1;
+            const sinks: Vec2[] = [];
+            for (const r of chargeRuntimes) {
+              if (Math.sign(r.charge) === seedDirSign) continue;
+              if (r.history.isEmpty()) continue;
+              sinks.push(r.history.newest()!.pos);
+            }
+
             const allLines: Vec2[][] = [];
-            for (const runtime of chargeRuntimes) {
+            for (const { runtime, dirSign } of sources) {
               if (runtime.history.isEmpty()) continue;
               const newest = runtime.history.newest()!;
-              const dirSign = runtime.charge >= 0 ? 1 : -1;
               allLines.push(...buildStreamlines(
                 newest.pos, simTime, chargeRuntimes, config, currentBounds,
-                undefined, false, undefined, dirSign,
+                undefined, false, undefined, dirSign, sinks,
               ));
             }
             tracedLines = showSL ? allLines : [];

@@ -63,6 +63,123 @@ function inBounds(pt: Vec2, b: TraceBounds): boolean {
 }
 
 /**
+ * True when `pt` is within `radius` of any sink position. Used by
+ * `traceSingleLine` to stop a multi-charge trace cleanly as it enters the
+ * neighbourhood of an opposite-sign charge, rather than letting the line
+ * overshoot through the softened singularity and oscillate.
+ */
+function inSinkRadius(pt: Vec2, sinks: Vec2[] | undefined, radius: number): boolean {
+  if (!sinks || sinks.length === 0) return false;
+  const r2 = radius * radius;
+  for (const s of sinks) {
+    const dx = pt.x - s.x;
+    const dy = pt.y - s.y;
+    if (dx * dx + dy * dy <= r2) return true;
+  }
+  return false;
+}
+
+// ── Under-resolved-trace guard ───────────────────────────────────────────────
+//
+// Fixed-step RK4 streamline tracing on a normalized E direction can wind
+// repeatedly into a tight visual spiral around an under-resolved null /
+// X-point of the field, even though the true field is divergence-free in
+// source-free space and so cannot contain a real spiral focus. The guard
+// below stops a trace before accepting a proposed point when the local
+// geometry indicates RK4 with the current `stepSize` is no longer resolving
+// the field.
+//
+// Two complementary detectors:
+//   • Hard kink — the per-step angle between the last accepted segment and
+//     the proposed segment exceeds KINK_DOT_THRESHOLD (dot < 0.5 ↔ turn
+//     > 60°). Catches the one-step overshoot of a saddle.
+//   • Tortuosity — the chord from `next` back to the point WINDOW segments
+//     ago is short relative to the known arc length over that window.
+//     Catches slow tight winding where each individual per-step turn is
+//     below the kink threshold but the line is orbiting.
+//
+// These constants are CONSERVATIVE VISUAL / NUMERICAL guards, not proven
+// physics classifiers. They are calibrated so well-resolved radiation
+// closed loops (≈ 22 steps / revolution at the default DEFAULT_STREAMLINE_
+// OPTIONS for water modes at c = 1, ω = 4) pass through unchanged; only
+// orbits that wind through more than ~2/3 of a revolution within an
+// 8-step window are flagged.
+const KINK_DOT_THRESHOLD  = 0.5;
+const TORTUOSITY_WINDOW   = 8;
+const MIN_CHORD_FRACTION  = 0.42;
+
+/**
+ * Numerical validity guard for fixed-step streamline tracing. Returns true
+ * when the proposed next step indicates the trace is no longer resolving the
+ * underlying field — either because one step turned through a large angle
+ * (overshooting a saddle / null) or because the line has been winding
+ * tightly around an under-resolved closed orbit.
+ *
+ * This is a numerical check, not a physics rule: detached / closed E-field
+ * loops are legitimate (`curl E = −∂B/∂t` allows them in source-free space)
+ * and well-resolved loops pass this guard unchanged. The guard only fires
+ * when local geometry shows that RK4 with the current `stepSize` can no
+ * longer be trusted.
+ *
+ * Thresholds:
+ *   • KINK_DOT_THRESHOLD = 0.5 — per-step rotation > 60° is interpreted as
+ *     an under-resolved saddle/null overshoot.
+ *   • Tortuosity over TORTUOSITY_WINDOW = 8 steps: chord/arc < 0.42
+ *     corresponds to roughly 235–240° of arc within the window. (The
+ *     exact crossover follows `chord/arc = 2 sin(θ/2) / θ`.)
+ *
+ * Cheap O(1): mul/add/sqrt/dot only — no acos/atan2 in the hot loop.
+ *
+ * @param points    Accepted in-bounds polyline points so far. The last
+ *                  element equals `current` in the normal tracer flow.
+ * @param current   The latest accepted point. Passed explicitly so the
+ *                  helper's contract is self-documenting and so the guard
+ *                  is well-defined when `points` is empty.
+ * @param next      The candidate next point proposed by rk4Step.
+ * @param stepSize  Per-step arc length used by the tracer. Tortuosity
+ *                  threshold scales with this so the guard is consistent
+ *                  across step sizes. Non-positive values disable the
+ *                  tortuosity branch defensively.
+ */
+export function shouldStopForUnderresolvedTrace(
+  points: Vec2[],
+  current: Vec2,
+  next: Vec2,
+  stepSize: number,
+): boolean {
+  // Hard kink — needs the previous accepted segment, so points.length >= 2
+  // (points[len-2] → current is the previous segment).
+  if (points.length >= 2) {
+    const prev = points[points.length - 2];
+    const ax = current.x - prev.x;
+    const ay = current.y - prev.y;
+    const bx = next.x - current.x;
+    const by = next.y - current.y;
+    const aMag2 = ax * ax + ay * ay;
+    const bMag2 = bx * bx + by * by;
+    if (aMag2 > 1e-24 && bMag2 > 1e-24) {
+      const dot = (ax * bx + ay * by) / Math.sqrt(aMag2 * bMag2);
+      if (dot < KINK_DOT_THRESHOLD) return true;
+    }
+  }
+
+  // Tortuosity — chord from `next` back to points[len - WINDOW] compared to
+  // (WINDOW × stepSize × MIN_CHORD_FRACTION)². WINDOW counts segments: the
+  // (WINDOW-1) accepted segments from points[len-WINDOW] up to current,
+  // plus the candidate segment current → next.
+  if (stepSize > 0 && points.length >= TORTUOSITY_WINDOW) {
+    const back = points[points.length - TORTUOSITY_WINDOW];
+    const dx = next.x - back.x;
+    const dy = next.y - back.y;
+    const chordSq = dx * dx + dy * dy;
+    const minChord = TORTUOSITY_WINDOW * stepSize * MIN_CHORD_FRACTION;
+    if (chordSq < minChord * minChord) return true;
+  }
+
+  return false;
+}
+
+/**
  * Evaluate the normalized E-field direction at a world-space point.
  *
  * @param velocityOnly - If true, use only the velocity (Coulomb-like) term of E.
@@ -145,6 +262,13 @@ function rk4Step(
  * Trace a single field-line from `seed` in direction `directionSign`.
  * Only records points while inside `bounds` (clip region); stops permanently
  * once the line exits the bounds after entering.
+ *
+ * If `sinks` is non-empty, the trace also stops once the current position is
+ * within `opts.seedOffsetRadius` of any sink — used in multi-charge mode so a
+ * + seeded line terminates cleanly at the − charge it is approaching rather
+ * than overshooting through the softened singularity and oscillating. The
+ * inside-sink point is recorded as the final polyline point so the rendered
+ * line visibly arrives at the sink.
  */
 function traceSingleLine(
   seed: Vec2,
@@ -155,10 +279,12 @@ function traceSingleLine(
   directionSign: number,
   opts: StreamlineOptions,
   velocityOnly: boolean,
+  sinks?: Vec2[],
 ): Vec2[] {
   const points: Vec2[] = [];
   let current: Vec2 = { x: seed.x, y: seed.y };
   let hasEnteredBounds = false;
+  let enteredSink = false;
 
   for (let i = 0; i < opts.maxSteps; i++) {
     const inside = inBounds(current, bounds);
@@ -169,12 +295,27 @@ function traceSingleLine(
       points.push({ x: current.x, y: current.y });
     }
 
+    // Stop only after recording the inside-sink point so the polyline visibly
+    // reaches the sink. enteredSink is set on the previous iteration's step.
+    if (enteredSink) break;
+
     const next = rk4Step(
       current, observationTime, chargeRuntimes, config,
       velocityOnly, opts.stepSize, directionSign, opts.minFieldMagnitude,
     );
     if (!next) break;
+
+    // Sink-entry takes strict priority over the under-resolved guard so a
+    // line that bends sharply right as it arrives at a sink still terminates
+    // at the sink point rather than being rejected by the kink test.
+    const nextEntersSink = inSinkRadius(next, sinks, opts.seedOffsetRadius);
+    if (!nextEntersSink &&
+        shouldStopForUnderresolvedTrace(points, current, next, opts.stepSize)) {
+      break;
+    }
+
     current = next;
+    if (nextEntersSink) enteredSink = true;
   }
 
   return points;
@@ -205,6 +346,12 @@ function traceSingleLine(
  *                         seedCount — all entries are used. Useful for geometric
  *                         seed-matching between real and ghost field lines so that
  *                         corresponding flux tubes align across the radiation shell.
+ * @param sinks            Optional world-space positions of opposite-sign charges that
+ *                         should terminate the trace cleanly. When a traced position
+ *                         enters `opts.seedOffsetRadius` of any sink the line stops
+ *                         on that point. Used by the multi-charge field-line policy
+ *                         so + seeded lines arrive at − charges without overshooting
+ *                         and oscillating through the softened singularity.
  */
 export function buildStreamlines(
   chargePos: Vec2,
@@ -218,6 +365,7 @@ export function buildStreamlines(
   /** Direction sign for tracing: +1 = outward (positive charge), −1 = inward (negative charge).
    *  Defaults to the sign of chargeRuntimes[0].charge. */
   directionSign?: number,
+  sinks?: Vec2[],
 ): Vec2[][] {
   const options: StreamlineOptions = { ...DEFAULT_STREAMLINE_OPTIONS, ...opts };
 
@@ -246,7 +394,7 @@ export function buildStreamlines(
     };
     const line = traceSingleLine(
       seed, observationTime, chargeRuntimes, config,
-      paddedBounds, dirSign, options, velocityOnly,
+      paddedBounds, dirSign, options, velocityOnly, sinks,
     );
     if (line.length >= 4) {
       // Reverse for negative sources so the polyline's stroke direction
@@ -260,6 +408,40 @@ export function buildStreamlines(
   }
 
   return lines;
+}
+
+/**
+ * Pick which charges to seed field lines from in a multi-charge configuration.
+ *
+ * Convention: a 2D field line begins on a + charge and ends on a − charge or
+ * at infinity. Seeding only the + sources reproduces the textbook line set
+ * with no double-coverage of closed dipole lines (which the previous
+ * per-charge seeding policy traced once from each end). If the system has no
+ * + charges, the helper falls back to seeding the − charges with `dirSign=-1`
+ * so each line traces outward against E from its source — the rendered
+ * polyline is then reversed in `buildStreamlines` so tick-marks point in the
+ * local E direction, matching the existing single-charge convention.
+ *
+ * Flux-balance note for the water modes: with `q_O = −0.8` and
+ * `q_H+ = q_H- = +0.4`, total positive flux equals total negative flux, so
+ * seeding the two hydrogens captures the full field-line set without
+ * double-tracing the closed lines that terminate on the oxygen. For dipole
+ * and hydrogen the polarity-only rule is sufficient on its own.
+ *
+ * Returns an empty array when the input is empty or all charges are zero.
+ */
+export function selectFieldLineSources(
+  chargeRuntimes: ChargeRuntime[],
+): { runtime: ChargeRuntime; dirSign: number }[] {
+  const positives = chargeRuntimes.filter(r => r.charge > 0);
+  if (positives.length > 0) {
+    return positives.map(runtime => ({ runtime, dirSign: +1 }));
+  }
+  const negatives = chargeRuntimes.filter(r => r.charge < 0);
+  if (negatives.length > 0) {
+    return negatives.map(runtime => ({ runtime, dirSign: -1 }));
+  }
+  return [];
 }
 
 function analyticGhostSeedAngle(realSeedAngle: number, ghostVel: Vec2, c: number): number {

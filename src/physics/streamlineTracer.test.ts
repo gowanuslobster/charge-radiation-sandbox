@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ChargeHistory } from './chargeHistory';
 import type { ChargeRuntime } from './chargeRuntime';
 import type { SimConfig } from './types';
-import { buildStreamlines } from './streamlineTracer';
+import { buildStreamlines, selectFieldLineSources } from './streamlineTracer';
 
 function makeStaticChargeRuntime(charge: number, posX = 0, posY = 0): ChargeRuntime {
   const history = new ChargeHistory();
@@ -70,6 +70,104 @@ describe('buildStreamlines — polyline orientation matches E direction', () => 
         const radialDot = (b.x - a.x) * a.x + (b.y - a.y) * a.y;
         expect(radialDot).toBeLessThan(0);
       }
+    }
+  });
+});
+
+describe('selectFieldLineSources — multi-charge seeding policy', () => {
+  it('single positive charge: returns that charge with dirSign +1', () => {
+    const r = makeStaticChargeRuntime(+1);
+    const sources = selectFieldLineSources([r]);
+    expect(sources).toHaveLength(1);
+    expect(sources[0].runtime).toBe(r);
+    expect(sources[0].dirSign).toBe(+1);
+  });
+
+  it('single negative charge: returns that charge with dirSign −1', () => {
+    const r = makeStaticChargeRuntime(-1);
+    const sources = selectFieldLineSources([r]);
+    expect(sources).toHaveLength(1);
+    expect(sources[0].runtime).toBe(r);
+    expect(sources[0].dirSign).toBe(-1);
+  });
+
+  it('dipole (+ and −): seeds only the positive', () => {
+    const rPos = makeStaticChargeRuntime(+1, -1, 0);
+    const rNeg = makeStaticChargeRuntime(-1, +1, 0);
+    const sources = selectFieldLineSources([rPos, rNeg]);
+    expect(sources).toHaveLength(1);
+    expect(sources[0].runtime).toBe(rPos);
+    expect(sources[0].dirSign).toBe(+1);
+  });
+
+  it('water-shaped (− and two +): seeds both positives', () => {
+    const rO  = makeStaticChargeRuntime(-0.8, 0, 0);
+    const rH1 = makeStaticChargeRuntime(+0.4, -0.5, -0.4);
+    const rH2 = makeStaticChargeRuntime(+0.4, +0.5, -0.4);
+    const sources = selectFieldLineSources([rO, rH1, rH2]);
+    expect(sources).toHaveLength(2);
+    expect(sources.map(s => s.runtime)).toEqual(expect.arrayContaining([rH1, rH2]));
+    expect(sources.every(s => s.dirSign === +1)).toBe(true);
+  });
+
+  it('all-negative system: falls back to seeding all negatives with dirSign −1', () => {
+    const r1 = makeStaticChargeRuntime(-1, -1, 0);
+    const r2 = makeStaticChargeRuntime(-1, +1, 0);
+    const sources = selectFieldLineSources([r1, r2]);
+    expect(sources).toHaveLength(2);
+    expect(sources.every(s => s.dirSign === -1)).toBe(true);
+  });
+
+  it('empty input: returns empty array', () => {
+    expect(selectFieldLineSources([])).toEqual([]);
+  });
+});
+
+describe('buildStreamlines — sink termination', () => {
+  it('+ → − trace stops on entering the sink radius', () => {
+    // Static dipole: + at (-1, 0), − at (+1, 0). Seed one line from + along
+    // +x (angle 0) so it traces straight toward the − sink. Assert the four
+    // clauses of the sink-termination contract: stopped before maxSteps; last
+    // point is inside the sink radius; the prior point is still outside; and
+    // no earlier point ever entered the sink radius (the line did not pass
+    // through the sink).
+    const rPos = makeStaticChargeRuntime(+1, -1, 0);
+    const rNeg = makeStaticChargeRuntime(-1, +1, 0);
+    const sinkPos = { x: +1, y: 0 };
+    const seedOffsetRadius = 0.12;
+    const maxSteps = 300;
+
+    const lines = buildStreamlines(
+      { x: -1, y: 0 }, 0, [rPos, rNeg], config,
+      { minX: -3, maxX: 3, minY: -3, maxY: 3 },
+      { seedCount: 1, maxSteps, stepSize: 0.035, seedOffsetRadius, minFieldMagnitude: 0.001 },
+      false,
+      [0],          // single seed at angle 0 → seed at (-1 + 0.12, 0), points at sink
+      +1,           // dirSign: trace along +E
+      [sinkPos],    // − charge is the sink
+    );
+
+    expect(lines).toHaveLength(1);
+    const line = lines[0];
+
+    // (a) Stopped well before maxSteps.
+    expect(line.length).toBeLessThan(maxSteps);
+    expect(line.length).toBeGreaterThanOrEqual(4);
+
+    const distTo = (p: { x: number; y: number }) =>
+      Math.hypot(p.x - sinkPos.x, p.y - sinkPos.y);
+
+    // (b) Last point is inside the sink radius.
+    expect(distTo(line[line.length - 1])).toBeLessThanOrEqual(seedOffsetRadius);
+
+    // (c) Previous point is still outside — proves the stop fired on the
+    // sink-entry step, not on an earlier weak-field or bounds exit.
+    expect(distTo(line[line.length - 2])).toBeGreaterThan(seedOffsetRadius);
+
+    // (d) No earlier point is inside the sink radius — proves the line
+    // arrived from outside rather than passing through and re-entering.
+    for (let i = 0; i < line.length - 1; i++) {
+      expect(distTo(line[i])).toBeGreaterThan(seedOffsetRadius);
     }
   });
 });

@@ -63,6 +63,23 @@ function inBounds(pt: Vec2, b: TraceBounds): boolean {
 }
 
 /**
+ * True when `pt` is within `radius` of any sink position. Used by
+ * `traceSingleLine` to stop a multi-charge trace cleanly as it enters the
+ * neighbourhood of an opposite-sign charge, rather than letting the line
+ * overshoot through the softened singularity and oscillate.
+ */
+function inSinkRadius(pt: Vec2, sinks: Vec2[] | undefined, radius: number): boolean {
+  if (!sinks || sinks.length === 0) return false;
+  const r2 = radius * radius;
+  for (const s of sinks) {
+    const dx = pt.x - s.x;
+    const dy = pt.y - s.y;
+    if (dx * dx + dy * dy <= r2) return true;
+  }
+  return false;
+}
+
+/**
  * Evaluate the normalized E-field direction at a world-space point.
  *
  * @param velocityOnly - If true, use only the velocity (Coulomb-like) term of E.
@@ -145,6 +162,13 @@ function rk4Step(
  * Trace a single field-line from `seed` in direction `directionSign`.
  * Only records points while inside `bounds` (clip region); stops permanently
  * once the line exits the bounds after entering.
+ *
+ * If `sinks` is non-empty, the trace also stops once the current position is
+ * within `opts.seedOffsetRadius` of any sink — used in multi-charge mode so a
+ * + seeded line terminates cleanly at the − charge it is approaching rather
+ * than overshooting through the softened singularity and oscillating. The
+ * inside-sink point is recorded as the final polyline point so the rendered
+ * line visibly arrives at the sink.
  */
 function traceSingleLine(
   seed: Vec2,
@@ -155,10 +179,12 @@ function traceSingleLine(
   directionSign: number,
   opts: StreamlineOptions,
   velocityOnly: boolean,
+  sinks?: Vec2[],
 ): Vec2[] {
   const points: Vec2[] = [];
   let current: Vec2 = { x: seed.x, y: seed.y };
   let hasEnteredBounds = false;
+  let enteredSink = false;
 
   for (let i = 0; i < opts.maxSteps; i++) {
     const inside = inBounds(current, bounds);
@@ -169,12 +195,20 @@ function traceSingleLine(
       points.push({ x: current.x, y: current.y });
     }
 
+    // Stop only after recording the inside-sink point so the polyline visibly
+    // reaches the sink. enteredSink is set on the previous iteration's step.
+    if (enteredSink) break;
+
     const next = rk4Step(
       current, observationTime, chargeRuntimes, config,
       velocityOnly, opts.stepSize, directionSign, opts.minFieldMagnitude,
     );
     if (!next) break;
     current = next;
+
+    if (inSinkRadius(current, sinks, opts.seedOffsetRadius)) {
+      enteredSink = true;
+    }
   }
 
   return points;
@@ -205,6 +239,12 @@ function traceSingleLine(
  *                         seedCount — all entries are used. Useful for geometric
  *                         seed-matching between real and ghost field lines so that
  *                         corresponding flux tubes align across the radiation shell.
+ * @param sinks            Optional world-space positions of opposite-sign charges that
+ *                         should terminate the trace cleanly. When a traced position
+ *                         enters `opts.seedOffsetRadius` of any sink the line stops
+ *                         on that point. Used by the multi-charge field-line policy
+ *                         so + seeded lines arrive at − charges without overshooting
+ *                         and oscillating through the softened singularity.
  */
 export function buildStreamlines(
   chargePos: Vec2,
@@ -218,6 +258,7 @@ export function buildStreamlines(
   /** Direction sign for tracing: +1 = outward (positive charge), −1 = inward (negative charge).
    *  Defaults to the sign of chargeRuntimes[0].charge. */
   directionSign?: number,
+  sinks?: Vec2[],
 ): Vec2[][] {
   const options: StreamlineOptions = { ...DEFAULT_STREAMLINE_OPTIONS, ...opts };
 
@@ -246,7 +287,7 @@ export function buildStreamlines(
     };
     const line = traceSingleLine(
       seed, observationTime, chargeRuntimes, config,
-      paddedBounds, dirSign, options, velocityOnly,
+      paddedBounds, dirSign, options, velocityOnly, sinks,
     );
     if (line.length >= 4) {
       // Reverse for negative sources so the polyline's stroke direction
@@ -260,6 +301,40 @@ export function buildStreamlines(
   }
 
   return lines;
+}
+
+/**
+ * Pick which charges to seed field lines from in a multi-charge configuration.
+ *
+ * Convention: a 2D field line begins on a + charge and ends on a − charge or
+ * at infinity. Seeding only the + sources reproduces the textbook line set
+ * with no double-coverage of closed dipole lines (which the previous
+ * per-charge seeding policy traced once from each end). If the system has no
+ * + charges, the helper falls back to seeding the − charges with `dirSign=-1`
+ * so each line traces outward against E from its source — the rendered
+ * polyline is then reversed in `buildStreamlines` so tick-marks point in the
+ * local E direction, matching the existing single-charge convention.
+ *
+ * Flux-balance note for the water modes: with `q_O = −0.8` and
+ * `q_H+ = q_H- = +0.4`, total positive flux equals total negative flux, so
+ * seeding the two hydrogens captures the full field-line set without
+ * double-tracing the closed lines that terminate on the oxygen. For dipole
+ * and hydrogen the polarity-only rule is sufficient on its own.
+ *
+ * Returns an empty array when the input is empty or all charges are zero.
+ */
+export function selectFieldLineSources(
+  chargeRuntimes: ChargeRuntime[],
+): { runtime: ChargeRuntime; dirSign: number }[] {
+  const positives = chargeRuntimes.filter(r => r.charge > 0);
+  if (positives.length > 0) {
+    return positives.map(runtime => ({ runtime, dirSign: +1 }));
+  }
+  const negatives = chargeRuntimes.filter(r => r.charge < 0);
+  if (negatives.length > 0) {
+    return negatives.map(runtime => ({ runtime, dirSign: -1 }));
+  }
+  return [];
 }
 
 function analyticGhostSeedAngle(realSeedAngle: number, ghostVel: Vec2, c: number): number {

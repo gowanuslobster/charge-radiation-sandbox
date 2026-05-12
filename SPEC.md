@@ -55,8 +55,11 @@ The current official scope does not include:
   is instantaneous and in sandbox units)
 - time-averaged field displays
 
-M1–M12 are complete. Remaining work is tracked as future directions rather than
-official v1 milestone scope.
+M1–M15 are complete (M13 was scoped, started, and mothballed; the
+infrastructure pieces from that branch were ported forward in M14-A; M15
+landed COM-conserving normal-mode displacements for water in 15-A and added
+the antisymmetric stretch as a third water mode in 15-B). Remaining work is
+tracked as future directions rather than official v1 milestone scope.
 
 ## Canonical Demo Modes
 
@@ -103,6 +106,58 @@ analytic-history architecture as the other demos.
 same LW superposition machinery. This connects the sandbox to atomic and
 molecular intuition while keeping the physics model explicit: the source motion
 is imposed, and the emitted fields are computed from that history.
+
+### Water — Symmetric Stretch
+
+A three-charge H₂O-like source: a negative oxygen and two positive hydrogens
+at COM-centered equilibrium geometry (bond length 0.6 sandbox units, H–O–H
+angle 105°, mass ratio 16:1). Both O–H bonds breathe in phase along their
+equilibrium bond directions, modulating the molecule's dipole moment along
+the C₂ symmetry axis. All three atoms move; the mass-weighted center of mass
+stays at the world origin by construction (M15-A). This is a scripted
+normal-mode displacement, not full molecular dynamics. The radiated field
+shows the characteristic dipole pattern peaked perpendicular to the C₂ axis.
+
+**What the student learns:** vibrational motion with a time-varying dipole
+moment radiates by the same LW machinery as the other modes. This is the IR
+spectroscopy intuition — a vibration that modulates the dipole moment is
+"IR-active" and emits radiation at its characteristic frequency.
+
+### Water — Bend (Scissoring)
+
+Same three-charge H₂O-like source. The atoms move along the first-order
+bend normal mode — the H–O–H angle opens and closes while the O–H bond
+lengths are preserved to first order in displacement amplitude. O takes
+the mass-weighted COM-restoring counter-displacement along the C₂ axis. Bend runs at half the stretch
+frequency (ω_bend = 2.0, ω_stretch = 4.0), mirroring the directional ratio of
+real H₂O. The dipole-pattern orientation matches stretch (along the C₂ axis),
+but the radiated wave train has roughly twice the wavelength at the same `c`.
+
+**What the student learns:** different vibrational normal modes of the same
+molecule have different characteristic frequencies, and that frequency
+difference shows up directly in the wavelength of the radiated wave train.
+This connects the sandbox to IR spectroscopy: distinct vibrational modes have
+distinct IR signatures.
+
+### Water — Antisymmetric Stretch
+
+Same three-charge H₂O-like source. One O–H bond stretches outward along its
+bond direction while the other compresses, antiphase — the antisymmetric
+combination of bond-length displacements (ν₃ in spectroscopy notation; also
+called "asymmetric stretch" in introductory texts). O takes the COM-restoring
+counter-displacement along the H–H axis. The interior H–O–H angle is
+preserved to first order in displacement amplitude. The mode's time-varying
+dipole now oscillates along the H–H axis (perpendicular to the symmetric-
+stretch and bend dipoles, which are along the C₂ axis), so the radiation
+peaks along ±ŷ — parallel to the C₂ axis — instead of along ±x̂ as in
+symmetric stretch and bend.
+
+**What the student learns:** different normal modes of the same molecule
+have not only different frequencies but also different radiation orientations.
+The symmetric stretch and bend modulate the dipole along the C₂ axis;
+antisymmetric stretch modulates it along the perpendicular axis. This is a
+core IR-spectroscopy distinction (selection rules and polarization both
+follow from which component of the dipole each mode modulates).
 
 ## Milestones
 
@@ -434,6 +489,261 @@ Implementation notes:
   compression invariant (raw magnitudes 100× apart yield stem lengths
   within a small bounded ratio after compression)
 
+### M13: Lines of charges — mothballed
+
+A multi-charge expansion arranging discrete charges in a line, intended to
+bridge microscopic point charges and macroscopic current/wire intuition. The
+work split into three sub-milestones — Particle Beam (M13-A), Neutral Wire
+approximation (M13-B), and Neutral-Wire stop-now (M13-C) — and lives on the
+`feat/lines-of-charge` branch. The branch shipped capacity, perf, and tooling
+infrastructure (MAX_CHARGES bump to 32, row-restricted history texture upload,
+DPR/probe-grid perf cuts, paused-clean tick skip, opt-in dev perf logging,
+build-vintage timestamp, per-mode default zoom) alongside the line-of-charge
+modes themselves. Status: mothballed pending future activation. Pedagogical
+framing and physics rationale live in `IDEAS-line-of-charges.md`; deferred
+perf direction lives in `IDEAS-line-of-charge-perf-optimization.md`. The
+infrastructure pieces (capacity, perf, timestamp) are ported forward
+independently in M14-A.
+
+### M14: Water molecule modes — complete
+
+Two discrete demo modes — `water_stretch` and `water_bend` — that show
+prescribed atomic motion of an H₂O-like three-charge source and the resulting
+Liénard-Wiechert radiation pattern. Each mode is a periodic source with a
+time-varying dipole moment along the C₂ axis, so both are 2D-IR-active. The
+period distinction between the two modes connects the visualization to
+IR-spectroscopy intuition that vibrational normal modes have characteristic
+frequencies. M14 lands as two phases: M14-A ports infrastructure forward from
+the mothballed M13 branch (WebGL N-charge capacity, Phase-1 perf tuning,
+paused-clean tick skip, opt-in dev perf logging, build-vintage timestamp)
+without introducing new demo modes; M14-B adds the two water modes built on
+that foundation.
+
+Implementation notes:
+- Two discrete `DemoMode` values: `water_stretch` and `water_bend`. Sub-toggle
+  rejected because every mode-keyed dispatch function (`sampleDemoChargeStates`,
+  `maxHistorySpeed`, `minCForMode`, mode-specific UI visibility) keys on the
+  `DemoMode` string; a sub-toggle would either thread a second parameter
+  through all of them or create a parallel state slot with its own reset
+  semantics.
+- Three charges per mode in the locked order `[O, H₊x, H₋x]` (indices 0, 1, 2).
+  The ordering must be preserved across all `t` because the WebGL history
+  texture slot assignments depend on it.
+- O is held fixed at the origin for both modes. This is **scripted teaching
+  motion**, not normal-coordinate mass-weighted COM-conserving molecular
+  dynamics. The fixed-O approximation keeps the kinematics closed-form and the
+  dipole-radiation story unchanged; in real H₂O all three atoms move and the
+  COM is conserved.
+- Equilibrium geometry: bond length L₀ = 0.6 sandbox units; H–O–H angle
+  θ₀ = 105°; H atoms at `(±sin(θ/2)·L₀, −cos(θ/2)·L₀)` (C₂ axis along y, H
+  atoms hanging below O). Charge values: q_O = −0.8, q_H = +0.4 (net zero).
+- Stretch (`water_stretch`): both O–H bond lengths breathe in phase with
+  `L(t) = L₀ + A·sin(ω_s·t)`, A = 0.1, ω_s = 4.0. Peak H speed = A·ω_s = 0.4.
+- Bend (`water_bend`): bond lengths fixed at L₀; H–O–H angle modulates as
+  `θ(t) = θ₀ + Δθ·sin(ω_b·t)`, Δθ = 0.3 rad, ω_b = 2.0. Peak H speed
+  = L₀·Δθ·ω_b/2 = 0.18. Real H₂O symmetric stretch frequency is about 2.3×
+  the bend frequency; we use 2.0× to keep the IR-spectroscopy intuition
+  while keeping bend visually responsive.
+- Both modes share `CMIN_OSCILLATING = 0.62` because peak H speed ≤ 0.5 in
+  both. `minCForMode` extends to include both.
+- Both modes ride the existing multi-charge analytic branch in the simulation
+  tick loop and `rebuildAnalyticHistoryAtCurrentTime` (the same branch used
+  by `dipole` and `hydrogen`); no new branch needed.
+- Both modes use Policy B (phase-sweep cache) normalization in
+  `WavefrontWebGLCanvas`; period is `2π/ω` per mode (T_stretch ≈ 1.57 s,
+  T_bend ≈ 3.14 s).
+- ControlPanel mode picker introduces a small "Water molecule" subsection
+  under the existing single-charge / atom buttons; StartPanel adds two
+  matching mode cards. Both magnetic heatmap channels and wavefront contours
+  are visible in water modes.
+
+Acceptance criteria (M14-B):
+- `water_stretch` shows three charges (O fixed at origin, two H atoms breathing
+  radially in phase). Total E shows superposed Coulomb structure around the
+  molecule; Accel B shows the time-varying dipole radiation pattern peaked
+  along ±x; wavefront contours align with the heatmap and propagate outward
+  at c.
+- `water_bend` shows three charges with bond lengths visibly fixed and H–O–H
+  angle visibly modulating. Same dipole orientation along the C₂ axis as
+  stretch but a distinct period (T_bend ≈ 2 × T_stretch).
+- The radiated wave train has visibly shorter wavelength in stretch than in
+  bend at the same c, connecting to IR-spectroscopy intuition that
+  vibrational modes have characteristic frequencies.
+- All four magnetic heatmap channels (Off / Total B / Velocity B / Accel B)
+  render without pulsing under scrub, pan, zoom, and channel switch in both
+  modes.
+- Both vector modes (E vectors, Poynting S) render correctly at N=3 and
+  switch responsively.
+- Wavefront contours visible and aligned with the heatmap in both modes.
+- Cursor readout and field probe report sensible E and B at observation
+  points outside the softening radius.
+- Manual UI verification at desktop (≈1440×900), tablet (768 px), and mobile
+  (375 px) viewports: StartPanel cards and ControlPanel layout do not
+  introduce new horizontal overflow or text clipping; water content does not
+  introduce new vertical overflow that wasn't already present pre-water.
+- Unit tests cover: geometry safety preconditions
+  (`WATER_HOH_ANGLE_RAD ± WATER_BEND_AMPLITUDE_RAD ∈ (0, π)`;
+  `WATER_BOND_LENGTH > WATER_STRETCH_AMPLITUDE`); policy assertions
+  (`maxHistorySpeed ≤ 0.5` for both modes); and per-mode behavioral tests
+  (3 charge specs returned; net charge zero; O fixed across one period;
+  mirror symmetry across the C₂ axis; c-min margin sweep; periodicity
+  `state(t + 2π/ω) ≈ state(t)`; stable label ordering preserved across `t`).
+- All M1–M12 and M14-A acceptance gates continue to pass.
+
+### M15: COM-corrected water modes and antisymmetric stretch — complete
+
+M15 supersedes M14's runtime water-mode implementation while preserving the
+M14 history above. It landed in two sub-phases:
+
+- **M15-A — complete.** Replace the fixed-O scripted approximation of M14's
+  `water_stretch` and `water_bend` with mass-weighted COM-conserving
+  normal-mode displacements. All three atoms move; the molecule's center of
+  mass stays at the world origin by construction. M14 frequencies and atom
+  charge values are preserved. M15-A is a substantive physics correction to
+  shipped behavior — the M14 milestone block above documents the original
+  fixed-O implementation as shipped.
+- **M15-B — complete.** Add a third water mode (`water_asym_stretch`) with
+  the antisymmetric stretch normal-mode pattern, built on the M15-A
+  equilibrium and displacement-vector foundation. Backfills two pre-existing
+  M14 gaps surfaced during 15-B review: WavefrontOverlayCanvas (CPU fallback)
+  now wires all three water modes through `periodicModePeriod` and the
+  signed-contour predicate; `sampleSourceState` is retyped to
+  `SingleChargeDemoMode` so multi-charge mode strings no longer compile.
+
+Implementation notes (M15-A):
+- Atomic masses use the exact ratio `m_O : m_H = 16 : 1` (¹⁶O / ¹H
+  approximation; the small isotopic correction is pedagogically irrelevant
+  and would only make tests noisier).
+- COM-centered equilibrium positions, below-O orientation (matching M14's
+  textbook drawing):
+    - `r_O_eq  = (0,             +L₀·cos(θ₀/2)/9)`
+    - `r_H±_eq = (±L₀·sin(θ₀/2), -(8/9)·L₀·cos(θ₀/2))`
+- Normal-mode displacement vectors satisfy
+  `m_O·δ_O + m_H·(δ_H+ + δ_H-) = 0` by construction. Each atom moves as
+  `r_atom(t) = r_atom_eq + A·sin(ω·t)·δ_atom`.
+- Symmetric stretch basis: H atoms displace along their outward bond
+  directions; O takes the COM-restoring counter-displacement along the C₂
+  axis (`δ_O = (0, +cos(θ₀/2)/8)`).
+- Bend basis: the first-order bend normal mode, derived by linearizing the
+  COM-centered equilibrium positions with respect to the half-angle φ at
+  fixed bond length L₀. Unnormalized:
+  `δ_H± ∝ (±cos(θ₀/2), (8/9)·sin(θ₀/2))`,
+  `δ_O  ∝ (0,          -sin(θ₀/2)/9)`.
+  Two properties hold by construction: (i) mass-weighted COM conservation
+  (`m_O·(-sinφ/9) + 2·m_H·(8/9)·sinφ = 0` with m_O = 16, m_H = 1); and
+  (ii) first-order O–H bond-length preservation
+  (`u · (δ_H± - δ_O) = 0` where u is the equilibrium bond unit vector).
+  The basis is normalized by `N = √(cos²(θ₀/2) + (64/81)·sin²(θ₀/2))` so
+  `|δ_H| = 1` and the `maxHistorySpeed = A·ω` contract is preserved
+  (`WATER_BEND_NORM` exports this constant). Bond-length conservation is
+  first-order only; the second-order deviation goes as `O(A²/L₀)` and stays
+  in the pedagogical noise floor for small A.
+- `WATER_BEND_AMPLITUDE` is a world-unit displacement amplitude paired with
+  the normalized COM-linearized bend basis. The value `0.09` matches the M14
+  peak H speed of `0.18` (= A·ω); the back-compat alias
+  `WATER_BEND_AMPLITUDE_RAD` is derived from `2·A_bend/L₀ = 0.3` and remains
+  numerically equal to the M14 angular amplitude.
+- `maxHistorySpeed(mode) = A·ω · max_atom |δ_atom|`. H δ vectors are unit
+  length and O δ norms are ≤ 1/8, so H binds and the entries reduce to
+  `A·ω`. Both modes share `CMIN_OSCILLATING = 0.62` (unchanged from M14;
+  no `minCForMode` change required because the empirical peak speed stays
+  in the existing bucket).
+- StartPanel water-card copy is updated to remove the "oxygen is held fixed"
+  language and describe the COM-conserving normal-mode displacements (still
+  scripted, still not full molecular dynamics).
+
+Acceptance criteria (M15-A):
+- All M14 acceptance gates continue to pass (label ordering, mirror symmetry,
+  periodicity, c-min margin, magnetic heatmap channels, vector modes,
+  wavefront contours).
+- Mass-weighted COM-conservation test passes for position, velocity, and
+  acceleration across the full period for both modes:
+  `m_O·r_O + m_H·(r_H+ + r_H-) ≈ 0`.
+- Equilibrium-position tests assert O sits at `+L₀·cos(θ/2)/9` above the
+  origin and H atoms at `-(8/9)·L₀·cos(θ/2)` below.
+- Empirical maxHistorySpeed test samples all three atoms at cosine extrema
+  (`t = 0, T/2, T`) plus a dense interior grid and asserts observed peak
+  speed ≤ `maxHistorySpeed(mode)` and ≤ 0.5 for both modes. (M15-B back-fix:
+  the original M15-A test named quarter-period offsets, which sample the sin
+  extrema — displacement peaks, velocity zeros; corrected in M15-B.)
+- StartPanel cards no longer claim O is fixed.
+- Visual check on dev server confirms the molecule sits with COM at world
+  origin (small upward shift from the M14 O-at-origin frame is expected) and
+  that the radiation pattern remains primarily oriented along ±x for both
+  modes (perpendicular to the C₂ axis).
+
+Implementation notes (M15-B):
+- Third `DemoMode` value: `'water_asym_stretch'`. UI label exactly
+  `Antisymmetric stretch` (no decoration) on the ControlPanel button and as
+  the StartPanel card title. Body copy notes "also called asymmetric stretch
+  in introductory texts."
+- ω_asym_stretch = 4.2 (close to ω_stretch = 4.0 but distinct, mirroring the
+  real ν₃ ≈ 3756 cm⁻¹ vs ν₁ ≈ 3657 cm⁻¹ in H₂O). A_asym = 0.1 world units;
+  peak H speed = A·ω = 0.42 ≤ 0.5, so `water_asym_stretch` shares
+  `CMIN_OSCILLATING = 0.62`.
+- Antisymmetric stretch δ basis (unnormalized; H δ vectors are unit length
+  without normalization):
+    - `δ_H+ = (+sin(θ₀/2), -cos(θ₀/2))`  [along H+ outward bond]
+    - `δ_H- = (+sin(θ₀/2), +cos(θ₀/2))`  [along H- inward bond — compressing]
+    - `δ_O  = (-sin(θ₀/2)/8, 0)`
+  Properties (by construction): COM conservation, antisymmetric bond-length
+  change to first order in A (the symmetric combination r₁ + r₂ is conserved
+  to first order), interior H-O-H angle preserved to first order. The basis
+  induces a small first-order overall rotation of the molecule (≈ 0.6° peak
+  at A = 0.1) as a consequence of imposing translational COM conservation
+  without angular-momentum conservation. Documented in the docstring;
+  visually negligible.
+- Time-varying dipole oscillates along x̂ (perpendicular to the C₂ axis),
+  distinguishing asym stretch from sym/bend which dipole along ŷ. This
+  produces a radiation pattern peaked along ±ŷ (vs ±x̂ for sym/bend) — a
+  visible spectroscopic distinction.
+- Backfills two pre-existing M14 gaps surfaced during 15-B review:
+    1. `WavefrontOverlayCanvas` (CPU fallback path used when WebGL2 + RGBA32F
+       is unavailable) now includes all three water modes in
+       `periodicModePeriod()` and in the signed-contour predicate. Without
+       this, fallback rendering of water modes used envelope-threshold
+       contour semantics and no periodic normalization.
+    2. `sampleSourceState`'s parameter type is now `SingleChargeDemoMode`
+       (= `Exclude<DemoMode, MultiChargeDemoMode>`), so passing
+       `'water_stretch'`, `'water_bend'`, or `'water_asym_stretch'` no
+       longer compiles. The previous `Exclude<DemoMode, 'dipole' | 'hydrogen'>`
+       signature would have silently fallen through to the single-charge
+       oscillating branch.
+- Dev-only debug override: `?forceFallback=1` URL parameter (mirrors the
+  existing `?perfLog=1` pattern) sets `webGLReady = false` so the CPU
+  fallback canvas renders even on WebGL-capable hardware. Gated behind
+  `import.meta.env.DEV`; never active in production builds. Used to verify
+  fallback-path correctness without hardware that lacks WebGL2 + RGBA32F.
+
+Acceptance criteria (M15-B):
+- Build clean, eslint clean on touched files, all tests pass.
+- Mass-weighted COM-conservation test passes for `water_asym_stretch`
+  (position, velocity, acceleration).
+- Antisymmetric bond-length test passes three parts: (a) sign at positive
+  and negative amplitude phases, (b) ratio of symmetric sum to antisymmetric
+  difference is small at peak amplitude, (c) scaling shows antisymmetric
+  ~linear and symmetric ~quadratic in phase fraction.
+- Interior H-O-H angle preservation test passes: `dθ/dt ≈ 0` at peak
+  velocity. (Body-frame rotation is not tested; it is disclosed in the
+  docstring as expected behavior.)
+- Dipole-orientation test passes for all three water modes:
+  `water_asym_stretch` dipole x-range dominates; `water_stretch` and
+  `water_bend` dipole y-range dominates.
+- Empirical maxHistorySpeed sampled-peak ≤ `maxHistorySpeed(mode)` ≤ 0.5
+  for all three water modes.
+- `sampleSourceState` no longer compiles with a multi-charge mode argument
+  (type-safety hole closed).
+- WebGL fallback (`WavefrontOverlayCanvas`) renders all three water modes
+  with periodic normalization and signed zero-crossing contours, verified
+  by mounting via `?forceFallback=1` on the dev server.
+- Visual check on dev server: asym stretch radiation peaks along ±ŷ;
+  sym/bend continue to peak along ±x̂; phase contours and heatmap render
+  correctly for all three water modes in both the WebGL and fallback paths.
+- Viewport gate at desktop / tablet / mobile: no horizontal overflow, no
+  clipped text in any StartPanel card or ControlPanel button, vertical
+  overflow no worse than M14 baseline.
+- LAST_CODE_CHANGE_STAMP bumped.
+
 ## UI and Interaction Spec
 
 ### Viewport
@@ -497,18 +807,24 @@ all GPU field values.
 
 ## Deferred Work and Future Directions
 
-- **N-charge WebGL generalization:** the WebGL heatmap currently supports two
-  charge histories, enough for dipole and hydrogen. Future molecular demos with
-  more than two moving charges should extend the texture layout and shader loop
-  from `MAX_CHARGES = 2` to a larger explicit bound.
+- **WebGL capacity beyond 32 charges:** the WebGL heatmap currently supports
+  up to `MAX_CHARGES = 32` independent charge histories with chargeCount-bounded
+  per-frame uploads (see M14-A.2). This covers all current modes including the
+  three-charge water modes. Source configurations beyond 32 active charges
+  would need a further capacity bump and likely structural perf work — see
+  `IDEAS-line-of-charge-perf-optimization.md` for the deferred perf playbook
+  (half-resolution heatmap FBO, early-exit Newton, GPU-side normalization
+  probe, per-charge culling) that becomes more relevant at higher charge
+  counts.
 - **WebGL efficiency tuning:** future work may add a manual heatmap quality
   control for lower-tier hardware, first by reducing internal WebGL render scale
   and then, if needed, by lowering CPU normalization-probe density/cadence. See
   `IDEAS-webGL-efficiency.md`.
-- **Additional multi-charge demos:** molecular geometries such as water
-  stretch/bend modes are natural follow-ons now that the N-charge architecture
-  exists. Modes with more than two moving charges should wait for the N-charge
-  WebGL generalization above.
+- **Additional multi-charge demos:** all three H₂O vibrational normal modes
+  shipped — symmetric stretch and bend in M14 (with COM-corrected motion in
+  M15-A), antisymmetric stretch in M15-B (see milestone blocks above).
+  Larger molecules remain deferred and build on the same N-charge
+  infrastructure M14-A ported forward from the mothballed M13 branch.
 - **Vector-grid density control:** an optional low / medium / high selector for
   the CPU arrow field may be added in a future pass if teaching needs or
   performance tuning justify it. This was removed from the v1 control-panel

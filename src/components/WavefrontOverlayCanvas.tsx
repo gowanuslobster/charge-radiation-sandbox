@@ -27,6 +27,9 @@ import {
   DIPOLE_OMEGA,
   HYDROGEN_OMEGA,
   OSCILLATING_OMEGA,
+  WATER_STRETCH_OMEGA,
+  WATER_BEND_OMEGA,
+  WATER_ASYM_STRETCH_OMEGA,
 } from '@/physics/demoModes';
 import type { MagneticHeatmapMode } from '@/rendering/displayModes';
 import type { WorldBounds } from '@/rendering/worldSpace';
@@ -96,9 +99,12 @@ const CONTOUR_PHASE    = 'rgba(220, 220, 220, 0.85)';
 const CONTOUR_LINE_WIDTH = 1.5;
 
 function periodicModePeriod(mode: DemoMode): number | null {
-  if (mode === 'oscillating') return (2 * Math.PI) / OSCILLATING_OMEGA;
-  if (mode === 'dipole')      return (2 * Math.PI) / DIPOLE_OMEGA;
-  if (mode === 'hydrogen')    return (2 * Math.PI) / HYDROGEN_OMEGA;
+  if (mode === 'oscillating')        return (2 * Math.PI) / OSCILLATING_OMEGA;
+  if (mode === 'dipole')             return (2 * Math.PI) / DIPOLE_OMEGA;
+  if (mode === 'hydrogen')           return (2 * Math.PI) / HYDROGEN_OMEGA;
+  if (mode === 'water_stretch')      return (2 * Math.PI) / WATER_STRETCH_OMEGA;
+  if (mode === 'water_bend')         return (2 * Math.PI) / WATER_BEND_OMEGA;
+  if (mode === 'water_asym_stretch') return (2 * Math.PI) / WATER_ASYM_STRETCH_OMEGA;
   return null;
 }
 
@@ -295,9 +301,13 @@ export function WavefrontOverlayCanvas({
       // Heatmap always uses signed coloring (warm/cool dual-hue) for all channels.
       // Contour logic: periodic modes use zero-crossing on the signed bZAccel field;
       // moving_charge uses an envelope threshold on the |bZAccel| field.
+      // Signed modes: oscillating, dipole, hydrogen, water_stretch, water_bend,
+      // water_asym_stretch — all driven by a continuous periodic source.
       // (draggable hides the contour toggle entirely — value is irrelevant there.)
       const contourMode: HeatmapMode =
-        (mode === 'oscillating' || mode === 'dipole' || mode === 'hydrogen')
+        (mode === 'oscillating' || mode === 'dipole' || mode === 'hydrogen' ||
+         mode === 'water_stretch' || mode === 'water_bend' ||
+         mode === 'water_asym_stretch')
           ? 'signed' : 'envelope';
 
       const currentSimTime   = simulationTimeRef.current;

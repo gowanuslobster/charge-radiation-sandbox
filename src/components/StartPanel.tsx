@@ -20,7 +20,12 @@ type ModeCard = {
   hint: string;
 };
 
-const MODE_CARDS: ModeCard[] = [
+// Mode cards are grouped into three rows for the StartPanel layout:
+//   Row 1 (3 cards): single-charge / classical motion modes.
+//   Row 2 (2 cards): coupled-charge atomic models (dipole, hydrogen).
+//   Row 3 (3 cards): the three water vibrational normal-mode analogues
+//                    (symmetric stretch, antisymmetric stretch, bend).
+const SINGLE_MODE_CARDS: ModeCard[] = [
   {
     mode: 'draggable',
     title: 'Charge at rest',
@@ -39,6 +44,9 @@ const MODE_CARDS: ModeCard[] = [
     desc: 'Continuous sinusoidal acceleration radiates outward as an expanding wave train.',
     hint: 'Pick Accel B on the Magnetic heatmap and enable Wavefront contours. Lower c so the fronts slow down and separate clearly.',
   },
+];
+
+const COUPLED_MODE_CARDS: ModeCard[] = [
   {
     mode: 'dipole',
     title: 'Dipole',
@@ -52,6 +60,42 @@ const MODE_CARDS: ModeCard[] = [
     hint: 'Pick Accel B on the Magnetic heatmap and turn on contours to watch the signed magnetic radiation pattern rotate outward.',
   },
 ];
+
+const WATER_MODE_CARDS: ModeCard[] = [
+  {
+    mode: 'water_stretch',
+    title: 'Water - Symmetric Stretch',
+    desc: 'A three-charge H₂O-like source with both O–H bonds breathing in phase. All three atoms move; the molecule\'s center of mass stays fixed — this is a scripted normal-mode displacement, not full molecular dynamics.',
+    hint: 'Pick Accel B on the Magnetic heatmap and turn on contours to see the dipole-pattern radiation along the C₂ axis. Compare wavelength against the bend mode at the same c.',
+  },
+  {
+    mode: 'water_asym_stretch',
+    title: 'Water - Antisymmetric Stretch',
+    desc: 'Same three-charge H₂O-like source. One O–H bond stretches while the other compresses, antiphase. The molecule\'s time-varying dipole now oscillates along the H–H axis (perpendicular to the symmetric-stretch/bend dipole, which is along the C₂ axis), so the radiation pattern rotates 90° relative to those modes. Also called "asymmetric stretch" in introductory texts.',
+    hint: 'Pick Accel B on the Magnetic heatmap and turn on contours. Compare the radiation orientation against the symmetric stretch — asymmetric stretch radiates parallel to the C₂ axis, while symmetric stretch and bend radiate perpendicular to it. This is the spectroscopic distinction between ν₁ and ν₃.',
+  },
+  {
+    mode: 'water_bend',
+    title: 'Water - Bend',
+    desc: 'Same three-charge H₂O-like source; the H–O–H angle scissors back and forth while the bond lengths are preserved to first order. All three atoms move with the center of mass fixed — a scripted normal-mode displacement.',
+    hint: 'Bend runs at half the stretch frequency, so the radiated wave train has roughly twice the wavelength at the same c — the IR-spectroscopy intuition that vibrational modes have characteristic frequencies.',
+  },
+];
+
+function renderModeCard({ mode, title, desc, hint }: ModeCard, onSelectMode: (mode: DemoMode) => void) {
+  return (
+    <button
+      key={mode}
+      type="button"
+      onClick={() => onSelectMode(mode)}
+      className="rounded-2xl border border-orange-400/[0.18] bg-orange-400/[0.07] px-4 py-3 text-left transition-all duration-200 hover:border-orange-400/40 hover:bg-orange-400/[0.15] hover:shadow-[0_0_16px_rgba(251,146,60,0.15)] active:scale-[0.98]"
+    >
+      <p className="font-medium text-orange-100">{title}</p>
+      <p className="mt-1 text-[12px] leading-5 text-zinc-300/80">{desc}</p>
+      <p className="mt-2 text-[11px] leading-5 text-zinc-400/75">{hint}</p>
+    </button>
+  );
+}
 
 export function StartPanel({ onSelectMode }: Props) {
   return (
@@ -92,23 +136,21 @@ export function StartPanel({ onSelectMode }: Props) {
           </div>
         </div>
 
-        {/* Mode selection */}
+        {/* Mode selection — three rows: 3 single-charge modes, 2 coupled-charge
+            atomic models, 3 water vibrational modes. */}
         <p className="mt-5 text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400">
           Choose a mode to begin
         </p>
-        <div className="mt-2 grid gap-2.5 text-left text-sm sm:grid-cols-2 lg:grid-cols-3">
-          {MODE_CARDS.map(({ mode, title, desc, hint }) => (
-            <button
-              key={mode}
-              type="button"
-              onClick={() => onSelectMode(mode)}
-              className="rounded-2xl border border-orange-400/[0.18] bg-orange-400/[0.07] px-4 py-3 text-left transition-all duration-200 hover:border-orange-400/40 hover:bg-orange-400/[0.15] hover:shadow-[0_0_16px_rgba(251,146,60,0.15)] active:scale-[0.98]"
-            >
-              <p className="font-medium text-orange-100">{title}</p>
-              <p className="mt-1 text-[12px] leading-5 text-zinc-300/80">{desc}</p>
-              <p className="mt-2 text-[11px] leading-5 text-zinc-400/75">{hint}</p>
-            </button>
-          ))}
+        <div className="mt-2 flex flex-col gap-2.5 text-left text-sm">
+          <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+            {SINGLE_MODE_CARDS.map(card => renderModeCard(card, onSelectMode))}
+          </div>
+          <div className="grid gap-2.5 sm:grid-cols-2">
+            {COUPLED_MODE_CARDS.map(card => renderModeCard(card, onSelectMode))}
+          </div>
+          <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+            {WATER_MODE_CARDS.map(card => renderModeCard(card, onSelectMode))}
+          </div>
         </div>
 
       </div>

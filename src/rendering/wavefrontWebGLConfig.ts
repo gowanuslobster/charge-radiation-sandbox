@@ -11,9 +11,12 @@
 //   maxCornerDist = 8.1  (sqrt(7² + 4²) ≈ 8.06 for default view [-7,7]×[-4,4])
 //   dt            = 1/60 (60fps — typical recording cadence)
 //   MAX_HISTORY_SAMPLES = 4096
-//   v_peak(moving_charge) = SUDDEN_STOP_V = 0.6
-//   v_peak(oscillating)   = OSCILLATING_AMPLITUDE × OSCILLATING_OMEGA = 0.5
-//   v_peak(hydrogen)      = HYDROGEN_ORBIT_RADIUS × HYDROGEN_OMEGA = 0.6
+//   v_peak(moving_charge)  = SUDDEN_STOP_V = 0.6
+//   v_peak(oscillating)    = OSCILLATING_AMPLITUDE × OSCILLATING_OMEGA = 0.5
+//   v_peak(hydrogen)       = HYDROGEN_ORBIT_RADIUS × HYDROGEN_OMEGA = 0.6
+//   v_peak(water_stretch)      = WATER_STRETCH_AMPLITUDE      × WATER_STRETCH_OMEGA      = 0.4
+//   v_peak(water_bend)         = WATER_BEND_AMPLITUDE         × WATER_BEND_OMEGA         = 0.18
+//   v_peak(water_asym_stretch) = WATER_ASYM_STRETCH_AMPLITUDE × WATER_ASYM_STRETCH_OMEGA = 0.42
 //
 // c_min = v_peak + 8.1 × 60 / 4096  =  v_peak + 0.119
 //
@@ -23,7 +26,11 @@ const CMIN_OSCILLATING   = 0.62;   // 0.5 + 0.119 ≈ 0.62
 
 // Dipole shares oscillating's peak speed (same A·ω = 0.5), so same c minimum.
 // Hydrogen's orbiting charge peaks at 0.6, so it shares moving_charge's minimum.
-export function minCForMode(mode: 'moving_charge' | 'oscillating' | 'dipole' | 'hydrogen'): number {
+// Water modes peak at 0.4 (stretch), 0.18 (bend), and 0.42 (asym stretch),
+// all ≤ 0.5, so they share oscillating's c minimum.
+export function minCForMode(
+  mode: 'moving_charge' | 'oscillating' | 'dipole' | 'hydrogen' | 'water_stretch' | 'water_bend' | 'water_asym_stretch',
+): number {
   return mode === 'moving_charge' || mode === 'hydrogen'
     ? CMIN_MOVING_CHARGE
     : CMIN_OSCILLATING;

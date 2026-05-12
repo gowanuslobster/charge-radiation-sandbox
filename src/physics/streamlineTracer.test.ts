@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { ChargeHistory } from './chargeHistory';
 import type { ChargeRuntime } from './chargeRuntime';
-import type { SimConfig } from './types';
-import { buildStreamlines, selectFieldLineSources } from './streamlineTracer';
+import type { SimConfig, Vec2 } from './types';
+import {
+  buildStreamlines,
+  selectFieldLineSources,
+  shouldStopForUnderresolvedTrace,
+} from './streamlineTracer';
 
 function makeStaticChargeRuntime(charge: number, posX = 0, posY = 0): ChargeRuntime {
   const history = new ChargeHistory();
@@ -169,5 +173,149 @@ describe('buildStreamlines — sink termination', () => {
     for (let i = 0; i < line.length - 1; i++) {
       expect(distTo(line[i])).toBeGreaterThan(seedOffsetRadius);
     }
+  });
+});
+
+describe('shouldStopForUnderresolvedTrace — numerical validity guard', () => {
+  const STEP = 0.035;
+
+  // Build N collinear points along +x spaced `step` apart, starting at (0, 0).
+  function collinearPoints(n: number, step = STEP): Vec2[] {
+    const pts: Vec2[] = [];
+    for (let i = 0; i < n; i++) pts.push({ x: i * step, y: 0 });
+    return pts;
+  }
+
+  // Build N points on a circle of radius `r` with per-step chord = `step`.
+  // The resulting per-step angular increment is `2*asin(step/(2*r))`.
+  // Points are evenly spaced angularly starting at angle 0.
+  function circlePoints(n: number, r: number, step = STEP): Vec2[] {
+    const dTheta = 2 * Math.asin(step / (2 * r));
+    const pts: Vec2[] = [];
+    for (let i = 0; i < n; i++) {
+      pts.push({ x: r * Math.cos(i * dTheta), y: r * Math.sin(i * dTheta) });
+    }
+    return pts;
+  }
+
+  it('straight path: does not stop', () => {
+    const points = collinearPoints(10);
+    const current = points[points.length - 1];
+    const next = { x: current.x + STEP, y: 0 };
+    expect(shouldStopForUnderresolvedTrace(points, current, next, STEP)).toBe(false);
+  });
+
+  it('broad smooth arc (radius 2.0): does not stop', () => {
+    const R = 2.0;
+    const points = circlePoints(10, R);
+    const current = points[points.length - 1];
+    const dTheta = 2 * Math.asin(STEP / (2 * R));
+    const nextTheta = (points.length) * dTheta;
+    const next = { x: R * Math.cos(nextTheta), y: R * Math.sin(nextTheta) };
+    expect(shouldStopForUnderresolvedTrace(points, current, next, STEP)).toBe(false);
+  });
+
+  it('hard kink: stops via dot threshold (no tortuosity history needed)', () => {
+    // Two prior points along +x then a 90° turn into +y. Tortuosity branch is
+    // inactive because points.length < TORTUOSITY_WINDOW (=8).
+    const points: Vec2[] = [{ x: -STEP, y: 0 }, { x: 0, y: 0 }];
+    const current = points[1];
+    const next = { x: 0, y: STEP };
+    expect(shouldStopForUnderresolvedTrace(points, current, next, STEP)).toBe(true);
+  });
+
+  it('tight orbit: stops via tortuosity even when every per-step turn is below the kink threshold', () => {
+    // 8 points on a tight circle where each per-step turn is 40°
+    // (dot ≈ cos 40° ≈ 0.766, well above the 0.5 kink threshold).
+    // Total arc over the 8-step window: 320°, chord/arc ≈ 0.12 ≪ 0.42.
+    const dThetaTarget = (40 * Math.PI) / 180;
+    const R = STEP / (2 * Math.sin(dThetaTarget / 2));
+    const points = circlePoints(8, R);
+    const current = points[points.length - 1];
+    const nextTheta = points.length * dThetaTarget;
+    const next = { x: R * Math.cos(nextTheta), y: R * Math.sin(nextTheta) };
+
+    // Sanity-check: no individual per-step rotation triggers the kink branch.
+    for (let i = 1; i < points.length; i++) {
+      const a = { x: points[i].x - points[i - 1].x, y: points[i].y - points[i - 1].y };
+      const bMagPrev = i >= 2
+        ? { x: points[i - 1].x - points[i - 2].x, y: points[i - 1].y - points[i - 2].y }
+        : null;
+      if (!bMagPrev) continue;
+      const dot = (a.x * bMagPrev.x + a.y * bMagPrev.y)
+        / (Math.hypot(a.x, a.y) * Math.hypot(bMagPrev.x, bMagPrev.y));
+      expect(dot).toBeGreaterThan(0.5);
+    }
+    // Also check the candidate segment's per-step dot is above the kink threshold,
+    // so the assertion below is unambiguously about the tortuosity branch.
+    const last = points[points.length - 1];
+    const prev = points[points.length - 2];
+    const seg1 = { x: last.x - prev.x, y: last.y - prev.y };
+    const seg2 = { x: next.x - last.x, y: next.y - last.y };
+    const dotLast = (seg1.x * seg2.x + seg1.y * seg2.y)
+      / (Math.hypot(seg1.x, seg1.y) * Math.hypot(seg2.x, seg2.y));
+    expect(dotLast).toBeGreaterThan(0.5);
+
+    expect(shouldStopForUnderresolvedTrace(points, current, next, STEP)).toBe(true);
+  });
+
+  it('scale invariance: same proportional geometry gives the same decision at any stepSize', () => {
+    // Tight orbit (40° per step) → expect stop at both step sizes.
+    const dThetaTarget = (40 * Math.PI) / 180;
+    for (const step of [0.01, 0.1]) {
+      const R = step / (2 * Math.sin(dThetaTarget / 2));
+      const pts = circlePoints(8, R, step);
+      const current = pts[pts.length - 1];
+      const nextTheta = pts.length * dThetaTarget;
+      const next = { x: R * Math.cos(nextTheta), y: R * Math.sin(nextTheta) };
+      expect(shouldStopForUnderresolvedTrace(pts, current, next, step)).toBe(true);
+    }
+    // Straight path → expect no-stop at both step sizes.
+    for (const step of [0.01, 0.1]) {
+      const pts = collinearPoints(10, step);
+      const current = pts[pts.length - 1];
+      const next = { x: current.x + step, y: 0 };
+      expect(shouldStopForUnderresolvedTrace(pts, current, next, step)).toBe(false);
+    }
+  });
+
+  it('insufficient history and defensive stepSize: short-circuits cleanly', () => {
+    // (a) Empty points → false.
+    expect(
+      shouldStopForUnderresolvedTrace([], { x: 0, y: 0 }, { x: STEP, y: 0 }, STEP),
+    ).toBe(false);
+
+    // (b) One point, no prior segment → false.
+    expect(
+      shouldStopForUnderresolvedTrace(
+        [{ x: 0, y: 0 }], { x: 0, y: 0 }, { x: STEP, y: 0 }, STEP,
+      ),
+    ).toBe(false);
+
+    // (c) Length-3 with would-be-tortuous orbit geometry → still false
+    //     because the window check requires points.length >= 8.
+    const dThetaTarget = (40 * Math.PI) / 180;
+    const R = STEP / (2 * Math.sin(dThetaTarget / 2));
+    const pts3 = circlePoints(3, R);
+    const current3 = pts3[pts3.length - 1];
+    const nextTheta3 = 3 * dThetaTarget;
+    const next3 = { x: R * Math.cos(nextTheta3), y: R * Math.sin(nextTheta3) };
+    expect(shouldStopForUnderresolvedTrace(pts3, current3, next3, STEP)).toBe(false);
+
+    // (d) Length-3 with a 90° kink → true (kink branch is active at length ≥ 2).
+    const kinkPts: Vec2[] = [{ x: -STEP, y: 0 }, { x: 0, y: 0 }, { x: 0, y: STEP }];
+    expect(
+      shouldStopForUnderresolvedTrace(
+        kinkPts, kinkPts[2], { x: -STEP, y: STEP }, STEP,
+      ),
+    ).toBe(true);
+
+    // (e) Otherwise-stop-worthy tortuosity geometry but stepSize ≤ 0 → false.
+    const pts8 = circlePoints(8, R);
+    const current8 = pts8[pts8.length - 1];
+    const nextTheta8 = 8 * dThetaTarget;
+    const next8 = { x: R * Math.cos(nextTheta8), y: R * Math.sin(nextTheta8) };
+    expect(shouldStopForUnderresolvedTrace(pts8, current8, next8, 0)).toBe(false);
+    expect(shouldStopForUnderresolvedTrace(pts8, current8, next8, -STEP)).toBe(false);
   });
 });

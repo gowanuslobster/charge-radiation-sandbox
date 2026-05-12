@@ -79,6 +79,106 @@ function inSinkRadius(pt: Vec2, sinks: Vec2[] | undefined, radius: number): bool
   return false;
 }
 
+// ── Under-resolved-trace guard ───────────────────────────────────────────────
+//
+// Fixed-step RK4 streamline tracing on a normalized E direction can wind
+// repeatedly into a tight visual spiral around an under-resolved null /
+// X-point of the field, even though the true field is divergence-free in
+// source-free space and so cannot contain a real spiral focus. The guard
+// below stops a trace before accepting a proposed point when the local
+// geometry indicates RK4 with the current `stepSize` is no longer resolving
+// the field.
+//
+// Two complementary detectors:
+//   • Hard kink — the per-step angle between the last accepted segment and
+//     the proposed segment exceeds KINK_DOT_THRESHOLD (dot < 0.5 ↔ turn
+//     > 60°). Catches the one-step overshoot of a saddle.
+//   • Tortuosity — the chord from `next` back to the point WINDOW segments
+//     ago is short relative to the known arc length over that window.
+//     Catches slow tight winding where each individual per-step turn is
+//     below the kink threshold but the line is orbiting.
+//
+// These constants are CONSERVATIVE VISUAL / NUMERICAL guards, not proven
+// physics classifiers. They are calibrated so well-resolved radiation
+// closed loops (≈ 22 steps / revolution at the default DEFAULT_STREAMLINE_
+// OPTIONS for water modes at c = 1, ω = 4) pass through unchanged; only
+// orbits that wind through more than ~2/3 of a revolution within an
+// 8-step window are flagged.
+const KINK_DOT_THRESHOLD  = 0.5;
+const TORTUOSITY_WINDOW   = 8;
+const MIN_CHORD_FRACTION  = 0.42;
+
+/**
+ * Numerical validity guard for fixed-step streamline tracing. Returns true
+ * when the proposed next step indicates the trace is no longer resolving the
+ * underlying field — either because one step turned through a large angle
+ * (overshooting a saddle / null) or because the line has been winding
+ * tightly around an under-resolved closed orbit.
+ *
+ * This is a numerical check, not a physics rule: detached / closed E-field
+ * loops are legitimate (`curl E = −∂B/∂t` allows them in source-free space)
+ * and well-resolved loops pass this guard unchanged. The guard only fires
+ * when local geometry shows that RK4 with the current `stepSize` can no
+ * longer be trusted.
+ *
+ * Thresholds:
+ *   • KINK_DOT_THRESHOLD = 0.5 — per-step rotation > 60° is interpreted as
+ *     an under-resolved saddle/null overshoot.
+ *   • Tortuosity over TORTUOSITY_WINDOW = 8 steps: chord/arc < 0.42
+ *     corresponds to roughly 235–240° of arc within the window. (The
+ *     exact crossover follows `chord/arc = 2 sin(θ/2) / θ`.)
+ *
+ * Cheap O(1): mul/add/sqrt/dot only — no acos/atan2 in the hot loop.
+ *
+ * @param points    Accepted in-bounds polyline points so far. The last
+ *                  element equals `current` in the normal tracer flow.
+ * @param current   The latest accepted point. Passed explicitly so the
+ *                  helper's contract is self-documenting and so the guard
+ *                  is well-defined when `points` is empty.
+ * @param next      The candidate next point proposed by rk4Step.
+ * @param stepSize  Per-step arc length used by the tracer. Tortuosity
+ *                  threshold scales with this so the guard is consistent
+ *                  across step sizes. Non-positive values disable the
+ *                  tortuosity branch defensively.
+ */
+export function shouldStopForUnderresolvedTrace(
+  points: Vec2[],
+  current: Vec2,
+  next: Vec2,
+  stepSize: number,
+): boolean {
+  // Hard kink — needs the previous accepted segment, so points.length >= 2
+  // (points[len-2] → current is the previous segment).
+  if (points.length >= 2) {
+    const prev = points[points.length - 2];
+    const ax = current.x - prev.x;
+    const ay = current.y - prev.y;
+    const bx = next.x - current.x;
+    const by = next.y - current.y;
+    const aMag2 = ax * ax + ay * ay;
+    const bMag2 = bx * bx + by * by;
+    if (aMag2 > 1e-24 && bMag2 > 1e-24) {
+      const dot = (ax * bx + ay * by) / Math.sqrt(aMag2 * bMag2);
+      if (dot < KINK_DOT_THRESHOLD) return true;
+    }
+  }
+
+  // Tortuosity — chord from `next` back to points[len - WINDOW] compared to
+  // (WINDOW × stepSize × MIN_CHORD_FRACTION)². WINDOW counts segments: the
+  // (WINDOW-1) accepted segments from points[len-WINDOW] up to current,
+  // plus the candidate segment current → next.
+  if (stepSize > 0 && points.length >= TORTUOSITY_WINDOW) {
+    const back = points[points.length - TORTUOSITY_WINDOW];
+    const dx = next.x - back.x;
+    const dy = next.y - back.y;
+    const chordSq = dx * dx + dy * dy;
+    const minChord = TORTUOSITY_WINDOW * stepSize * MIN_CHORD_FRACTION;
+    if (chordSq < minChord * minChord) return true;
+  }
+
+  return false;
+}
+
 /**
  * Evaluate the normalized E-field direction at a world-space point.
  *
@@ -204,11 +304,18 @@ function traceSingleLine(
       velocityOnly, opts.stepSize, directionSign, opts.minFieldMagnitude,
     );
     if (!next) break;
-    current = next;
 
-    if (inSinkRadius(current, sinks, opts.seedOffsetRadius)) {
-      enteredSink = true;
+    // Sink-entry takes strict priority over the under-resolved guard so a
+    // line that bends sharply right as it arrives at a sink still terminates
+    // at the sink point rather than being rejected by the kink test.
+    const nextEntersSink = inSinkRadius(next, sinks, opts.seedOffsetRadius);
+    if (!nextEntersSink &&
+        shouldStopForUnderresolvedTrace(points, current, next, opts.stepSize)) {
+      break;
     }
+
+    current = next;
+    if (nextEntersSink) enteredSink = true;
   }
 
   return points;

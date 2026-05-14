@@ -32,8 +32,10 @@ import {
   buildGhostHistory,
   deriveGhostSeedAnglesFromRealLines,
   selectFieldLineSources,
+  type StreamlineOptions,
 } from '@/physics/streamlineTracer';
 import type { ChargeRuntime } from '@/physics/chargeRuntime';
+import type { DemoMode } from '@/physics/demoModes';
 import {
   getWorldToScreenTransform,
   transformWorldPoint,
@@ -56,6 +58,12 @@ type Props = {
   ghostPosRef?: RefObject<Vec2 | null>;
   /** Constant velocity of the ghost charge, used to build its synthetic history. */
   ghostVel?: Vec2;
+  /**
+   * Active demo mode. Used to choose tracer policy: moving_charge disables the
+   * under-resolved-trace guard so the legitimate sharp E-direction change
+   * across the radiation shell does not truncate real or ghost lines.
+   */
+  demoMode: DemoMode;
   style?: CSSProperties;
 };
 
@@ -167,6 +175,7 @@ export function StreamlineCanvas({
   showGhostStreamlines,
   ghostPosRef,
   ghostVel,
+  demoMode,
   style,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -177,11 +186,13 @@ export function StreamlineCanvas({
   const showStreamlinesRef    = useRef(showStreamlines);
   const showGhostStreamlinesRef = useRef(showGhostStreamlines);
   const ghostVelRef           = useRef(ghostVel);
+  const demoModeRef           = useRef(demoMode);
 
   useEffect(() => { boundsRef.current = bounds; },                       [bounds]);
   useEffect(() => { showStreamlinesRef.current = showStreamlines; },     [showStreamlines]);
   useEffect(() => { showGhostStreamlinesRef.current = showGhostStreamlines; }, [showGhostStreamlines]);
   useEffect(() => { ghostVelRef.current = ghostVel; },                   [ghostVel]);
+  useEffect(() => { demoModeRef.current = demoMode; },                   [demoMode]);
 
   // Long-lived RAF loop with retrace-on-demand.
   // Empty dep array: reads all mutable state via refs; never restarts.
@@ -276,6 +287,19 @@ export function StreamlineCanvas({
       if (needsRetrace) {
         let realLinesForGhost: Vec2[][] = [];
 
+        // moving_charge has a finite-thickness radiation shell across which
+        // the local E direction can rotate by more than the under-resolved
+        // guard's per-step kink threshold. That rotation is a legitimate
+        // physical discontinuity (inner Coulomb field vs. outer extrapolated
+        // velocity field), not numerical spiraling, so the guard would
+        // wrongly truncate real and ghost lines at the shell. All other
+        // modes inherit the default guard-on policy from
+        // DEFAULT_STREAMLINE_OPTIONS.
+        const traceOpts: Partial<StreamlineOptions> | undefined =
+          demoModeRef.current === 'moving_charge'
+            ? { enableUnderresolvedGuard: false }
+            : undefined;
+
         // Main streamlines — combined LW E field at the paused frame.
         // For single-charge modes: seed from one position (existing behavior).
         // For multi-charge modes: seed from each charge's position in the combined field.
@@ -287,6 +311,7 @@ export function StreamlineCanvas({
             if (newest !== null) {
               const computedMainLines = buildStreamlines(
                 newest.pos, simTime, chargeRuntimes, config, currentBounds,
+                traceOpts,
               );
               tracedLines = showSL ? computedMainLines : [];
               realLinesForGhost = computedMainLines;
@@ -313,7 +338,7 @@ export function StreamlineCanvas({
               const newest = runtime.history.newest()!;
               allLines.push(...buildStreamlines(
                 newest.pos, simTime, chargeRuntimes, config, currentBounds,
-                undefined, false, undefined, dirSign, sinks,
+                traceOpts, false, undefined, dirSign, sinks,
               ));
             }
             tracedLines = showSL ? allLines : [];
@@ -338,6 +363,7 @@ export function StreamlineCanvas({
 
           // Match each ghost line to the settled outer branch of a traced real
           // streamline, not to the idealized zero-thickness shell crossing.
+          // traceOpts also propagates into solveGhostSeedAngle's search traces.
           const ghostAngles = newest !== null
             ? deriveGhostSeedAnglesFromRealLines(
                 realLinesForGhost,
@@ -350,6 +376,7 @@ export function StreamlineCanvas({
                 config,
                 ghostHistory,
                 currentBounds,
+                traceOpts,
               )
             : [];
 
@@ -360,7 +387,7 @@ export function StreamlineCanvas({
               ghostPos, simTime,
               [{ history: ghostHistory, charge }], // ghost's single runtime
               config, currentBounds,
-              undefined,
+              traceOpts,
               true, // velocityOnly — ghost represents constant-velocity, no radiation term
               ghostAngles,
             );

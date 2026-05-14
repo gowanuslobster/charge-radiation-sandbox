@@ -844,6 +844,7 @@ export function ChargeRadiationSandbox() {
         showGhostStreamlines={showGhostStreamlines}
         ghostPosRef={ghostPosRef}
         ghostVel={demoMode === 'moving_charge' ? { x: SUDDEN_STOP_V, y: 0 } : undefined}
+        demoMode={demoMode}
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 17 }}
       />
       {(demoMode === 'moving_charge' || demoMode === 'oscillating' || demoMode === 'dipole' || demoMode === 'hydrogen' || demoMode === 'draggable' || demoMode === 'water_stretch' || demoMode === 'water_bend' || demoMode === 'water_asym_stretch') && (

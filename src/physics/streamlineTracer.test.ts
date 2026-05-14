@@ -4,6 +4,7 @@ import type { ChargeRuntime } from './chargeRuntime';
 import type { SimConfig, Vec2 } from './types';
 import {
   buildStreamlines,
+  findGhostAnchorOnRealLine,
   selectFieldLineSources,
   shouldStopForUnderresolvedTrace,
 } from './streamlineTracer';
@@ -173,6 +174,94 @@ describe('buildStreamlines — sink termination', () => {
     for (let i = 0; i < line.length - 1; i++) {
       expect(distTo(line[i])).toBeGreaterThan(seedOffsetRadius);
     }
+  });
+});
+
+describe('buildStreamlines — moving_charge stop-shell regression', () => {
+  // Tracer-level fixture that reproduces the moving_charge sudden-stop
+  // history in-test from primitives (mirrors `sampleSuddenStopState`; not
+  // imported so the tracer test stays free of demoModes coupling).
+  //
+  // Locks the precondition that fails when the under-resolved-trace guard
+  // fires across the radiation shell:
+  //   • Most real seed lines extend past the shell margin around the rest
+  //     position (measured from the stopped charge, not the world origin).
+  //   • For those same lines, `findGhostAnchorOnRealLine` returns a
+  //     non-null settled-outer-branch anchor — the actual upstream
+  //     condition for accurate ghost-line seed-angle matching.
+  it('real lines reach past shell margin and ghost anchors are findable (guard off)', () => {
+    const V       = 0.6;
+    const T_BRAKE = 0.2;
+    const T_trig  = 1.0;
+    const t_obs   = 3.0;
+    const cVal    = 1.0;
+
+    // Rest position of the stopped charge.
+    const xStop = V * T_trig + V * T_BRAKE / 2;
+
+    // Shell-margin distance: one shell-thickness past the leading shell
+    // edge. Measured from the stopped charge so the fixture stays valid if
+    // T_trig or V change.
+    const shellOuterRadius = cVal * (t_obs - T_trig);
+    const shellMargin      = shellOuterRadius + 2 * cVal * T_BRAKE;
+
+    // Cover retarded-time look-back from the farthest in-bounds trace
+    // point with margin to spare.
+    const history = new ChargeHistory();
+    const dt = 0.025;
+    const tStart = -8;
+    const N = Math.round((t_obs - tStart) / dt);
+    for (let i = 0; i <= N; i++) {
+      const t = tStart + i * dt;
+      let pos: Vec2, vel: Vec2, accel: Vec2;
+      if (t < T_trig) {
+        pos   = { x: V * t, y: 0 };
+        vel   = { x: V,     y: 0 };
+        accel = { x: 0,     y: 0 };
+      } else if (t < T_trig + T_BRAKE) {
+        const elapsed    = t - T_trig;
+        const brakeAccel = -V / T_BRAKE;
+        pos   = {
+          x: V * T_trig + V * elapsed + 0.5 * brakeAccel * elapsed * elapsed,
+          y: 0,
+        };
+        vel   = { x: V + brakeAccel * elapsed, y: 0 };
+        accel = { x: brakeAccel,               y: 0 };
+      } else {
+        pos   = { x: xStop, y: 0 };
+        vel   = { x: 0,     y: 0 };
+        accel = { x: 0,     y: 0 };
+      }
+      history.recordState({ t, pos, vel, accel });
+    }
+
+    const runtime: ChargeRuntime = { history, charge: +1 };
+    const cfg: SimConfig = { c: cVal, softening: 0.01 };
+    const traceBounds = { minX: -3, maxX: 4, minY: -3, maxY: 3 };
+    const seedCount = 16;
+
+    const lines = buildStreamlines(
+      { x: xStop, y: 0 }, t_obs, [runtime], cfg, traceBounds,
+      { enableUnderresolvedGuard: false, seedCount },
+    );
+
+    // Most seeds should produce a traceable line in the first place.
+    expect(lines.length).toBeGreaterThanOrEqual(14);
+
+    let reachedFar    = 0;
+    let anchorsFound  = 0;
+    for (const line of lines) {
+      const reached = line.some(p =>
+        Math.hypot(p.x - xStop, p.y) >= shellMargin,
+      );
+      if (reached) reachedFar++;
+
+      const anchor = findGhostAnchorOnRealLine(line, t_obs, history, +1, cfg);
+      if (anchor !== null) anchorsFound++;
+    }
+
+    expect(reachedFar).toBeGreaterThanOrEqual(14);
+    expect(anchorsFound).toBeGreaterThanOrEqual(14);
   });
 });
 

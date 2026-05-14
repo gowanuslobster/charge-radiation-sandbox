@@ -30,6 +30,15 @@ export type StreamlineOptions = {
   seedOffsetRadius: number;
   /** Number of evenly-spaced seeds placed radially around the charge. */
   seedCount: number;
+  /**
+   * Whether `traceSingleLine` consults `shouldStopForUnderresolvedTrace` at
+   * each candidate step. Default true: protects periodic-radiation-mode
+   * topologies (oscillating, dipole, hydrogen, water modes) where field lines
+   * can wind around an under-resolved null. Callers that trace through a
+   * legitimate sharp-but-non-spiraling discontinuity — notably the
+   * moving_charge radiation shell — should explicitly pass `false`.
+   */
+  enableUnderresolvedGuard: boolean;
 };
 
 export const DEFAULT_STREAMLINE_OPTIONS: StreamlineOptions = {
@@ -38,6 +47,7 @@ export const DEFAULT_STREAMLINE_OPTIONS: StreamlineOptions = {
   minFieldMagnitude: 0.002,
   seedOffsetRadius: 0.12,
   seedCount: 16,
+  enableUnderresolvedGuard: true,
 };
 
 // Ghost-line alignment heuristics for the sudden-stop demo.
@@ -310,6 +320,7 @@ function traceSingleLine(
     // at the sink point rather than being rejected by the kink test.
     const nextEntersSink = inSinkRadius(next, sinks, opts.seedOffsetRadius);
     if (!nextEntersSink &&
+        opts.enableUnderresolvedGuard &&
         shouldStopForUnderresolvedTrace(points, current, next, opts.stepSize)) {
       break;
     }
@@ -451,7 +462,20 @@ function analyticGhostSeedAngle(realSeedAngle: number, ghostVel: Vec2, c: number
   );
 }
 
-function findGhostAnchorOnRealLine(
+/**
+ * Scan along a real streamline for the first point that lies on the settled
+ * outer branch of the radiation shell — the point used to anchor a matching
+ * ghost-charge streamline. A point qualifies once the acceleration-field
+ * contribution has first risen through the band (`accelRatio ≥ 0.12`) and
+ * then fallen back below `0.05` for `GHOST_EXIT_RUN_LENGTH` consecutive
+ * samples. Returns null when the line never settles within the traced span.
+ *
+ * Exported so the moving-charge regression test can directly assert that the
+ * upstream precondition for accurate ghost seed-angle matching holds (rather
+ * than only checking the final ghost-line geometry, which is downstream of
+ * both this anchor and the numeric seed-angle solve).
+ */
+export function findGhostAnchorOnRealLine(
   line: Vec2[],
   observationTime: number,
   history: ChargeHistory,

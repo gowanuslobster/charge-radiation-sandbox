@@ -27,6 +27,14 @@ type Props = {
   onPauseToggle: () => void;
   onStepForward: () => void;
   onReset: () => void;
+  /**
+   * Fire the one-shot Stop-now trigger. The mode-agnostic verb: in every
+   * stoppable mode the charge brakes to a defined rest state over a fixed
+   * 0.2s ramp. Disabled after the trigger fires (one stop per session, cleared
+   * on reseed/mode-change/Reset). Hidden in draggable (no scripted motion to
+   * brake) and while the start panel is up.
+   */
+  onStopNow: () => void;
   /** Return to the mode-picker start screen, resetting all choices to defaults. */
   onGoToStartScreen: () => void;
   onCChange: (c: number) => void;
@@ -64,14 +72,14 @@ const ICON_BASE = 'flex h-7 w-7 items-center justify-center rounded-md text-sm t
 // change that affects the running app so a manual browser check can confirm
 // the live build vintage at a glance. See AGENTS.md "Build-vintage timestamp"
 // for the bump rule.
-const LAST_CODE_CHANGE_STAMP    = '2026-05-12 17:39 EDT';
-const LAST_CODE_CHANGE_DATETIME = '2026-05-12T17:39:22-04:00';
+const LAST_CODE_CHANGE_STAMP    = '2026-05-14 12:56 EDT';
+const LAST_CODE_CHANGE_DATETIME = '2026-05-14T12:56:05-04:00';
 
 export function ControlPanel({
   demoMode, fieldLayer, isPaused, c, stopTriggered, readout,
   magneticHeatmapMode, showWavefrontContours, showStreamlines, showVelocityVectors,
   onDemoModeChange, onFieldLayerChange,
-  onPauseToggle, onStepForward, onReset, onGoToStartScreen,
+  onPauseToggle, onStepForward, onReset, onStopNow, onGoToStartScreen,
   onCChange,
   onResetView, onZoomIn, onZoomOut,
   onPanLeft, onPanRight, onPanUp, onPanDown,
@@ -79,6 +87,10 @@ export function ControlPanel({
   cMin = 0.65,
   noModeActive = false,
 }: Props) {
+  // Stop now is mode-agnostic across every stoppable mode (everything except
+  // draggable, which has no scripted motion to brake). Disabled once the
+  // trigger fires; the parent clears stopTriggered on reseed/mode-change/Reset.
+  const stopNowVisible = demoMode !== 'draggable';
   const magneticHeatmapVisible =
     demoMode === 'moving_charge' || demoMode === 'oscillating' ||
     demoMode === 'dipole' || demoMode === 'hydrogen' || demoMode === 'draggable' ||
@@ -200,7 +212,7 @@ export function ControlPanel({
       {/* Playback */}
       <div>
         <p className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-400">Playback</p>
-        <div className="flex gap-1.5">
+        <div className="flex flex-wrap gap-1.5">
           <button type="button" onClick={onPauseToggle}
             className={`${TOGGLE_BASE} ${isPaused
               ? 'bg-indigo-300 text-black shadow-[0_0_16px_rgba(165,180,252,0.45)]'
@@ -215,6 +227,18 @@ export function ControlPanel({
             className="rounded-md px-3 py-2 text-sm font-medium bg-zinc-200/20 text-zinc-200 hover:bg-zinc-200/32 transition-colors duration-200">
             Reset
           </button>
+          {stopNowVisible && (
+            <button
+              type="button"
+              onClick={onStopNow}
+              disabled={stopTriggered}
+              className={stopTriggered
+                ? 'rounded-md px-3 py-2 text-sm font-medium bg-red-500/10 text-red-300/40 cursor-not-allowed'
+                : 'rounded-md px-3 py-2 text-sm font-medium bg-red-500/20 text-red-300 hover:bg-red-500/35 transition-colors duration-200'}
+            >
+              Stop now
+            </button>
+          )}
         </div>
       </div>
 

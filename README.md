@@ -30,7 +30,7 @@ A floating panel in the upper-left corner gives you all controls:
 | Section | What it does |
 |---------|-------------|
 | **Mode** | Switch between the demo modes (see below). Switching reseeds the simulation cleanly. **← Start screen** — return to the mode-picker panel and reset all settings to defaults (including c). |
-| **Playback** | **Run / Pause** — toggle real-time playback. **Step →** — advance one frame at a time while paused. **Reset** — restart the current mode from t=0, keeping your field layer and overlay choices. |
+| **Playback** | **Run / Pause** — toggle real-time playback. **Step →** — advance one frame at a time while paused. **Reset** — restart the current mode from t=0, keeping your field layer and overlay choices. **Stop now** — one-shot brake that returns every charge to a defined rest state over a fixed 0.2 s ramp (see per-mode braking models below). Available in every mode except Charge at rest; disables after firing, re-arms on Reset or mode change. |
 | **Speed of light** | Drag the slider to change c (max 3.0). The lower bound is mode-dependent: 0.62 in Oscillating, Dipole, and the three Water modes; 0.72 in Moving charge and Hydrogen (the GPU history buffer must cover the causal horizon); 0.65 in Charge at rest. Lowering c slows all field propagation, making retarded-time effects dramatically visible. |
 | **Field** | Toggle which vector layer you see: **Total E** (default), **Velocity E** (Coulomb-like term), **Accel E** (radiation term only), or **Poynting S** (instantaneous energy-flow arrows derived from E × B; aggressively compressed magnitude, mutually exclusive with the E layers). |
 | **Overlays** | See the Overlays section below. |
@@ -57,7 +57,9 @@ A single stationary charge produces a pure Coulomb field — radial arrows, magn
 
 ### Moving charge
 
-A charge moves at constant velocity. While moving, its field shows relativistic beaming — compressed forward, expanded backward. Click **Stop now** (in the mini panel that appears near the charge) to brake the charge and launch a radiation shell. The shell expands outward at c. Inside: a pure Coulomb field from the stationary charge. Outside: the field still points toward where the charge would have been if it hadn't stopped.
+A charge moves at constant velocity. While moving, its field shows relativistic beaming — compressed forward, expanded backward. Click **Stop now** in the main control panel to brake the charge and launch a radiation shell. The shell expands outward at c. Inside: a pure Coulomb field from the stationary charge. Outside: the field still points toward where the charge would have been if it hadn't stopped.
+
+**Braking model:** linear velocity ramp over 0.2 s, ending at the kinematic projection (`pos_T + v_T · 0.2 / 2`) with v = 0.
 
 **To try:**
 - Lower c before clicking Stop so the shell is easy to see at normal zoom.
@@ -70,11 +72,14 @@ A charge moves at constant velocity. While moving, its field shows relativistic 
 
 A charge oscillates sinusoidally along one axis, radiating continuously. The field shows the characteristic dipole pattern: strongest perpendicular to the motion, weaker along the axis. The wavefronts expand outward at c.
 
+Click **Stop now** to brake the oscillator. The charge follows a Hermite cubic from its current `(pos, vel)` to `(0, 0)` over 0.2 s, sending a clean radiation shell outward as it settles at equilibrium.
+
 **To try:**
 - Pick **Accel B** on the **Magnetic heatmap** picker to map the radiated magnetic field intensity.
 - Enable **Wavefront contours** to see zero-crossing lines that track the wave phase exactly.
 - Lower c until you can see the wavefronts expanding in real time.
 - Pause and enable **Field lines** to see the instantaneous field geometry.
+- Click **Stop now** mid-oscillation to see the radiation shell from braking the harmonic motion.
 
 ### Dipole
 
@@ -82,20 +87,26 @@ Two opposite charges (one positive, one negative) oscillate in antiphase along a
 
 This mode demonstrates that the simulator is not restricted to a single charge. Each charge has its own history buffer and retarded-time solve; the total field is the exact sum with no approximation.
 
+**Stop now** brakes both charges in tandem with a Hermite cubic per charge, returning them to their separation-anchored equilibrium positions with v = 0.
+
 **To try:**
 - Pick **Accel B** on the **Magnetic heatmap** picker and pause — the lobed pattern is most vivid on a frozen frame.
 - Zoom out to see several wavefront rings and the angular variation in brightness.
 - Switch to **Accel E** to isolate just the radiation contribution from each charge.
 - Compare with **Oscillating** (single charge): the dipole pattern looks similar but the field from the two charges partially cancels near the axis, sharpening the lobes.
+- Click **Stop now** to watch the dipole-pattern radiation shell from braking both charges simultaneously.
 
 ### Hydrogen atom
 
 A fixed positive charge sits at the center while a negative charge follows a prescribed circular orbit. This is a teaching model, not self-consistent orbital dynamics: the trajectory is scripted so the sandbox can focus on retarded fields, superposition, and radiation from a rotating dipole-like source.
 
+**Stop now** here decelerates the orbital angular velocity linearly to zero over 0.2 s (constant angular deceleration `α = −ω₀ / T_BRAKE`). The orbiting charge stays on its circle, slowing down to rest at a terminal angle `θ_f = θ₀ + ω₀ · 0.2 / 2`. The central proton is untouched.
+
 **To try:**
 - Pick **Accel B** on the **Magnetic heatmap** picker and enable **Wavefront contours** to see the signed magnetic radiation pattern rotate outward.
 - Pause and enable **Field lines** to compare the near-field geometry with the magnetic heatmap.
 - Lower c to exaggerate the causal delay between the orbiting charge and the fields far from the atom.
+- Click **Stop now** mid-orbit to see the radiation shell from braking a circular dipole source.
 
 ### Water molecule (three vibrational modes)
 
@@ -109,11 +120,14 @@ Stretch and bend modulate the dipole moment along the C₂ symmetry axis, so the
 
 This is a teaching model: all three atoms move as scripted normal-mode displacements with the mass-weighted center of mass held at the world origin by construction. It is not full molecular dynamics — the trajectories are prescribed sinusoids, not the result of solving equations of motion.
 
+**Stop now** in any of the three modes returns every atom to its equilibrium position via a Hermite cubic in the shared scalar mode amplitude. Because every atom rides the same scalar, the mass-weighted center of mass stays at the origin throughout the brake — same property as the running normal mode itself.
+
 **To try:**
 - Open **Stretch**, pick **Accel B** on the **Magnetic heatmap** picker, enable **Wavefront contours**, and watch the dipole-pattern radiation peak along ±x (perpendicular to the C₂ axis).
 - Switch to **Bend** at the same `c` and compare wavelengths — bend runs at half the stretch frequency, so its wave train has roughly twice the wavelength. This is the same intuition that lets IR spectroscopy distinguish vibrational modes by their characteristic frequencies.
 - Switch to **Antisymmetric stretch** and notice the radiation pattern rotates 90°. Stretch and bend point dipoles along the C₂ axis; antisymmetric stretch points the dipole along the H–H axis. This is the spectroscopic distinction between ν₁ and ν₃ made visible.
 - Enable **Velocity B** to see the bound magnetic field structure of the moving hydrogens.
+- Click **Stop now** to brake the vibration and watch the radiation shell from the entire COM-conserving mode collapsing to equilibrium.
 
 ---
 
@@ -170,7 +184,8 @@ Key design decisions:
 | `chargeRuntime.ts` | `ChargeRuntime` type: groups a `ChargeHistory` with its signed charge value; the unit of multi-charge arrays |
 | `retardedTime.ts` | Retarded-time root-finder: fixed-point iteration (max 15 steps), graceful fallback |
 | `lienardWiechert.ts` | Exact LW field evaluator: velocity term (1/R²) + acceleration term (1/R) + B field decomposition; `evaluateSuperposedLienardWiechertField` sums contributions from an arbitrary `ChargeRuntime[]` |
-| `demoModes.ts` | Analytical kinematics for each demo mode; `sampleDemoChargeStates` returns per-charge specs for all modes including dipole and hydrogen; `sampleSuddenStopState` for interactive braking; braking substep helper for radiation-shell sharpness |
+| `demoModes.ts` | Analytical kinematics for each demo mode; `sampleDemoChargeStates` returns per-charge specs for all modes; `sampleStoppedDemoChargeStates` is the post-Stop-now dispatch (linear v ramp for moving_charge, Hermite-cubic-to-equilibrium for harmonic modes, angular-velocity ramp for hydrogen); braking substep helper for radiation-shell sharpness |
+| `stoppedFrame.ts` | Pure helper `recordStoppedFrame` that writes one stop-aware tick of substeps + current state into each charge's history; called from the simulation tick when a Stop-now trigger is active |
 | `dragKinematics.ts` | Tick-owned drag kinematics: EMA smoothing, zero-motion guard, speed cap |
 | `wavefrontSampler.ts` | Coarse scalar sampler for `bZAccel` with per-cell retarded-time warm-starting (CPU fallback path) |
 | `streamlineTracer.ts` | RK4 streamline tracer for paused-frame field-line overlays; ghost-angle numeric solver for moving-charge ghost lines |
@@ -194,7 +209,7 @@ Key design decisions:
 | `ChargeRadiationSandbox.tsx` | Root orchestrator: simulation RAF tick, charge history, demo/display state, drag handling, camera wiring |
 | `StartPanel.tsx` | Home screen overlay shown on initial load and after Reset; mode cards serve as navigation |
 | `ControlPanel.tsx` | Floating glass panel: mode selector, playback controls, c slider, field layer toggles, overlay toggles, cursor readout |
-| `MovingChargeMiniPanel.tsx` | Draggable mini panel for moving-charge controls: Stop now trigger, ghost-charge and ghost-field-lines toggles |
+| `MovingChargeMiniPanel.tsx` | Draggable mini panel for moving-charge-specific overlay toggles: ghost-charge marker and ghost-field-lines streamlines. (Stop now itself lives in the main control panel and applies to every stoppable mode.) |
 | `VectorFieldCanvas.tsx` | 40×40 arrow grid, ghost charge overlay, continuous RAF loop, DPR-aware canvas |
 | `WavefrontWebGLCanvas.tsx` | WebGL2 fragment-shader heatmap: full-screen quad, RGBA32F history texture, bracketed Newton retarded-time solver in GLSL |
 | `WavefrontOverlayCanvas.tsx` | CPU fallback heatmap + contour canvas (active when WebGL2 / RGBA32F is unavailable) |

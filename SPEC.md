@@ -744,6 +744,97 @@ Acceptance criteria (M15-B):
   overflow no worse than M14 baseline.
 - LAST_CODE_CHANGE_STAMP bumped.
 
+### M16: Stop-now-everywhere — complete
+
+Generalize the M5 moving_charge `Stop now` trigger across every stoppable
+demo mode. Each mode family has its own analytic braking model that lands
+the charges at a defined rest state within the existing fixed
+`SUDDEN_STOP_T_BRAKE = 0.2 s` ramp.
+
+**Per-mode-family braking models:**
+- `moving_charge`: existing linear-v ramp via `sampleSuddenStopState`
+  (unchanged). The charge ends at the kinematic projection
+  `pos_T_trig + v_T_trig · T_BRAKE / 2` with v = 0.
+- `oscillating`, `dipole`, `water_stretch`, `water_bend`,
+  `water_asym_stretch`: per-charge Hermite cubic in the shared scalar
+  mode-amplitude factor `f(τ)`, with τ = (t − T_trig)/T_BRAKE. Boundary
+  conditions `f(0) = A·sin(ω·T_trig)`, `f'(0)·T_BRAKE` matches the pre-
+  trigger amplitude rate, `f(1) = 0`, `f'(1) = 0`. Position is
+  `r_eq + f(τ)·δ` per charge — every charge shares the same scalar `f`, so
+  the mass-weighted COM is preserved through the brake whenever the mode
+  basis already satisfies `Σ m_i·δ_i = 0` (true for both dipole and all
+  three water modes by construction).
+- `hydrogen`: angular-velocity ramp on the orbiting `-q` only.
+  `ω_eff(t) = ω₀·(1 − Δt/T_BRAKE)`, constant angular decel
+  `α = −ω₀/T_BRAKE`, charge stays on the orbital circle, ends at terminal
+  angle `θ_f = θ₀ + ω₀·T_BRAKE/2` with v = 0 and a residual tangential
+  accel at the left limit of brakeEnd. The central `+q` is untouched.
+- `draggable`: excluded — no scripted motion to brake. Releasing the drag
+  already produces an EMA-decay halt with whatever radiation that motion
+  implies, so a dedicated verb adds UI without new pedagogy.
+
+**Boundary convention:** all stopped samplers use the exclusive right
+boundary (`T_trig ≤ t < brakeEnd`; exact `brakeEnd` falls into the rest
+phase). Matches the existing `sampleSuddenStopState` convention so the
+`brakingSubstepTimes` boundary anchors at `T_trig` and `brakeEnd` resolve
+to the brake-side first sample and the rest-side first sample respectively,
+cleanly pinning the acceleration discontinuities for `ChargeHistory`'s
+linear interpolation.
+
+**Implementation notes:**
+- New physics functions: `sampleStoppedHarmonicState(mode, chargeIndex, t,
+  T_trig)`, `sampleStoppedHydrogenState(chargeIndex, t, T_trig)`, and the
+  unified dispatch `sampleStoppedDemoChargeStates(mode, t, T_trig):
+  DemoChargeSpec[]`. All return the original pre-trigger analytic state for
+  `t < T_trig` so the c-slider history rebuilder can walk back across the
+  trigger boundary safely.
+- New runtime helper: `recordStoppedFrame(runtimes, mode, prevSimTime,
+  currentSimTime, T_trig, viewBounds, config)` in `src/physics/
+  stoppedFrame.ts` records substep + current entries for every charge in
+  one stop-aware tick. Pure with respect to its inputs; the simulation
+  tick calls it when `T_trig !== null`.
+- Tick structure: the stop-aware branch runs immediately after the
+  draggable early-return and before the pre-stop multi-charge / single-
+  charge branches. Returns once `recordStoppedFrame` has written the
+  frame. The moving_charge-only ghost-charge marker is the only mode-
+  specific tail in the new branch.
+- C-slider history rebuilder (`rebuildAnalyticHistoryAtCurrentTime`) uses
+  `sampleStoppedDemoChargeStates` uniformly across pre-stop and post-stop:
+  when a trigger is active, current positions come from the stopped
+  sampler (so the horizon distance reflects the rest pose), and the seed-
+  back loop emits `brakingSubstepTimes` anchors when intervals straddle
+  the brake window. Horizon speed budget is still `maxHistorySpeed(mode)`
+  — the pre-stop peak — so outside-shell observers retain enough pre-
+  trigger history.
+- UI: `Stop now` button moves from `MovingChargeMiniPanel` into the main
+  `ControlPanel` Playback section. Visible in every mode except draggable.
+  Disabled once triggered. The mini panel retains the moving_charge-only
+  ghost overlays.
+- One-shot semantic preserved: the existing `stopTriggerTimeRef` clear-on-
+  reseed / clear-on-mode-change / clear-on-Reset logic is mode-agnostic and
+  needs no change. No "resume" verb.
+
+**Acceptance criteria:**
+- Per-mode-family physics tests in `demoModes.test.ts`:
+  - Phase 1 (`t < T_trig`) matches the original analytic state element-wise.
+  - Continuity at `T_trig`: pos and vel match across the trigger; accel
+    discontinuity allowed and asserted against the per-family closed form.
+  - Mid-brake (`τ = 0.5`) matches Hermite / angular-ramp closed forms.
+  - Left limit at `brakeEnd − ε`: pos = `r_eq` (or terminal angle), vel = 0,
+    accel = `f''(1)·δ/T_BRAKE²` for harmonic / `R·α·θ̂` for hydrogen — both
+    nonzero in general.
+  - Exact `brakeEnd` and beyond: full rest at the terminal config.
+  - Water modes preserve mass-weighted COM at origin across all three
+    phases (defensive test).
+- Dispatch sanity tests assert
+  `sampleStoppedDemoChargeStates(mode, t < T_trig, T_trig)` equals
+  `sampleDemoChargeStates(mode, t)` element-wise for every stoppable mode.
+- `recordStoppedFrame` tests assert substep timestamps fall in the closed
+  interval `[T_trig, brakeEnd]` and that interior substeps record brake-
+  phase state while the `brakeEnd` anchor records rest-phase state.
+- All existing M1–M15 acceptance gates continue to pass (build, lint, test).
+- LAST_CODE_CHANGE_STAMP bumped.
+
 ## UI and Interaction Spec
 
 ### Viewport
@@ -767,10 +858,10 @@ Acceptance criteria (M15-B):
 - Does not own simulation behavior — pure UI surface
 - Sections:
   - **Mode selector:** dropdown or button group for the canonical demo modes
-  - **Playback:** play / pause / step / reset buttons
+  - **Playback:** play / pause / step / reset / stop-now buttons. `Stop now` is a one-shot trigger available in every mode except `draggable`; it brakes every charge in the scene over a fixed 0.2 s ramp using per-mode-family braking models (linear v ramp for `moving_charge`, Hermite-cubic-to-equilibrium for harmonic modes, angular-velocity ramp for `hydrogen`). Disabled after firing; re-armed by Reset or mode change.
   - **Speed of light:** slider for `c` with visible numeric readout
   - **Field layers:** toggles for total field, velocity field, acceleration field
-  - **Mode-specific controls:** in `moving_charge` mode, a separate draggable mini panel provides a `Stop now` trigger and ghost-charge overlay toggle
+  - **Mode-specific controls:** in `moving_charge` mode, a separate draggable mini panel provides the ghost-charge and ghost-field-lines overlay toggles (visualizations of the would-have-been-still-moving trajectory; only meaningful for the translation-stop case).
   - **Teaching overlays:** toggles for pedagogical overlays — ghost-charge markers, magnetic heatmap channel picker (M11; supersedes the M6 radiation heatmap toggle), wavefront contours (M6), and paused-frame streamline displays (M9)
 
 ### Camera

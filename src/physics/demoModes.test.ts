@@ -3,6 +3,10 @@ import {
   sampleSourceState,
   sampleSuddenStopState,
   sampleDemoChargeStates,
+  sampleStoppedDemoChargeStates,
+  sampleStoppedHarmonicState,
+  sampleStoppedHydrogenState,
+  isStoppableMode,
   maxHistorySpeed,
   brakingSubstepTimes,
   SUDDEN_STOP_V,
@@ -12,6 +16,9 @@ import {
   SUDDEN_STOP_X_STOP,
   OSCILLATING_AMPLITUDE,
   OSCILLATING_OMEGA,
+  DIPOLE_SEPARATION,
+  HYDROGEN_ORBIT_RADIUS,
+  HYDROGEN_OMEGA,
   WATER_O_CHARGE,
   WATER_H_CHARGE,
   WATER_BOND_LENGTH,
@@ -895,6 +902,352 @@ describe('water modes: time-varying dipole orientation distinguishes modes', () 
   it('water_asym_stretch: dipole x-range dominates (rangeX > 5·rangeY)', () => {
     const { rangeX, rangeY } = timeVaryingDipoleRange('water_asym_stretch');
     expect(rangeX).toBeGreaterThan(5 * rangeY);
+  });
+});
+
+// ─── Stop-now generalization (M16) ───────────────────────────────────────────
+//
+// sampleStoppedHarmonicState, sampleStoppedHydrogenState, and the
+// sampleStoppedDemoChargeStates dispatch generalize the moving_charge "Stop
+// now" trigger across all stoppable modes. Each tested behavior:
+//
+//  - Phase 1 (t < T_trig) matches the original analytic state per mode.
+//  - Phase 2 (T_trig <= t < brakeEnd) follows the per-mode-family brake formula.
+//  - Phase 3 (t >= brakeEnd) is exact rest at the expected terminal config.
+//  - Pos and vel are continuous across both phase boundaries; accel is
+//    allowed to be discontinuous (the LW shells from those discontinuities are
+//    the radiation the student sees).
+//
+// The harmonic-mode tests sweep multiple T_trig values to exercise all phases
+// of the cosine velocity factor (max-vel, zero-vel, mixed). Hydrogen tests
+// are explicit since the brake formula is different.
+
+describe('isStoppableMode', () => {
+  it('returns false for draggable, true for every other mode', () => {
+    expect(isStoppableMode('draggable')).toBe(false);
+    expect(isStoppableMode('moving_charge')).toBe(true);
+    expect(isStoppableMode('oscillating')).toBe(true);
+    expect(isStoppableMode('dipole')).toBe(true);
+    expect(isStoppableMode('hydrogen')).toBe(true);
+    expect(isStoppableMode('water_stretch')).toBe(true);
+    expect(isStoppableMode('water_bend')).toBe(true);
+    expect(isStoppableMode('water_asym_stretch')).toBe(true);
+  });
+});
+
+// Closed-form Hermite cubic and its derivatives — repeated in tests so the
+// implementation can't quietly drift from the documented formula.
+function hermiteF(s0: number, sDot0: number, TB: number, tau: number): number {
+  return s0    * (2 * tau * tau * tau - 3 * tau * tau + 1)
+       + sDot0 * TB * (tau * tau * tau - 2 * tau * tau + tau);
+}
+function hermiteFPrime(s0: number, sDot0: number, TB: number, tau: number): number {
+  return s0    * (6 * tau * tau - 6 * tau)
+       + sDot0 * TB * (3 * tau * tau - 4 * tau + 1);
+}
+function hermiteFDoublePrime(s0: number, sDot0: number, TB: number, tau: number): number {
+  return s0    * (12 * tau - 6)
+       + sDot0 * TB * (6 * tau - 4);
+}
+
+describe('sampleStoppedHarmonicState: oscillating brake', () => {
+  const A = OSCILLATING_AMPLITUDE;
+  const W = OSCILLATING_OMEGA;
+  const TB = SUDDEN_STOP_T_BRAKE;
+
+  // Sweep T_trig values exercising max-velocity (t=0), zero-velocity (t=π/2ω),
+  // and an intermediate phase. Each test runs over all three.
+  const TRIG_PHASES = [
+    { name: 'max-vel (t=0)',          T_trig: 0 },
+    { name: 'zero-vel (t=π/2ω)',      T_trig: Math.PI / (2 * W) },
+    { name: 'intermediate (t=π/3ω)',  T_trig: Math.PI / (3 * W) },
+  ];
+
+  for (const { name, T_trig } of TRIG_PHASES) {
+    describe(`T_trig phase: ${name}`, () => {
+      const brakeEnd = T_trig + TB;
+
+      it('pre-trigger phase matches sampleSourceState exactly', () => {
+        for (const t of [T_trig - 1, T_trig - 0.1, T_trig - 1e-9]) {
+          const stop = sampleStoppedHarmonicState('oscillating', 0, t, T_trig);
+          const orig = sampleSourceState('oscillating', t);
+          expect(stop.pos.x).toBeCloseTo(orig.pos.x, 12);
+          expect(stop.vel.x).toBeCloseTo(orig.vel.x, 12);
+          expect(stop.accel.x).toBeCloseTo(orig.accel.x, 12);
+        }
+      });
+
+      it('continuity at T_trig: pos and vel match across the trigger', () => {
+        const before = sampleStoppedHarmonicState('oscillating', 0, T_trig - 1e-9, T_trig);
+        const at     = sampleStoppedHarmonicState('oscillating', 0, T_trig,        T_trig);
+        expect(at.pos.x).toBeCloseTo(before.pos.x, 6);
+        expect(at.vel.x).toBeCloseTo(before.vel.x, 6);
+      });
+
+      it('brake-phase formulas at τ=0.5 match Hermite cubic', () => {
+        const tau = 0.5;
+        const t = T_trig + tau * TB;
+        const stop = sampleStoppedHarmonicState('oscillating', 0, t, T_trig);
+        const s0 = A * Math.sin(W * T_trig);
+        const sDot0 = A * W * Math.cos(W * T_trig);
+        const f   = hermiteF(s0, sDot0, TB, tau);
+        const fp  = hermiteFPrime(s0, sDot0, TB, tau);
+        const fpp = hermiteFDoublePrime(s0, sDot0, TB, tau);
+        // δ = (1, 0) and r_eq = (0, 0) for oscillating.
+        expect(stop.pos.x).toBeCloseTo(f, 10);
+        expect(stop.vel.x).toBeCloseTo(fp / TB, 10);
+        expect(stop.accel.x).toBeCloseTo(fpp / (TB * TB), 10);
+      });
+
+      it('left limit at brakeEnd: pos = r_eq, vel = 0, accel = f"(1)/T_BRAKE² (generally nonzero)', () => {
+        const stop = sampleStoppedHarmonicState('oscillating', 0, brakeEnd - 1e-9, T_trig);
+        expect(stop.pos.x).toBeCloseTo(0, 6);
+        expect(stop.vel.x).toBeCloseTo(0, 6);
+        const s0 = A * Math.sin(W * T_trig);
+        const sDot0 = A * W * Math.cos(W * T_trig);
+        const fpp1 = hermiteFDoublePrime(s0, sDot0, TB, 1);
+        expect(stop.accel.x).toBeCloseTo(fpp1 / (TB * TB), 5);
+      });
+
+      it('exact brakeEnd and beyond: full rest at equilibrium', () => {
+        for (const t of [brakeEnd, brakeEnd + 1e-9, brakeEnd + 0.5, brakeEnd + 5]) {
+          const stop = sampleStoppedHarmonicState('oscillating', 0, t, T_trig);
+          expect(stop.pos.x).toBeCloseTo(0, 12);
+          expect(stop.pos.y).toBeCloseTo(0, 12);
+          expect(stop.vel.x).toBeCloseTo(0, 12);
+          expect(stop.vel.y).toBeCloseTo(0, 12);
+          expect(stop.accel.x).toBeCloseTo(0, 12);
+          expect(stop.accel.y).toBeCloseTo(0, 12);
+        }
+      });
+    });
+  }
+});
+
+describe('sampleStoppedHarmonicState: dipole brake (per-charge)', () => {
+  const TB = SUDDEN_STOP_T_BRAKE;
+  const T_trig = 0.3; // arbitrary mid-phase trigger
+  const brakeEnd = T_trig + TB;
+
+  for (const chargeIndex of [0, 1] as const) {
+    const sign = chargeIndex === 0 ? +1 : -1;
+    const rEqX = sign * DIPOLE_SEPARATION / 2;
+
+    it(`charge ${chargeIndex}: ends at equilibrium (${rEqX}, 0) with v=0`, () => {
+      const stop = sampleStoppedHarmonicState('dipole', chargeIndex, brakeEnd + 0.1, T_trig);
+      expect(stop.pos.x).toBeCloseTo(rEqX, 12);
+      expect(stop.pos.y).toBeCloseTo(0, 12);
+      expect(stop.vel.x).toBeCloseTo(0, 12);
+      expect(stop.vel.y).toBeCloseTo(0, 12);
+      expect(stop.accel.x).toBeCloseTo(0, 12);
+      expect(stop.accel.y).toBeCloseTo(0, 12);
+    });
+
+    it(`charge ${chargeIndex}: pre-trigger matches sampleDemoChargeStates`, () => {
+      for (const t of [-0.1, 0, T_trig - 1e-9]) {
+        const stop = sampleStoppedHarmonicState('dipole', chargeIndex, t, T_trig);
+        const orig = sampleDemoChargeStates('dipole', t)[chargeIndex].state;
+        expect(stop.pos.x).toBeCloseTo(orig.pos.x, 12);
+        expect(stop.vel.x).toBeCloseTo(orig.vel.x, 12);
+        expect(stop.accel.x).toBeCloseTo(orig.accel.x, 12);
+      }
+    });
+  }
+});
+
+describe('sampleStoppedHarmonicState: water modes — COM conservation through brake', () => {
+  // Mass-weighted COM must stay at origin in all three phases for every
+  // water mode. The Hermite cubic preserves COM by construction (all charges
+  // share f(τ)) and the brake-phase formula must respect that.
+  const TB = SUDDEN_STOP_T_BRAKE;
+  const T_trig = 0.4;
+  const brakeEnd = T_trig + TB;
+  const TRIG_AND_OFFSETS = [
+    { label: 'pre',     t: T_trig - 0.05 },
+    { label: 'τ=0.25',  t: T_trig + TB * 0.25 },
+    { label: 'τ=0.75',  t: T_trig + TB * 0.75 },
+    { label: 'post',    t: brakeEnd + 0.1 },
+  ];
+
+  for (const mode of ['water_stretch', 'water_bend', 'water_asym_stretch'] as const) {
+    for (const { label, t } of TRIG_AND_OFFSETS) {
+      it(`${mode} @ ${label}: m_O·r_O + m_H·(r_H+ + r_H-) ≈ 0`, () => {
+        const specs = [0, 1, 2].map(ci =>
+          sampleStoppedHarmonicState(mode, ci, t, T_trig)
+        );
+        const comX = WATER_M_O * specs[0].pos.x + WATER_M_H * (specs[1].pos.x + specs[2].pos.x);
+        const comY = WATER_M_O * specs[0].pos.y + WATER_M_H * (specs[1].pos.y + specs[2].pos.y);
+        expect(comX).toBeCloseTo(0, 10);
+        expect(comY).toBeCloseTo(0, 10);
+      });
+    }
+  }
+});
+
+describe('sampleStoppedHarmonicState: water modes — terminal config = equilibrium', () => {
+  const TB = SUDDEN_STOP_T_BRAKE;
+  const T_trig = 0.4;
+  const brakeEnd = T_trig + TB;
+
+  for (const mode of ['water_stretch', 'water_bend', 'water_asym_stretch'] as const) {
+    it(`${mode}: every charge sits at its equilibrium position past brakeEnd`, () => {
+      const o  = sampleStoppedHarmonicState(mode, 0, brakeEnd + 0.5, T_trig);
+      const hp = sampleStoppedHarmonicState(mode, 1, brakeEnd + 0.5, T_trig);
+      const hm = sampleStoppedHarmonicState(mode, 2, brakeEnd + 0.5, T_trig);
+      expect(o.pos.x).toBeCloseTo(0, 12);
+      expect(o.pos.y).toBeCloseTo(WATER_O_EQ_Y, 12);
+      expect(hp.pos.x).toBeCloseTo(+WATER_H_EQ_X, 12);
+      expect(hp.pos.y).toBeCloseTo(WATER_H_EQ_Y, 12);
+      expect(hm.pos.x).toBeCloseTo(-WATER_H_EQ_X, 12);
+      expect(hm.pos.y).toBeCloseTo(WATER_H_EQ_Y, 12);
+      // All velocities and accelerations are zero.
+      for (const s of [o, hp, hm]) {
+        expect(s.vel.x).toBe(0); expect(s.vel.y).toBe(0);
+        expect(s.accel.x).toBe(0); expect(s.accel.y).toBe(0);
+      }
+    });
+  }
+});
+
+describe('sampleStoppedHydrogenState', () => {
+  const TB = SUDDEN_STOP_T_BRAKE;
+  const R = HYDROGEN_ORBIT_RADIUS;
+  const W = HYDROGEN_OMEGA;
+
+  it('charge 0 (central +q) is at rest at the origin in all phases', () => {
+    const T_trig = 1.0;
+    for (const t of [-1, 0, T_trig - 0.1, T_trig, T_trig + TB / 2, T_trig + TB, T_trig + 2]) {
+      const s = sampleStoppedHydrogenState(0, t, T_trig);
+      expect(s.pos.x).toBe(0); expect(s.pos.y).toBe(0);
+      expect(s.vel.x).toBe(0); expect(s.vel.y).toBe(0);
+      expect(s.accel.x).toBe(0); expect(s.accel.y).toBe(0);
+    }
+  });
+
+  describe('charge 1 (orbiting -q)', () => {
+    const T_trig = 1.2; // arbitrary mid-orbit
+    const brakeEnd = T_trig + TB;
+
+    it('pre-trigger matches sampleDemoChargeStates orbital state', () => {
+      for (const t of [-0.5, 0, T_trig - 1e-9]) {
+        const stop = sampleStoppedHydrogenState(1, t, T_trig);
+        const orig = sampleDemoChargeStates('hydrogen', t)[1].state;
+        expect(stop.pos.x).toBeCloseTo(orig.pos.x, 12);
+        expect(stop.pos.y).toBeCloseTo(orig.pos.y, 12);
+        expect(stop.vel.x).toBeCloseTo(orig.vel.x, 12);
+        expect(stop.vel.y).toBeCloseTo(orig.vel.y, 12);
+        expect(stop.accel.x).toBeCloseTo(orig.accel.x, 12);
+        expect(stop.accel.y).toBeCloseTo(orig.accel.y, 12);
+      }
+    });
+
+    it('continuity at T_trig: pos and vel match across the trigger', () => {
+      const before = sampleStoppedHydrogenState(1, T_trig - 1e-9, T_trig);
+      const at     = sampleStoppedHydrogenState(1, T_trig,        T_trig);
+      expect(at.pos.x).toBeCloseTo(before.pos.x, 6);
+      expect(at.pos.y).toBeCloseTo(before.pos.y, 6);
+      expect(at.vel.x).toBeCloseTo(before.vel.x, 6);
+      expect(at.vel.y).toBeCloseTo(before.vel.y, 6);
+    });
+
+    it('brake phase: ω_eff ramps linearly to 0; vel is tangential with magnitude R·ω_eff', () => {
+      // At Δt = TB/2, ω_eff = ω_0/2.
+      const t = T_trig + TB / 2;
+      const stop = sampleStoppedHydrogenState(1, t, T_trig);
+      const speed = Math.hypot(stop.vel.x, stop.vel.y);
+      const expectedSpeed = R * (W / 2);
+      expect(speed).toBeCloseTo(expectedSpeed, 10);
+      // Velocity is tangent to the radial direction: vel · pos = 0.
+      const dot = stop.vel.x * stop.pos.x + stop.vel.y * stop.pos.y;
+      expect(dot).toBeCloseTo(0, 10);
+    });
+
+    it('brake phase: accel has both centripetal (≈ -R·ω_eff²·r̂) and tangential (≈ R·α·θ̂) components', () => {
+      const t = T_trig + TB / 4;
+      const stop = sampleStoppedHydrogenState(1, t, T_trig);
+      // Reconstruct the expected accel from the documented closed form.
+      const dt = t - T_trig;
+      const omegaEff = W * (1 - dt / TB);
+      const alpha = -W / TB;
+      const theta = W * T_trig + W * dt - W * dt * dt / (2 * TB);
+      const cos = Math.cos(theta);
+      const sin = Math.sin(theta);
+      const expectedAx = -R * alpha * sin - R * omegaEff * omegaEff * cos;
+      const expectedAy =  R * alpha * cos - R * omegaEff * omegaEff * sin;
+      expect(stop.accel.x).toBeCloseTo(expectedAx, 10);
+      expect(stop.accel.y).toBeCloseTo(expectedAy, 10);
+    });
+
+    it('left limit at brakeEnd: pos = R·(cos θ_f, sin θ_f), vel = 0, accel tangential-only (nonzero)', () => {
+      const thetaF = W * T_trig + W * TB / 2;
+      const stop = sampleStoppedHydrogenState(1, brakeEnd - 1e-9, T_trig);
+      expect(stop.pos.x).toBeCloseTo(R * Math.cos(thetaF), 6);
+      expect(stop.pos.y).toBeCloseTo(R * Math.sin(thetaF), 6);
+      expect(Math.hypot(stop.vel.x, stop.vel.y)).toBeLessThan(1e-5);
+      // Acceleration is the tangential decel R·α·(-sin θ_f, cos θ_f); centripetal piece is ≈ 0.
+      const alpha = -W / TB;
+      expect(stop.accel.x).toBeCloseTo(-R * alpha * Math.sin(thetaF), 4);
+      expect(stop.accel.y).toBeCloseTo( R * alpha * Math.cos(thetaF), 4);
+    });
+
+    it('exact brakeEnd and beyond: full rest at θ_f', () => {
+      const thetaF = W * T_trig + W * TB / 2;
+      for (const t of [brakeEnd, brakeEnd + 1e-9, brakeEnd + 0.5, brakeEnd + 5]) {
+        const stop = sampleStoppedHydrogenState(1, t, T_trig);
+        expect(stop.pos.x).toBeCloseTo(R * Math.cos(thetaF), 12);
+        expect(stop.pos.y).toBeCloseTo(R * Math.sin(thetaF), 12);
+        expect(stop.vel.x).toBe(0); expect(stop.vel.y).toBe(0);
+        expect(stop.accel.x).toBe(0); expect(stop.accel.y).toBe(0);
+      }
+    });
+  });
+});
+
+describe('sampleStoppedDemoChargeStates: dispatch sanity', () => {
+  // For every stoppable mode, the dispatch at t < T_trig must equal the
+  // original pre-stop sampler element-wise. This is the contract that lets
+  // the c-rebuilder walk back across the trigger boundary safely.
+  const STOPPABLE_MODES = [
+    'moving_charge',
+    'oscillating',
+    'dipole',
+    'hydrogen',
+    'water_stretch',
+    'water_bend',
+    'water_asym_stretch',
+  ] as const;
+
+  for (const mode of STOPPABLE_MODES) {
+    it(`${mode}: t < T_trig matches sampleDemoChargeStates element-wise`, () => {
+      const T_trig = 1.5;
+      for (const t of [-0.5, 0, 0.5, T_trig - 1e-9]) {
+        const stop = sampleStoppedDemoChargeStates(mode, t, T_trig);
+        const orig = sampleDemoChargeStates(mode, t);
+        expect(stop.length).toBe(orig.length);
+        for (let ci = 0; ci < orig.length; ci++) {
+          expect(stop[ci].charge).toBe(orig[ci].charge);
+          expect(stop[ci].state.pos.x).toBeCloseTo(orig[ci].state.pos.x, 10);
+          expect(stop[ci].state.pos.y).toBeCloseTo(orig[ci].state.pos.y, 10);
+          expect(stop[ci].state.vel.x).toBeCloseTo(orig[ci].state.vel.x, 10);
+          expect(stop[ci].state.vel.y).toBeCloseTo(orig[ci].state.vel.y, 10);
+          expect(stop[ci].state.accel.x).toBeCloseTo(orig[ci].state.accel.x, 10);
+          expect(stop[ci].state.accel.y).toBeCloseTo(orig[ci].state.accel.y, 10);
+        }
+      }
+    });
+  }
+
+  it('moving_charge: matches sampleSuddenStopState directly', () => {
+    const T_trig = 0.5;
+    for (const t of [-0.1, T_trig - 1e-9, T_trig + 0.05, T_trig + SUDDEN_STOP_T_BRAKE + 1]) {
+      const stop = sampleStoppedDemoChargeStates('moving_charge', t, T_trig);
+      const direct = sampleSuddenStopState(t, T_trig);
+      expect(stop.length).toBe(1);
+      expect(stop[0].charge).toBe(1);
+      expect(stop[0].state.pos.x).toBeCloseTo(direct.pos.x, 12);
+      expect(stop[0].state.vel.x).toBeCloseTo(direct.vel.x, 12);
+      expect(stop[0].state.accel.x).toBeCloseTo(direct.accel.x, 12);
+    }
   });
 });
 

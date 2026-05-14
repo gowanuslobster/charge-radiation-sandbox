@@ -1,4 +1,7 @@
-// MovingChargeMiniPanel — draggable floating panel for moving_charge mode controls.
+// MovingChargeMiniPanel — draggable floating panel for moving_charge-only
+// overlay controls (ghost charge + ghost field lines). The Stop-now trigger
+// itself lives in the main ControlPanel because it now applies to every
+// stoppable mode; this panel carries only the moving_charge-specific overlays.
 //
 // Shown only when demoMode === 'moving_charge'. Position is owned by the parent
 // (ChargeRadiationSandbox) so it persists across mode switches within a session.
@@ -7,11 +10,9 @@
 import { useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 
 type Props = {
-  stopTriggered: boolean;
   showGhost: boolean;
   /** Whether the ghost velocity-field streamline overlay is active. */
   showGhostStreamlines: boolean;
-  onStopNow: () => void;
   onToggleGhost: () => void;
   /** Toggle ghost velocity-field streamlines. Only meaningful when showGhost is true. */
   onToggleGhostStreamlines: () => void;
@@ -22,8 +23,8 @@ type Props = {
 const TOGGLE_BASE = 'rounded-md px-3 py-2 text-sm font-medium transition-all duration-200';
 
 export function MovingChargeMiniPanel({
-  stopTriggered, showGhost, showGhostStreamlines,
-  onStopNow, onToggleGhost, onToggleGhostStreamlines,
+  showGhost, showGhostStreamlines,
+  onToggleGhost, onToggleGhostStreamlines,
   pos, onPosChange,
 }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
@@ -84,16 +85,6 @@ export function MovingChargeMiniPanel({
         Moving charge
       </div>
       <div className="flex flex-col gap-2 p-4">
-        <button
-          type="button"
-          onClick={onStopNow}
-          disabled={stopTriggered}
-          className={stopTriggered
-            ? 'rounded-md px-3 py-2 text-sm font-medium bg-red-500/10 text-red-300/40 cursor-not-allowed'
-            : 'rounded-md px-3 py-2 text-sm font-medium bg-red-500/20 text-red-300 hover:bg-red-500/35 transition-colors duration-200'}
-        >
-          Stop now
-        </button>
         <button
           type="button"
           onClick={onToggleGhost}

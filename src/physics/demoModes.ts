@@ -4,7 +4,7 @@
 // Each demo mode has a closed-form KinematicState for any t, including negative t
 // (needed for history seeding before sim time = 0).
 
-import type { KinematicState } from './types';
+import type { KinematicState, Vec2 } from './types';
 
 export type DemoMode = 'moving_charge' | 'oscillating' | 'draggable' | 'dipole' | 'hydrogen' | 'water_stretch' | 'water_bend' | 'water_asym_stretch';
 
@@ -594,6 +594,351 @@ export function sampleDemoChargeStates(mode: DemoMode, t: number): DemoChargeSpe
 }
 
 // ─── maxHistorySpeed ─────────────────────────────────────────────────────────
+
+// ─── Stop-now generalization (M16) ───────────────────────────────────────────
+//
+// Generalize the moving_charge "Stop now" trigger across all stoppable modes.
+// Each mode family has its own analytic post-trigger braking model that lands
+// the charges at a defined rest state within SUDDEN_STOP_T_BRAKE:
+//
+//   moving_charge:                    linear v ramp via sampleSuddenStopState
+//                                     (unchanged; this generalization just adds
+//                                     the others alongside)
+//   oscillating, dipole, water_*:     Hermite cubic in the scalar mode
+//                                     amplitude, returning each charge to its
+//                                     per-mode equilibrium position with v = 0
+//   hydrogen:                         linear angular-velocity ramp on the
+//                                     orbiting -q, ending on the same circle
+//                                     at terminal angle with v = 0
+//   draggable:                        excluded — no scripted motion to brake
+//
+// All families share the SUDDEN_STOP_T_BRAKE = 0.2s ramp duration and the
+// exclusive-right boundary convention: brake phase is T_trig <= t < brakeEnd;
+// exact brakeEnd belongs to the rest phase. This matches the existing
+// moving_charge sampler so brakingSubstepTimes' brakeEnd anchor cleanly pins
+// the acceleration discontinuity for ChargeHistory's linear interpolation.
+
+/**
+ * Modes for which "Stop now" produces a Hermite-cubic brake to equilibrium.
+ * All carry harmonic restoring forces, and each charge has a per-mode
+ * equilibrium position r_eq plus a displacement vector δ such that the
+ * pre-trigger position is r(t) = r_eq + A·sin(ω·t)·δ.
+ */
+type HarmonicStoppableMode =
+  | 'oscillating'
+  | 'dipole'
+  | 'water_stretch'
+  | 'water_bend'
+  | 'water_asym_stretch';
+
+/**
+ * Per-charge geometry consumed by sampleStoppedHarmonicState. Returns the
+ * equilibrium position, the per-charge displacement basis vector δ, and the
+ * shared mode amplitude/frequency. The pre-trigger analytic position is
+ *   r(t) = rEq + A·sin(ω·t)·δ.
+ * Sign conventions match the existing per-mode helpers above so the brake-
+ * phase Hermite ride is continuous with the original analytic trajectory at
+ * t = T_trig.
+ */
+function harmonicChargeGeometry(
+  mode: HarmonicStoppableMode,
+  chargeIndex: number,
+): { rEq: Vec2; delta: Vec2; A: number; omega: number } {
+  if (mode === 'oscillating') {
+    return {
+      rEq: { x: 0, y: 0 },
+      delta: { x: 1, y: 0 },
+      A: OSCILLATING_AMPLITUDE,
+      omega: OSCILLATING_OMEGA,
+    };
+  }
+  if (mode === 'dipole') {
+    const sign = chargeIndex === 0 ? +1 : -1;
+    return {
+      rEq: { x: sign * DIPOLE_SEPARATION / 2, y: 0 },
+      delta: { x: sign, y: 0 },
+      A: DIPOLE_AMPLITUDE,
+      omega: DIPOLE_OMEGA,
+    };
+  }
+  // Water modes share the same equilibrium geometry; only δ and (A, ω) differ.
+  const halfAngle = WATER_HOH_ANGLE_RAD / 2;
+  const sinHalf = Math.sin(halfAngle);
+  const cosHalf = Math.cos(halfAngle);
+  if (mode === 'water_stretch') {
+    if (chargeIndex === 0) {
+      return {
+        rEq: { x: 0, y: WATER_O_EQ_Y },
+        delta: { x: 0, y: +cosHalf * WATER_STRETCH_O_COM_SCALE },
+        A: WATER_STRETCH_AMPLITUDE,
+        omega: WATER_STRETCH_OMEGA,
+      };
+    }
+    const sign = chargeIndex === 1 ? +1 : -1;
+    return {
+      rEq: { x: sign * WATER_H_EQ_X, y: WATER_H_EQ_Y },
+      delta: { x: sign * sinHalf, y: -cosHalf },
+      A: WATER_STRETCH_AMPLITUDE,
+      omega: WATER_STRETCH_OMEGA,
+    };
+  }
+  if (mode === 'water_bend') {
+    const N = WATER_BEND_NORM;
+    if (chargeIndex === 0) {
+      return {
+        rEq: { x: 0, y: WATER_O_EQ_Y },
+        delta: { x: 0, y: -sinHalf / (9 * N) },
+        A: WATER_BEND_AMPLITUDE,
+        omega: WATER_BEND_OMEGA,
+      };
+    }
+    const sign = chargeIndex === 1 ? +1 : -1;
+    return {
+      rEq: { x: sign * WATER_H_EQ_X, y: WATER_H_EQ_Y },
+      delta: { x: sign * cosHalf / N, y: (8 / 9) * sinHalf / N },
+      A: WATER_BEND_AMPLITUDE,
+      omega: WATER_BEND_OMEGA,
+    };
+  }
+  // water_asym_stretch
+  if (chargeIndex === 0) {
+    return {
+      rEq: { x: 0, y: WATER_O_EQ_Y },
+      delta: { x: -sinHalf / 8, y: 0 },
+      A: WATER_ASYM_STRETCH_AMPLITUDE,
+      omega: WATER_ASYM_STRETCH_OMEGA,
+    };
+  }
+  const sign = chargeIndex === 1 ? +1 : -1;
+  return {
+    rEq: { x: sign * WATER_H_EQ_X, y: WATER_H_EQ_Y },
+    delta: { x: +sinHalf, y: -sign * cosHalf },
+    A: WATER_ASYM_STRETCH_AMPLITUDE,
+    omega: WATER_ASYM_STRETCH_OMEGA,
+  };
+}
+
+/**
+ * Three-phase kinematics for one charge in a harmonic stoppable mode given a
+ * stop-trigger time T_trig.
+ *
+ * Boundary convention (exclusive right, matching sampleSuddenStopState):
+ *   Phase 1 (t < T_trig):                                original analytic state
+ *   Phase 2 (T_trig <= t < T_trig + SUDDEN_STOP_T_BRAKE): Hermite cubic brake
+ *   Phase 3 (t >= T_trig + SUDDEN_STOP_T_BRAKE):          at rest at r_eq
+ *
+ * Hermite cubic construction in the scalar mode amplitude. Let
+ *   τ    = (t - T_trig) / T_BRAKE
+ *   s_0  = A·sin(ω·T_trig)        (pre-trigger amplitude factor)
+ *   s'_0 = A·ω·cos(ω·T_trig)      (pre-trigger amplitude rate)
+ * Then
+ *   f(τ)   = s_0·(2τ³ - 3τ² + 1)  + s'_0·T_BRAKE·(τ³ - 2τ² + τ)
+ *   f'(τ)  = s_0·(6τ² - 6τ)       + s'_0·T_BRAKE·(3τ² - 4τ + 1)
+ *   f''(τ) = s_0·(12τ - 6)        + s'_0·T_BRAKE·(6τ - 4)
+ * satisfies f(0)=s_0, f'(0)=s'_0·T_BRAKE (so velocity is s'_0·δ), f(1)=0,
+ * f'(1)=0 — landing at r_eq with v=0 exactly at brakeEnd.
+ *
+ * Position:     r(t) = r_eq + f(τ)·δ
+ * Velocity:     v(t) = f'(τ)·δ / T_BRAKE
+ * Acceleration: a(t) = f''(τ)·δ / T_BRAKE²
+ *
+ * Acceleration is allowed to be discontinuous at both phase boundaries
+ * (T_trig and brakeEnd); brakingSubstepTimes records boundary anchors so the
+ * LW evaluator can resolve the resulting shells without smearing them across
+ * an inter-substep gap.
+ *
+ * Because every charge in a multi-charge harmonic mode shares the same scalar
+ * f(τ), mass-weighted COM is preserved through the brake automatically:
+ * Σ m_i·δ_i = 0 in the original normal-mode basis implies Σ m_i·f(τ)·δ_i = 0
+ * at every τ.
+ */
+export function sampleStoppedHarmonicState(
+  mode: HarmonicStoppableMode,
+  chargeIndex: number,
+  t: number,
+  T_trig: number,
+): KinematicState {
+  const { rEq, delta, A, omega } = harmonicChargeGeometry(mode, chargeIndex);
+
+  // Phase 1: pre-trigger original analytic state. Constructed here rather than
+  // delegating to the per-mode helpers above so the brake-phase formulas below
+  // share the same multiplication ordering — guaranteeing continuity in pos/
+  // vel at exactly t = T_trig under floating-point arithmetic.
+  if (t < T_trig) {
+    const s   =  A * Math.sin(omega * t);
+    const sp  =  A * omega * Math.cos(omega * t);
+    const spp = -A * omega * omega * Math.sin(omega * t);
+    return {
+      t,
+      pos:   { x: rEq.x + s   * delta.x, y: rEq.y + s   * delta.y },
+      vel:   { x:         sp  * delta.x, y:         sp  * delta.y },
+      accel: { x:         spp * delta.x, y:         spp * delta.y },
+    };
+  }
+
+  const brakeEnd = T_trig + SUDDEN_STOP_T_BRAKE;
+
+  // Phase 3: exact brakeEnd and beyond — at rest at equilibrium.
+  if (t >= brakeEnd) {
+    return {
+      t,
+      pos:   { x: rEq.x, y: rEq.y },
+      vel:   { x: 0,     y: 0 },
+      accel: { x: 0,     y: 0 },
+    };
+  }
+
+  // Phase 2: Hermite cubic brake.
+  const TB    = SUDDEN_STOP_T_BRAKE;
+  const tau   = (t - T_trig) / TB;
+  const s0    = A * Math.sin(omega * T_trig);
+  const sDot0 = A * omega * Math.cos(omega * T_trig);
+  const f   = s0    * (2 * tau * tau * tau - 3 * tau * tau + 1)
+            + sDot0 * TB * (tau * tau * tau - 2 * tau * tau + tau);
+  const fp  = s0    * (6 * tau * tau - 6 * tau)
+            + sDot0 * TB * (3 * tau * tau - 4 * tau + 1);
+  const fpp = s0    * (12 * tau - 6)
+            + sDot0 * TB * (6 * tau - 4);
+  return {
+    t,
+    pos:   { x: rEq.x + f * delta.x,                 y: rEq.y + f * delta.y                 },
+    vel:   { x:        (fp / TB) * delta.x,          y:        (fp / TB) * delta.y          },
+    accel: { x:        (fpp / (TB * TB)) * delta.x,  y:        (fpp / (TB * TB)) * delta.y  },
+  };
+}
+
+/**
+ * Three-phase kinematics for one charge in hydrogen mode given a stop-trigger
+ * time T_trig. The central +q (chargeIndex 0) is always at rest at the origin;
+ * only the orbiting -q (chargeIndex 1) has a brake phase.
+ *
+ * Boundary convention (exclusive right, matching sampleSuddenStopState):
+ *   Phase 1 (t < T_trig):                                original orbital state
+ *   Phase 2 (T_trig <= t < T_trig + SUDDEN_STOP_T_BRAKE): linear ω ramp
+ *   Phase 3 (t >= T_trig + SUDDEN_STOP_T_BRAKE):          at rest at θ_f
+ *
+ * Brake phase: angular velocity ramps linearly to zero under constant angular
+ * deceleration α = -ω_0 / T_BRAKE. With Δt = t - T_trig,
+ *   ω_eff(t) = ω_0·(1 - Δt/T_BRAKE)
+ *   θ(t)    = ω_0·T_trig + ω_0·Δt - ω_0·Δt² / (2·T_BRAKE)
+ *   pos     = R·(cos θ, sin θ)
+ *   vel     = R·ω_eff·(-sin θ, cos θ)                              [tangential]
+ *   accel   = R·α·(-sin θ, cos θ) - R·ω_eff²·(cos θ, sin θ)
+ *           = (tangential deceleration) + (centripetal, fading with ω_eff²)
+ * Terminal angle at t = brakeEnd: θ_f = ω_0·T_trig + ω_0·T_BRAKE/2.
+ */
+export function sampleStoppedHydrogenState(
+  chargeIndex: 0 | 1,
+  t: number,
+  T_trig: number,
+): KinematicState {
+  if (chargeIndex === 0) {
+    return { t, pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 }, accel: { x: 0, y: 0 } };
+  }
+
+  const R      = HYDROGEN_ORBIT_RADIUS;
+  const omega0 = HYDROGEN_OMEGA;
+
+  // Phase 1: pre-trigger orbital state (matches sampleHydrogenState exactly).
+  if (t < T_trig) {
+    const theta = omega0 * t;
+    const cos = Math.cos(theta);
+    const sin = Math.sin(theta);
+    return {
+      t,
+      pos:   { x:  R * cos,                  y:  R * sin                  },
+      vel:   { x: -R * omega0 * sin,         y:  R * omega0 * cos         },
+      accel: { x: -R * omega0 * omega0 * cos, y: -R * omega0 * omega0 * sin },
+    };
+  }
+
+  const brakeEnd = T_trig + SUDDEN_STOP_T_BRAKE;
+
+  // Phase 3: at rest at θ_f.
+  if (t >= brakeEnd) {
+    const thetaF = omega0 * T_trig + omega0 * SUDDEN_STOP_T_BRAKE / 2;
+    return {
+      t,
+      pos:   { x: R * Math.cos(thetaF), y: R * Math.sin(thetaF) },
+      vel:   { x: 0, y: 0 },
+      accel: { x: 0, y: 0 },
+    };
+  }
+
+  // Phase 2: angular-velocity ramp.
+  const TB       = SUDDEN_STOP_T_BRAKE;
+  const dt       = t - T_trig;
+  const omegaEff = omega0 * (1 - dt / TB);
+  const alpha    = -omega0 / TB;
+  const theta    = omega0 * T_trig + omega0 * dt - omega0 * dt * dt / (2 * TB);
+  const cos      = Math.cos(theta);
+  const sin      = Math.sin(theta);
+  return {
+    t,
+    pos: { x: R * cos, y: R * sin },
+    vel: { x: -R * omegaEff * sin, y: R * omegaEff * cos },
+    accel: {
+      x: -R * alpha * sin - R * omegaEff * omegaEff * cos,
+      y:  R * alpha * cos - R * omegaEff * omegaEff * sin,
+    },
+  };
+}
+
+/**
+ * Modes for which "Stop now" is a defined verb. Excludes draggable (no
+ * scripted motion to brake — pointer-release already produces a stop).
+ */
+export type StoppableMode = Exclude<DemoMode, 'draggable'>;
+
+/** Type guard mirroring the StoppableMode exclusion. */
+export function isStoppableMode(mode: DemoMode): mode is StoppableMode {
+  return mode !== 'draggable';
+}
+
+/**
+ * Unified post-trigger dispatch. Returns per-charge KinematicState specs in
+ * the same shape and order as sampleDemoChargeStates, but routed through the
+ * per-mode-family stop-now sampler. Used by the simulation tick and the
+ * c-slider history rebuilder.
+ *
+ *   moving_charge       → sampleSuddenStopState (single charge)
+ *   harmonic family     → sampleStoppedHarmonicState per charge
+ *   hydrogen            → sampleStoppedHydrogenState per charge
+ *
+ * Each branch returns the original analytic state for t < T_trig, so it is
+ * safe to call across the trigger boundary. The c-rebuilder relies on this
+ * when walking back through the history window after a stop.
+ */
+export function sampleStoppedDemoChargeStates(
+  mode: StoppableMode,
+  t: number,
+  T_trig: number,
+): DemoChargeSpec[] {
+  if (mode === 'moving_charge') {
+    return [{ charge: 1, state: sampleSuddenStopState(t, T_trig) }];
+  }
+  if (mode === 'oscillating') {
+    return [{ charge: 1, state: sampleStoppedHarmonicState('oscillating', 0, t, T_trig) }];
+  }
+  if (mode === 'dipole') {
+    return [
+      { charge: +1, state: sampleStoppedHarmonicState('dipole', 0, t, T_trig) },
+      { charge: -1, state: sampleStoppedHarmonicState('dipole', 1, t, T_trig) },
+    ];
+  }
+  if (mode === 'hydrogen') {
+    return [
+      { charge: +1, state: sampleStoppedHydrogenState(0, t, T_trig) },
+      { charge: -1, state: sampleStoppedHydrogenState(1, t, T_trig) },
+    ];
+  }
+  // Water modes preserve the locked [O, H+x, H-x] ordering from sampleDemoChargeStates.
+  return [
+    { charge: WATER_O_CHARGE, state: sampleStoppedHarmonicState(mode, 0, t, T_trig) },
+    { charge: WATER_H_CHARGE, state: sampleStoppedHarmonicState(mode, 1, t, T_trig) },
+    { charge: WATER_H_CHARGE, state: sampleStoppedHarmonicState(mode, 2, t, T_trig) },
+  ];
+}
 
 /**
  * Peak speed (world units / s) ever reached by this mode.

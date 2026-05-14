@@ -32,13 +32,15 @@ import { magnitude } from '@/physics/vec2';
 import type { SimConfig, Vec2 } from '@/physics/types';
 import {
   type DemoMode,
+  type StoppableMode,
   sampleSourceState,
   sampleDemoChargeStates,
-  sampleSuddenStopState,
+  sampleStoppedDemoChargeStates,
   maxHistorySpeed,
   brakingSubstepTimes,
   SUDDEN_STOP_V,
 } from '@/physics/demoModes';
+import { recordStoppedFrame } from '@/physics/stoppedFrame';
 import type { FieldLayer, MagneticHeatmapMode } from '@/rendering/displayModes';
 import { type DragState, computeDragState, stoppedDragState } from '@/physics/dragKinematics';
 import { useSandboxCamera } from './useSandboxCamera';
@@ -393,76 +395,67 @@ export function ChargeRadiationSandbox() {
 
   // Rebuild the source history window from the current sim time after a c change.
   //
-  // Only valid for analytic modes — the entire past
-  // trajectory is closed-form, so any history window can be reconstructed exactly.
+  // Only valid for analytic modes — the entire past trajectory is closed-form,
+  // so any history window can be reconstructed exactly. Handles pre-trigger and
+  // post-trigger uniformly via sampleStoppedDemoChargeStates, which falls back
+  // to the original analytic state when t < T_trig (so the seed loop can walk
+  // back across the trigger boundary safely).
   //
   // Preserves: simTimeRef.current, stopTriggerTimeRef.current, demoMode.
-  // Replaces:  historyRef.current (fresh ChargeHistory with correct window).
+  // Replaces:  chargeRuntimesRef.current (fresh ChargeHistory per charge).
   // Increments: simEpochRef.current so paused canvases re-solve the current frame.
   const rebuildAnalyticHistoryAtCurrentTime = useCallback(
-    (mode: 'moving_charge' | 'oscillating' | 'dipole' | 'hydrogen' | 'water_stretch' | 'water_bend' | 'water_asym_stretch') => {
+    (mode: StoppableMode) => {
       const T      = simTimeRef.current;
       const config = configRef.current;     // already updated before this call
       const DT     = 0.05;                  // step spacing matches initial reseed
-
-      // ── Multi-charge analytic modes: rebuild all charge histories simultaneously.
-      // Water modes are 3-charge analytic sources and ride this same branch.
-      if (mode === 'dipole' || mode === 'hydrogen' || mode === 'water_stretch' || mode === 'water_bend' || mode === 'water_asym_stretch') {
-        const horizonSpeed = maxHistorySpeed(mode);
-        const chargeStates0 = sampleDemoChargeStates(mode, T);
-        const historyWindow = Math.max(
-          ...chargeStates0.map(({ state }) => maxCornerDist(state.pos, viewBoundsRef.current)),
-        ) / (config.c - horizonSpeed);
-        const n = Math.ceil(historyWindow / DT);
-        const newRuntimes: ChargeRuntime[] = chargeStates0.map(({ charge }) => ({
-          charge,
-          history: new ChargeHistory(),
-        }));
-        for (let i = -n; i <= 0; i++) {
-          const states = sampleDemoChargeStates(mode, T + i * DT);
-          for (let ci = 0; ci < newRuntimes.length; ci++) {
-            newRuntimes[ci].history.recordState(states[ci].state);
-          }
-        }
-        chargeRuntimesRef.current = newRuntimes;
-        simEpochRef.current += 1;
-        return;
-      }
-
-      // ── Single-charge (moving_charge, oscillating).
       const T_trig = stopTriggerTimeRef.current;
 
-      // Current source position at T used to calculate the corner-to-source horizon.
-      const currentPos = (mode === 'moving_charge' && T_trig !== null)
-        ? sampleSuddenStopState(T, T_trig).pos
-        : sampleSourceState(mode, T).pos;
+      // Sampler unifies pre-stop and post-stop paths. Per-mode-family analytic
+      // forms cover all three phases of every stoppable mode.
+      const sample = T_trig !== null
+        ? (t: number) => sampleStoppedDemoChargeStates(mode, t, T_trig)
+        : (t: number) => sampleDemoChargeStates(mode, t);
 
-      // Use peak speed (conservative mode-level bound) — same as the tick.
+      // Current per-charge states drive horizon distance (uses the post-stop
+      // resting position for multi-charge modes after a trigger). The horizon
+      // speed budget is still maxHistorySpeed(mode) — the pre-stop peak —
+      // because outside-shell observers need pre-trigger history retained.
+      const chargeStates0 = sample(T);
       const horizonSpeed  = maxHistorySpeed(mode);
-      const historyWindow = maxCornerDist(currentPos, viewBoundsRef.current) / (config.c - horizonSpeed);
-      const n             = Math.ceil(historyWindow / DT);
+      const historyWindow = Math.max(
+        ...chargeStates0.map(({ state }) => maxCornerDist(state.pos, viewBoundsRef.current)),
+      ) / (config.c - horizonSpeed);
+      const n = Math.ceil(historyWindow / DT);
 
-      const newHistory = new ChargeHistory();
+      const newRuntimes: ChargeRuntime[] = chargeStates0.map(({ charge }) => ({
+        charge,
+        history: new ChargeHistory(),
+      }));
 
-      if (mode === 'moving_charge' && T_trig !== null) {
-        // Post-stop: use sampleSuddenStopState for all steps and preserve braking
-        // substeps so the acceleration-ramp shell edge stays sharp after a c change.
-        for (let i = -n; i <= 0; i++) {
-          const t     = T + i * DT;
-          const tPrev = T + (i - 1) * DT;
+      // Walk back through the history window. For each backward DT step also
+      // emit braking substeps when this step's interval straddles the brake
+      // window (boundary anchors + interior substeps). This preserves the
+      // radiation-shell sharpness after a c-change rebuild — same role as the
+      // substeps in the live tick.
+      for (let i = -n; i <= 0; i++) {
+        const t     = T + i * DT;
+        const tPrev = T + (i - 1) * DT;
+        if (T_trig !== null) {
           for (const tSub of brakingSubstepTimes(tPrev, t, T_trig)) {
-            newHistory.recordState(sampleSuddenStopState(tSub, T_trig));
+            const subStates = sample(tSub);
+            for (let ci = 0; ci < newRuntimes.length; ci++) {
+              newRuntimes[ci].history.recordState(subStates[ci].state);
+            }
           }
-          newHistory.recordState(sampleSuddenStopState(t, T_trig));
         }
-      } else {
-        // Pre-stop moving_charge or oscillating: closed-form past.
-        for (let i = -n; i <= 0; i++) {
-          newHistory.recordState(sampleSourceState(mode, T + i * DT));
+        const states = sample(t);
+        for (let ci = 0; ci < newRuntimes.length; ci++) {
+          newRuntimes[ci].history.recordState(states[ci].state);
         }
       }
 
-      chargeRuntimesRef.current = [{ history: newHistory, charge: chargeRuntimesRef.current[0]?.charge ?? 1 }];
+      chargeRuntimesRef.current = newRuntimes;
       simEpochRef.current += 1;
     },
     [], // stable: reads only from refs, no React state
@@ -660,8 +653,34 @@ export function ChargeRadiationSandbox() {
         return;
       }
 
-      // ── Multi-charge analytic branch: record all charge states simultaneously.
-      // Water modes (3-charge analytic) ride this same branch.
+      // ── Stop-aware branch ────────────────────────────────────────────────
+      // Once Stop now has fired in any stoppable mode, the unified post-trigger
+      // dispatch handles substep + current recording for every charge. Placed
+      // before the per-mode pre-stop branches because multi-charge modes
+      // (dipole, hydrogen, water_*) would otherwise early-return through the
+      // pre-stop analytic branch below and miss the brake.
+      // mode is narrowed to StoppableMode here (draggable returned above).
+      const T_trig = stopTriggerTimeRef.current;
+      if (T_trig !== null) {
+        const prevSimTime = simTimeRef.current - dt;
+        recordStoppedFrame(
+          chargeRuntimesRef.current,
+          mode,
+          prevSimTime,
+          simTimeRef.current,
+          T_trig,
+          viewBoundsRef.current,
+          configRef.current,
+        );
+        // moving_charge ghost overlay (only visible in moving_charge mode):
+        // marker tracks the would-have-been position of the still-moving charge.
+        if (mode === 'moving_charge' && showGhostRef.current) {
+          ghostPosRef.current = { x: SUDDEN_STOP_V * simTimeRef.current, y: 0 };
+        }
+        return;
+      }
+
+      // ── Multi-charge analytic branch (pre-stop): record all charge states.
       if (mode === 'dipole' || mode === 'hydrogen' || mode === 'water_stretch' || mode === 'water_bend' || mode === 'water_asym_stretch') {
         const config = configRef.current;
         const runtimes = chargeRuntimesRef.current;
@@ -678,49 +697,21 @@ export function ChargeRadiationSandbox() {
         return;
       }
 
-      // ── Compute source state (moving_charge and oscillating).
-      // moving_charge records substeps for every transition ramp overlapping this frame.
+      // ── Single-charge analytic branch (pre-stop): moving_charge and oscillating.
       const history = chargeRuntimesRef.current[0].history;
       const config = configRef.current;
-      let sourceState;
+      const sourceState = sampleSourceState(mode, simTimeRef.current);
 
-      if (mode === 'moving_charge') {
-        const T_trig = stopTriggerTimeRef.current;
-        const prevSimTime = simTimeRef.current - dt;
-
-        if (T_trig === null) {
-          sourceState = sampleSourceState('moving_charge', simTimeRef.current);
-        } else {
-          for (const tSub of brakingSubstepTimes(prevSimTime, simTimeRef.current, T_trig)) {
-            history.recordState(sampleSuddenStopState(tSub, T_trig));
-          }
-          sourceState = sampleSuddenStopState(simTimeRef.current, T_trig);
-          if (showGhostRef.current) {
-            ghostPosRef.current = { x: SUDDEN_STOP_V * simTimeRef.current, y: 0 };
-          }
-        }
-      } else {
-        sourceState = sampleSourceState(mode, simTimeRef.current);
-      }
-
-      // ── Auto-reseed check.
-      // Compares against reseedBoundsRef (source-centered snapshot) — camera panning
-      // never triggers a reseed. Applies to modes where the charge can drift off-screen.
-      // moving_charge pre-trigger is included because the charge moves at constant velocity.
-      const shouldCheckReseed =
-        (mode === 'moving_charge' && stopTriggerTimeRef.current === null) ||
-        mode === 'oscillating';
-
-      if (shouldCheckReseed && reseedBoundsRef.current !== null) {
+      // Auto-reseed: applies to translation-style modes where the charge can drift
+      // off the source-centered snapshot. Camera panning never triggers a reseed.
+      if (reseedBoundsRef.current !== null) {
         if (!isWithinBounds(sourceState.pos, reseedBoundsRef.current, 1.0)) {
           reseed(mode, defaultBoundsRef.current!);
           return;
         }
       }
 
-      // ── Record state (sudden_stop substeps already recorded above for post-trigger).
       history.recordState(sourceState);
-
       const horizonSpeed = maxHistorySpeed(mode);
       history.setMaxHistoryTime(
         maxCornerDist(sourceState.pos, viewBoundsRef.current) / (config.c - horizonSpeed)
@@ -931,6 +922,7 @@ export function ChargeRadiationSandbox() {
         onPauseToggle={togglePause}
         onStepForward={stepForward}
         onReset={handleReset}
+        onStopNow={handleStopNow}
         onGoToStartScreen={handleGoToStartScreen}
         onCChange={handleCChange}
         onResetView={resetCamera}
@@ -1000,10 +992,8 @@ export function ChargeRadiationSandbox() {
       )}
       {demoMode === 'moving_charge' && !showStartPanel && (
         <MovingChargeMiniPanel
-          stopTriggered={stopTriggered}
           showGhost={showGhost}
           showGhostStreamlines={showGhostStreamlines}
-          onStopNow={handleStopNow}
           onToggleGhost={handleToggleGhost}
           onToggleGhostStreamlines={() => setShowGhostStreamlines(v => !v)}
           pos={miniPanelPos}

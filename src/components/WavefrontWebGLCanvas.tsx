@@ -412,10 +412,43 @@ void main() {
   // regardless of which channel the heatmap is displaying.
   if (u_showContour) {
     if (u_isSigned) {
-      // oscillating, dipole, hydrogen, water_stretch, water_bend, water_asym_stretch: zero-crossing contour on summed bZAccel
+      // oscillating, dipole, hydrogen, water_stretch, water_bend, water_asym_stretch:
+      // zero-crossing contour on summed bZAccel.
+      //
+      // Two guards defend against the post-Stop-now "dead zone" inside the
+      // radiation shell, where sumAccel is identically zero across many
+      // adjacent pixels:
+      //
+      //   1. fwidth(norm) collapses to ~0, making smoothstep(0, ~0, 0) hit the
+      //      degenerate edge0 == edge1 case — undefined per GLSL spec; some
+      //      drivers return NaN, which then propagates through the mask and
+      //      the mix. The max(..., 1e-6) floor on contourWidth keeps the
+      //      smoothstep arguments strictly ordered so its return value is
+      //      always finite.
+      //   2. With width floored, smoothstep(0, 1e-6, 0) returns 0, giving
+      //      crossingMask = 1 in the flat region — which would still fill the
+      //      dead zone with contour color. The gradient gate independently
+      //      forces contourMask = 0 wherever the field is locally flat,
+      //      restricting the contour to true zero-crossings (which always
+      //      have nonzero gradient).
+      //
+      // MIN_GRADIENT = 1e-4 is a visual heuristic, not a derived value. It
+      // must sit well below the per-pixel gradient of the running radiation
+      // field (typically 1e-2 to 1e-1 for normalized norm in the screenshots
+      // we shipped against) and well above float-precision noise (~1e-6 to
+      // 1e-7). The threshold is sensitive to zoom, DPR, wavelength (c), and
+      // the cached normalization peak; if a legitimate zero contour drops out
+      // at zoomed-in views or at c = 3.0, this constant should be lowered
+      // toward 1e-5. Verification at landing was the matrix listed in the
+      // implementation log (oscillating/dipole/hydrogen/water before and
+      // after Stop now, including zoomed-in / c = 3.0 corners).
       float norm         = sumAccel / u_accelPeak;
-      float contourWidth = fwidth(norm) * 1.5;
-      float contourMask  = 1.0 - smoothstep(0.0, contourWidth, abs(norm));
+      float gradient     = fwidth(norm);
+      const float MIN_GRADIENT = 1e-4;
+      float gradientGate = step(MIN_GRADIENT, gradient);
+      float contourWidth = max(gradient * 1.5, 1e-6);
+      float crossingMask = 1.0 - smoothstep(0.0, contourWidth, abs(norm));
+      float contourMask  = crossingMask * gradientGate;
       vec4 contourColor  = vec4(0.88, 0.88, 0.88, 0.85);
       outColor = mix(outColor, contourColor, contourMask);
     } else {

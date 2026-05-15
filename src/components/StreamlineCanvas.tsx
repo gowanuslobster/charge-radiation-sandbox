@@ -29,6 +29,7 @@ import {
 } from 'react';
 import {
   buildStreamlines,
+  buildSinkSideEscapeCompletions,
   buildGhostHistory,
   deriveGhostSeedAnglesFromRealLines,
   selectFieldLineSources,
@@ -355,10 +356,21 @@ export function StreamlineCanvas({
               tracedLines = [];
             }
           } else {
-            // Multi-charge: seed only one polarity per the textbook field-line
-            // rule (see selectFieldLineSources). Opposite-sign charges become
-            // sinks so lines arrive cleanly at their target charge instead of
-            // overshooting through the softened singularity and oscillating.
+            // Multi-charge two-pass policy:
+            //   Pass 1 (base source-to-sink) — seeds one polarity per
+            //     selectFieldLineSources; opposite-sign charges become sinks
+            //     so closed lines terminate cleanly at their target charge
+            //     instead of overshooting through the softened singularity
+            //     and oscillating. Covers all closed lines whose source-
+            //     side trace reaches its sink within the trace budget,
+            //     plus any source-side escape stubs.
+            //   Pass 2 (sink-side escape completions) — only runs in
+            //     net-neutral systems. Adds the sink-side portions of
+            //     closed lines whose pass-1 source-side trace exited the
+            //     finite trace region (padded bounds, maxSteps, or
+            //     under-resolved-trace guard) before reaching its sink.
+            //     Without it, those closed lines render as escape-from-+
+            //     stubs with no visible mirror approaching −.
             const sources = selectFieldLineSources(chargeRuntimes);
             const seedDirSign = sources[0]?.dirSign ?? +1;
             const sinks: Vec2[] = [];
@@ -377,6 +389,9 @@ export function StreamlineCanvas({
                 traceOpts, false, undefined, dirSign, sinks,
               ));
             }
+            allLines.push(...buildSinkSideEscapeCompletions(
+              chargeRuntimes, simTime, config, currentBounds, traceOpts,
+            ));
             tracedLines = showSL ? allLines : [];
           }
         } else {

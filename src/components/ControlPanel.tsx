@@ -72,8 +72,8 @@ const ICON_BASE = 'flex h-7 w-7 items-center justify-center rounded-md text-sm t
 // change that affects the running app so a manual browser check can confirm
 // the live build vintage at a glance. See AGENTS.md "Build-vintage timestamp"
 // for the bump rule.
-const LAST_CODE_CHANGE_STAMP    = '2026-05-15 07:07 EDT';
-const LAST_CODE_CHANGE_DATETIME = '2026-05-15T07:07:01-04:00';
+const LAST_CODE_CHANGE_STAMP    = '2026-05-15 10:46 EDT';
+const LAST_CODE_CHANGE_DATETIME = '2026-05-15T10:46:35-04:00';
 
 export function ControlPanel({
   demoMode, fieldLayer, isPaused, c, stopTriggered, readout,

@@ -3,7 +3,9 @@ import { ChargeHistory } from './chargeHistory';
 import type { ChargeRuntime } from './chargeRuntime';
 import type { SimConfig, Vec2 } from './types';
 import {
+  buildSinkSideEscapeCompletions,
   buildStreamlines,
+  DEFAULT_STREAMLINE_OPTIONS,
   findGhostAnchorOnRealLine,
   selectFieldLineSources,
   shouldStopForUnderresolvedTrace,
@@ -365,6 +367,95 @@ describe('buildStreamlines — oscillating stop-shell regression', () => {
       if (reached) reachedFar++;
     }
     expect(reachedFar).toBeGreaterThanOrEqual(14);
+  });
+});
+
+describe('buildSinkSideEscapeCompletions — multi-charge two-pass policy', () => {
+  const seedR  = DEFAULT_STREAMLINE_OPTIONS.seedOffsetRadius;
+  const seedR2 = seedR * seedR;
+
+  function distSq(a: { x: number; y: number }, b: { x: number; y: number }): number {
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    return dx * dx + dy * dy;
+  }
+
+  it('static dipole: completion lines mirror source-side escape count and pass the filter contract', () => {
+    // Charges placed wide enough that several base-pass + traces escape the
+    // padded trace region before reaching −, leaving room for completions
+    // to mirror them.
+    const pPlusPos: Vec2  = { x: -1, y: 0 };
+    const pMinusPos: Vec2 = { x: +1, y: 0 };
+    const pPlus  = makeStaticChargeRuntime(+1, pPlusPos.x,  pPlusPos.y);
+    const pMinus = makeStaticChargeRuntime(-1, pMinusPos.x, pMinusPos.y);
+    const runtimes = [pPlus, pMinus];
+
+    // Production-mirroring baseline call: + seeded, combined runtimes,
+    // dirSign = +1, sinks = [negativeNewest.pos]. Without the sinks
+    // argument, base-pass + traces could overshoot − and the
+    // "escape from +" count below would be inflated.
+    const baseline = buildStreamlines(
+      pPlusPos, 0, runtimes, config, bounds,
+      undefined, false, undefined, +1, [pMinusPos],
+    );
+
+    const completions = buildSinkSideEscapeCompletions(runtimes, 0, config, bounds);
+
+    // (a) Helper produces at least one completion for this geometry.
+    expect(completions.length).toBeGreaterThanOrEqual(1);
+
+    for (const line of completions) {
+      const farEnd  = line[0];
+      const nearEnd = line[line.length - 1];
+
+      // (b) Filter contract: far end (post-reversal line[0]) is NOT inside
+      //     the + filter radius — proves duplicates were dropped.
+      expect(distSq(farEnd, pPlusPos)).toBeGreaterThan(seedR2);
+
+      // (c) Arrival contract: near end (post-reversal line[last]) is
+      //     inside the − sink radius — proves the line actually
+      //     terminates at − rather than escaping the bounds. Tolerance
+      //     allows for floating-point noise in cos/sin → dx² + dy²: the
+      //     seed itself is placed by construction at exactly seedR from
+      //     the sink, so the boundary case is on the rounding edge.
+      expect(Math.hypot(nearEnd.x - pMinusPos.x, nearEnd.y - pMinusPos.y))
+        .toBeLessThanOrEqual(seedR + 1e-9);
+    }
+
+    // (d) Mirror-symmetry count: in a perfectly symmetric static dipole,
+    //     the number of source-side escape lines (base + traces whose
+    //     endpoint is NOT inside − sink radius) must equal the number of
+    //     sink-side completions (− backward traces whose far end is NOT
+    //     near +). This is the textbook mirror that the old c2097d4
+    //     source-only policy was missing on the screen.
+    const baselineEscapes = baseline.filter(
+      line => distSq(line[line.length - 1], pMinusPos) > seedR2,
+    ).length;
+    expect(completions.length).toBe(baselineEscapes);
+  });
+
+  it('non-neutral system (two positives) returns []', () => {
+    const r1 = makeStaticChargeRuntime(+1, -1, 0);
+    const r2 = makeStaticChargeRuntime(+1, +1, 0);
+    expect(buildSinkSideEscapeCompletions([r1, r2], 0, config, bounds)).toEqual([]);
+  });
+
+  it('single-charge inputs return []', () => {
+    expect(buildSinkSideEscapeCompletions(
+      [makeStaticChargeRuntime(+1)], 0, config, bounds,
+    )).toEqual([]);
+    expect(buildSinkSideEscapeCompletions(
+      [makeStaticChargeRuntime(-1)], 0, config, bounds,
+    )).toEqual([]);
+  });
+
+  it('net-neutral but no positive history (defensive): returns []', () => {
+    // Net charges sum to zero, but the + runtime's history is empty so it
+    // contributes no sink position — the helper must not crash and must
+    // not seed completions targeting a sink that isn't yet placed.
+    const pNeg = makeStaticChargeRuntime(-1, +1, 0);
+    const pPos: ChargeRuntime = { history: new ChargeHistory(), charge: +1 };
+    expect(buildSinkSideEscapeCompletions([pPos, pNeg], 0, config, bounds)).toEqual([]);
   });
 });
 

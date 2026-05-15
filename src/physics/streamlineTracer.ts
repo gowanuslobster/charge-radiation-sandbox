@@ -431,22 +431,28 @@ export function buildStreamlines(
 }
 
 /**
- * Pick which charges to seed field lines from in a multi-charge configuration.
+ * Pick which charges to seed field lines from in the BASE source-to-sink
+ * trace pass of the multi-charge field-line policy.
  *
- * Convention: a 2D field line begins on a + charge and ends on a − charge or
- * at infinity. Seeding only the + sources reproduces the textbook line set
- * with no double-coverage of closed dipole lines (which the previous
- * per-charge seeding policy traced once from each end). If the system has no
- * + charges, the helper falls back to seeding the − charges with `dirSign=-1`
- * so each line traces outward against E from its source — the rendered
- * polyline is then reversed in `buildStreamlines` so tick-marks point in the
- * local E direction, matching the existing single-charge convention.
+ * Convention: a 2D field line begins on a + charge and ends on a − charge.
+ * Seeding only the + sources for this pass avoids the perimeter clustering
+ * an earlier per-charge seeding policy produced by tracing each closed line
+ * once from each end. If the system has no + charges, the helper falls back
+ * to seeding the − charges with `dirSign=-1` so each line traces outward
+ * against E from its source — the rendered polyline is then reversed in
+ * `buildStreamlines` so tick-marks point in the local E direction, matching
+ * the existing single-charge convention.
  *
- * Flux-balance note for the water modes: with `q_O = −0.8` and
- * `q_H+ = q_H- = +0.4`, total positive flux equals total negative flux, so
- * seeding the two hydrogens captures the full field-line set without
- * double-tracing the closed lines that terminate on the oxygen. For dipole
- * and hydrogen the polarity-only rule is sufficient on its own.
+ * The base pass alone does NOT render every visible piece of the field-line
+ * structure: in a net-neutral multi-charge system, closed lines whose +
+ * source-side trace exits the finite trace region (padded view bounds,
+ * `maxSteps`, or under-resolved-trace guard) before reaching a − sink show
+ * up only as escape-from-+ stubs with no visible approach to −. The
+ * companion helper `buildSinkSideEscapeCompletions` draws those missing
+ * sink-side portions; together the two passes form the multi-charge field-
+ * line policy used by `StreamlineCanvas`. For dipole, hydrogen, and the
+ * water modes the two passes give symmetric coverage; for single-polarity
+ * systems only this base pass runs.
  *
  * Returns an empty array when the input is empty or all charges are zero.
  */
@@ -462,6 +468,96 @@ export function selectFieldLineSources(
     return negatives.map(runtime => ({ runtime, dirSign: -1 }));
   }
   return [];
+}
+
+/**
+ * Completes the sink-side portions of source-traced field lines whose
+ * source-side polyline exited the finite trace region (padded view bounds,
+ * `maxSteps`, or under-resolved-trace guard) before reaching its sink.
+ * Without this pass, those lines appear in the rendered set as
+ * escape-from-+ stubs with no visible mirror approaching −.
+ *
+ * Operates only on net-neutral multi-charge systems; for non-neutral or
+ * single-charge systems returns `[]`. Each kept polyline ends inside
+ * `seedOffsetRadius` of a − charge and starts (after the `dirSign < 0`
+ * reversal in `buildStreamlines`) far from any + — which identifies a
+ * sink-side completion whose source-side counterpart did not reach this
+ * sink within the finite trace budget.
+ *
+ * Mechanism: for each − charge, seed `seedCount` lines at `seedOffsetRadius`
+ * around its newest position and trace with `dirSign = -1` (outward against
+ * the local E field at −, since the field points inward there). The
+ * positive newest positions are passed as `sinks` so closed `−→+` traces
+ * cleanly terminate inside `seedOffsetRadius` of a +. The post-trace filter
+ * then drops every polyline whose far end sits inside that radius — those
+ * are the closed lines already drawn by the base source pass; keeping them
+ * would re-introduce the perimeter clustering that the source-only seeding
+ * policy was added to fix. The lines that survive the filter are the
+ * sink-side completions. Polyline orientation is set by the `dirSign < 0`
+ * reversal inside `buildStreamlines`, so the rendered stroke direction
+ * matches local E (incoming to −) and the existing tick-mark renderer
+ * draws arrows pointing INTO the − charge.
+ *
+ * Forwards `opts` so a stopped-shell tracing policy
+ * (`enableUnderresolvedGuard: false`) propagates correctly when called
+ * from a stopped frame.
+ */
+export function buildSinkSideEscapeCompletions(
+  chargeRuntimes: ChargeRuntime[],
+  observationTime: number,
+  config: SimConfig,
+  bounds: TraceBounds,
+  opts?: Partial<StreamlineOptions>,
+): Vec2[][] {
+  if (chargeRuntimes.length < 2) return [];
+
+  let totalCharge = 0;
+  for (const r of chargeRuntimes) totalCharge += r.charge;
+  if (Math.abs(totalCharge) > 1e-6) return [];
+
+  // Positive newest positions serve two purposes: as sinks for the backward
+  // trace (so closed −→+ paths terminate cleanly at +), and as filter
+  // targets (so those closed-line duplicates can be dropped post-trace).
+  const positivePositions: Vec2[] = [];
+  for (const r of chargeRuntimes) {
+    if (r.charge > 0 && !r.history.isEmpty()) {
+      positivePositions.push(r.history.newest()!.pos);
+    }
+  }
+  if (positivePositions.length === 0) return [];
+
+  const options: StreamlineOptions = { ...DEFAULT_STREAMLINE_OPTIONS, ...opts };
+  const filterRadiusSq = options.seedOffsetRadius * options.seedOffsetRadius;
+
+  const lines: Vec2[][] = [];
+  for (const r of chargeRuntimes) {
+    if (r.charge >= 0 || r.history.isEmpty()) continue;
+    const sinkPos = r.history.newest()!.pos;
+
+    const traced = buildStreamlines(
+      sinkPos, observationTime, chargeRuntimes, config, bounds,
+      opts, false, undefined, -1, positivePositions,
+    );
+
+    for (const line of traced) {
+      // After the dirSign<0 reversal inside buildStreamlines, line[0] is
+      // the "far" end of the original backward trace from −. If that far
+      // end is inside seedOffsetRadius of any +, the trace closed on a +
+      // and the polyline is a duplicate of a base-pass line — drop it.
+      const farEnd = line[0];
+      let nearPositive = false;
+      for (const p of positivePositions) {
+        const dx = farEnd.x - p.x;
+        const dy = farEnd.y - p.y;
+        if (dx * dx + dy * dy <= filterRadiusSq) {
+          nearPositive = true;
+          break;
+        }
+      }
+      if (!nearPositive) lines.push(line);
+    }
+  }
+  return lines;
 }
 
 function analyticGhostSeedAngle(realSeedAngle: number, ghostVel: Vec2, c: number): number {

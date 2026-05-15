@@ -199,11 +199,15 @@ describe('buildStreamlines — moving_charge stop-shell regression', () => {
     // Rest position of the stopped charge.
     const xStop = V * T_trig + V * T_BRAKE / 2;
 
-    // Shell-margin distance: one shell-thickness past the leading shell
-    // edge. Measured from the stopped charge so the fixture stays valid if
-    // T_trig or V change.
-    const shellOuterRadius = cVal * (t_obs - T_trig);
-    const shellMargin      = shellOuterRadius + 2 * cVal * T_BRAKE;
+    // Shell-margin distance: two brake-window thicknesses past the leading
+    // edge — a deliberately conservative margin so the assertion is
+    // comfortably outside the radiation band. The shell band itself spans
+    // [c·(t_obs − brakeEnd), c·(t_obs − T_trig)] and so has thickness
+    // c·T_BRAKE; the assertion adds 2·c·T_BRAKE past the outer edge. All
+    // distances are measured from the rest position of the stopped charge
+    // so the fixture stays valid if T_trig or V change.
+    const shellLeadingEdgeRadius = cVal * (t_obs - T_trig);
+    const shellMargin            = shellLeadingEdgeRadius + 2 * cVal * T_BRAKE;
 
     // Cover retarded-time look-back from the farthest in-bounds trace
     // point with margin to spare.
@@ -265,6 +269,105 @@ describe('buildStreamlines — moving_charge stop-shell regression', () => {
   });
 });
 
+describe('buildStreamlines — oscillating stop-shell regression', () => {
+  // Tracer-level fixture mirroring an oscillating-mode sudden-stop history
+  // (sinusoidal motion until T_trig, Hermite-cubic brake to rest over
+  // T_BRAKE, then at rest at the equilibrium origin). Constructed from
+  // primitives so the tracer test stays free of demoModes coupling.
+  //
+  // Pins the user-visible behavior of the stopped-shell tracing policy
+  // adopted by StreamlineCanvas: when a mode has been stopped, the
+  // under-resolved-trace guard is disabled so lines can cross the
+  // finite-thickness radiation shell (where the LW acceleration-term field
+  // is mostly tangential and would otherwise trip the tortuosity branch
+  // before the line emerges on the outside). An adaptive future guard
+  // that hits the same target through a different mechanism would still
+  // pass — this test pins the user-visible reach, not the particular
+  // guard parameters.
+  it('lines reach past shell margin under stopped-shell tracing policy (guard off)', () => {
+    // Match production OSCILLATING_AMPLITUDE / OSCILLATING_OMEGA /
+    // SUDDEN_STOP_T_BRAKE; see src/physics/demoModes.ts.
+    const A       = 0.125;
+    const omega   = 4.0;
+    const T_BRAKE = 0.2;
+    const T_trig  = 1.0;
+    const t_obs   = 3.0;
+    const cVal    = 1.0;
+
+    // Equilibrium / rest position of the oscillating charge is the origin.
+    const xRest = 0;
+    const yRest = 0;
+
+    // Shell-margin distance: two brake-window thicknesses past the leading
+    // edge — same conservative margin as the moving-charge fixture above so
+    // both tests share a single notion of "lines reach past the shell". The
+    // shell band itself spans [c·(t_obs − brakeEnd), c·(t_obs − T_trig)]
+    // and so has thickness c·T_BRAKE; the assertion adds 2·c·T_BRAKE past
+    // the outer edge. Measured from the rest position.
+    const shellLeadingEdgeRadius = cVal * (t_obs - T_trig);
+    const shellMargin            = shellLeadingEdgeRadius + 2 * cVal * T_BRAKE;
+
+    const history = new ChargeHistory();
+    const dt = 0.025;
+    const tStart = -10;
+    const N = Math.round((t_obs - tStart) / dt);
+    const brakeEnd = T_trig + T_BRAKE;
+    for (let i = 0; i <= N; i++) {
+      const t = tStart + i * dt;
+      let pos: Vec2, vel: Vec2, accel: Vec2;
+      if (t < T_trig) {
+        // Phase 1 — pre-trigger sinusoidal motion along x.
+        pos   = { x: A * Math.sin(omega * t),                    y: 0 };
+        vel   = { x: A * omega * Math.cos(omega * t),            y: 0 };
+        accel = { x: -A * omega * omega * Math.sin(omega * t),   y: 0 };
+      } else if (t < brakeEnd) {
+        // Phase 2 — Hermite cubic brake in the scalar amplitude.
+        const tau   = (t - T_trig) / T_BRAKE;
+        const s0    = A * Math.sin(omega * T_trig);
+        const sDot0 = A * omega * Math.cos(omega * T_trig);
+        const f   = s0    * (2 * tau ** 3 - 3 * tau ** 2 + 1)
+                  + sDot0 * T_BRAKE * (tau ** 3 - 2 * tau ** 2 + tau);
+        const fp  = s0    * (6 * tau ** 2 - 6 * tau)
+                  + sDot0 * T_BRAKE * (3 * tau ** 2 - 4 * tau + 1);
+        const fpp = s0    * (12 * tau - 6)
+                  + sDot0 * T_BRAKE * (6 * tau - 4);
+        pos   = { x: f,                          y: 0 };
+        vel   = { x: fp / T_BRAKE,               y: 0 };
+        accel = { x: fpp / (T_BRAKE * T_BRAKE),  y: 0 };
+      } else {
+        // Phase 3 — at rest at equilibrium.
+        pos   = { x: xRest, y: yRest };
+        vel   = { x: 0,     y: 0 };
+        accel = { x: 0,     y: 0 };
+      }
+      history.recordState({ t, pos, vel, accel });
+    }
+
+    const runtime: ChargeRuntime = { history, charge: +1 };
+    const cfg: SimConfig = { c: cVal, softening: 0.01 };
+    const traceBounds = { minX: -3, maxX: 3, minY: -3, maxY: 3 };
+    const seedCount = 16;
+
+    // Match the production policy: StreamlineCanvas disables the guard for
+    // any stopped-state frame so the line can traverse the radiation shell.
+    const lines = buildStreamlines(
+      { x: xRest, y: yRest }, t_obs, [runtime], cfg, traceBounds,
+      { enableUnderresolvedGuard: false, seedCount },
+    );
+
+    expect(lines.length).toBeGreaterThanOrEqual(14);
+
+    let reachedFar = 0;
+    for (const line of lines) {
+      const reached = line.some(p =>
+        Math.hypot(p.x - xRest, p.y - yRest) >= shellMargin,
+      );
+      if (reached) reachedFar++;
+    }
+    expect(reachedFar).toBeGreaterThanOrEqual(14);
+  });
+});
+
 describe('shouldStopForUnderresolvedTrace — numerical validity guard', () => {
   const STEP = 0.035;
 
@@ -304,18 +407,29 @@ describe('shouldStopForUnderresolvedTrace — numerical validity guard', () => {
     expect(shouldStopForUnderresolvedTrace(points, current, next, STEP)).toBe(false);
   });
 
-  it('hard kink: stops via dot threshold (no tortuosity history needed)', () => {
-    // Two prior points along +x then a 90° turn into +y. Tortuosity branch is
-    // inactive because points.length < TORTUOSITY_WINDOW (=8).
+  it('near-reversal kink: stops via dot threshold (no tortuosity history needed)', () => {
+    // Two prior points along +x then a 135° turn (well past the −0.5 dot
+    // threshold; cos 135° ≈ −0.707). The tortuosity branch is inactive
+    // because points.length < TORTUOSITY_WINDOW (=8).
+    const points: Vec2[] = [{ x: -STEP, y: 0 }, { x: 0, y: 0 }];
+    const current = points[1];
+    const next = { x: -STEP * Math.SQRT1_2, y: STEP * Math.SQRT1_2 };
+    expect(shouldStopForUnderresolvedTrace(points, current, next, STEP)).toBe(true);
+  });
+
+  it('moderate sharp turn (90°): does NOT stop (passes the −0.5 kink threshold)', () => {
+    // Locks the new threshold semantics: a 90° turn is a legitimate sharp
+    // physical change (e.g. a radiation-band crossing) and must pass the
+    // guard. cos 90° = 0, well above the −0.5 dot threshold.
     const points: Vec2[] = [{ x: -STEP, y: 0 }, { x: 0, y: 0 }];
     const current = points[1];
     const next = { x: 0, y: STEP };
-    expect(shouldStopForUnderresolvedTrace(points, current, next, STEP)).toBe(true);
+    expect(shouldStopForUnderresolvedTrace(points, current, next, STEP)).toBe(false);
   });
 
   it('tight orbit: stops via tortuosity even when every per-step turn is below the kink threshold', () => {
     // 8 points on a tight circle where each per-step turn is 40°
-    // (dot ≈ cos 40° ≈ 0.766, well above the 0.5 kink threshold).
+    // (dot ≈ cos 40° ≈ 0.766, far above the −0.5 kink threshold).
     // Total arc over the 8-step window: 320°, chord/arc ≈ 0.12 ≪ 0.42.
     const dThetaTarget = (40 * Math.PI) / 180;
     const R = STEP / (2 * Math.sin(dThetaTarget / 2));
@@ -333,7 +447,7 @@ describe('shouldStopForUnderresolvedTrace — numerical validity guard', () => {
       if (!bMagPrev) continue;
       const dot = (a.x * bMagPrev.x + a.y * bMagPrev.y)
         / (Math.hypot(a.x, a.y) * Math.hypot(bMagPrev.x, bMagPrev.y));
-      expect(dot).toBeGreaterThan(0.5);
+      expect(dot).toBeGreaterThan(-0.5);
     }
     // Also check the candidate segment's per-step dot is above the kink threshold,
     // so the assertion below is unambiguously about the tortuosity branch.
@@ -343,7 +457,7 @@ describe('shouldStopForUnderresolvedTrace — numerical validity guard', () => {
     const seg2 = { x: next.x - last.x, y: next.y - last.y };
     const dotLast = (seg1.x * seg2.x + seg1.y * seg2.y)
       / (Math.hypot(seg1.x, seg1.y) * Math.hypot(seg2.x, seg2.y));
-    expect(dotLast).toBeGreaterThan(0.5);
+    expect(dotLast).toBeGreaterThan(-0.5);
 
     expect(shouldStopForUnderresolvedTrace(points, current, next, STEP)).toBe(true);
   });
@@ -391,11 +505,15 @@ describe('shouldStopForUnderresolvedTrace — numerical validity guard', () => {
     const next3 = { x: R * Math.cos(nextTheta3), y: R * Math.sin(nextTheta3) };
     expect(shouldStopForUnderresolvedTrace(pts3, current3, next3, STEP)).toBe(false);
 
-    // (d) Length-3 with a 90° kink → true (kink branch is active at length ≥ 2).
+    // (d) Length-3 with a 135° near-reversal kink → true (kink branch is
+    //     active at length ≥ 2). Prior segment heads +y; candidate segment
+    //     heads (−√½, −√½), giving dot ≈ −0.707 < −0.5.
     const kinkPts: Vec2[] = [{ x: -STEP, y: 0 }, { x: 0, y: 0 }, { x: 0, y: STEP }];
+    const dx = -STEP * Math.SQRT1_2;
+    const dy = -STEP * Math.SQRT1_2;
     expect(
       shouldStopForUnderresolvedTrace(
-        kinkPts, kinkPts[2], { x: -STEP, y: STEP }, STEP,
+        kinkPts, kinkPts[2], { x: kinkPts[2].x + dx, y: kinkPts[2].y + dy }, STEP,
       ),
     ).toBe(true);
 

@@ -64,6 +64,24 @@ type Props = {
    * across the radiation shell does not truncate real or ghost lines.
    */
   demoMode: DemoMode;
+  /**
+   * Ref pointing at a flag the simulation tick flips to `true` once it has
+   * begun writing stop-aware (brake) history into each charge's buffer.
+   * The brake-end anchor itself is written later, by the first subsequent
+   * tick that straddles brakeEnd, so this flag may flip true while only
+   * the early interior brake substeps exist — that is intentional and
+   * sufficient for tracing-policy purposes.
+   *
+   * The streamline overlay reads this ref directly (rather than mirroring
+   * the React-state Stop-now flag) so it does NOT retrace on the click
+   * event itself — paused Stop-now stays visually inert until playback
+   * resumes and the tick begins writing the shell, after which the
+   * overlay retraces under the stopped-shell tracing policy (under-
+   * resolved guard disabled so lines can cross the finite-thickness shell
+   * whose tangential acceleration-band geometry would otherwise trip the
+   * tortuosity branch and truncate lines mid-shell).
+   */
+  stoppedShellHistoryRecordedRef: RefObject<boolean>;
   style?: CSSProperties;
 };
 
@@ -176,12 +194,14 @@ export function StreamlineCanvas({
   ghostPosRef,
   ghostVel,
   demoMode,
+  stoppedShellHistoryRecordedRef,
   style,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Mirror React props into refs so the long-lived RAF closure reads fresh values
   // without needing to restart the effect when props change.
+  // (stoppedShellHistoryRecordedRef is already a ref — no mirror needed.)
   const boundsRef             = useRef(bounds);
   const showStreamlinesRef    = useRef(showStreamlines);
   const showGhostStreamlinesRef = useRef(showGhostStreamlines);
@@ -209,16 +229,23 @@ export function StreamlineCanvas({
     // Cache keys: retrace when any physics input changes.
     // Bounds span is also tracked: a significant zoom-out invalidates the cache
     // because the padded clip region at trace-time may no longer extend far enough.
-    let lastEpoch       = -1;
-    let lastSimTime     = NaN;
-    let lastShowSL      = false;
-    let lastShowGSL     = false;
-    let lastGhostX      = NaN;
-    let lastGhostY      = NaN;
-    let lastSpanX       = 0;
-    let lastSpanY       = 0;
-    let lastC           = NaN;
-    let lastChargeCount = 0;
+    let lastEpoch          = -1;
+    let lastSimTime        = NaN;
+    let lastShowSL         = false;
+    let lastShowGSL        = false;
+    let lastGhostX         = NaN;
+    let lastGhostY         = NaN;
+    let lastSpanX          = 0;
+    let lastSpanY          = 0;
+    let lastC              = NaN;
+    let lastChargeCount    = 0;
+    // Cache key for the stopped-shell tracing policy. Mirrors the recorded-
+    // history flag (NOT the React stopTriggered button state). Flips inside
+    // a sim tick, after recordStoppedFrame has run and the brake substeps
+    // are in history; the next streamline frame sees the change and
+    // retraces under the stopped-shell policy. A paused Stop-now click does
+    // NOT change this — the tick is what writes the shell.
+    let lastStoppedShellHistoryRecorded = false;
 
     // DPR-aware canvas sizing.
     const ro = new ResizeObserver(() => {
@@ -273,30 +300,39 @@ export function StreamlineCanvas({
           (spanY - lastSpanY) / lastSpanY > 0.3
         );
 
+      const stoppedShellHistoryRecorded = stoppedShellHistoryRecordedRef.current ?? false;
       const needsRetrace =
-        epoch   !== lastEpoch   ||
-        simTime !== lastSimTime ||
-        showSL  !== lastShowSL  ||
-        showGSL !== lastShowGSL ||
-        gx !== lastGhostX       ||
-        gy !== lastGhostY       ||
-        spanExpandedLarge       ||
-        config.c !== lastC      ||
-        chargeRuntimes.length !== lastChargeCount;
+        epoch          !== lastEpoch          ||
+        simTime        !== lastSimTime        ||
+        showSL         !== lastShowSL         ||
+        showGSL        !== lastShowGSL        ||
+        gx             !== lastGhostX         ||
+        gy             !== lastGhostY         ||
+        spanExpandedLarge                     ||
+        config.c       !== lastC              ||
+        chargeRuntimes.length !== lastChargeCount ||
+        stoppedShellHistoryRecorded !== lastStoppedShellHistoryRecorded;
 
       if (needsRetrace) {
         let realLinesForGhost: Vec2[][] = [];
 
-        // moving_charge has a finite-thickness radiation shell across which
-        // the local E direction can rotate by more than the under-resolved
-        // guard's per-step kink threshold. That rotation is a legitimate
-        // physical discontinuity (inner Coulomb field vs. outer extrapolated
-        // velocity field), not numerical spiraling, so the guard would
-        // wrongly truncate real and ghost lines at the shell. All other
-        // modes inherit the default guard-on policy from
-        // DEFAULT_STREAMLINE_OPTIONS.
+        // Disable the under-resolved-trace guard for any frame whose
+        // history actually contains a finite-thickness radiation shell:
+        //   • moving_charge always (its constant-velocity-then-brake
+        //     kinematics produce the inner-Coulomb / outer-extrapolated
+        //     direction discontinuity even before the Stop trigger fires,
+        //     because the trigger IS the only way the mode ever stops).
+        //   • Any other mode once the simulation tick has actually
+        //     recorded the brake event into history (signalled by the
+        //     stoppedShellHistoryRecordedRef flip — NOT by the React
+        //     stopTriggered button state, which flips on click and would
+        //     otherwise change the policy before the shell exists).
+        // Pre-stop periodic modes (oscillating, dipole, hydrogen, water_*)
+        // continue to inherit the default guard-on policy from
+        // DEFAULT_STREAMLINE_OPTIONS so the original spiraling-near-saddle
+        // failure mode that a135e95 fixed remains protected.
         const traceOpts: Partial<StreamlineOptions> | undefined =
-          demoModeRef.current === 'moving_charge'
+          demoModeRef.current === 'moving_charge' || stoppedShellHistoryRecorded
             ? { enableUnderresolvedGuard: false }
             : undefined;
 
@@ -396,16 +432,17 @@ export function StreamlineCanvas({
           tracedGhostLines = [];
         }
 
-        lastEpoch       = epoch;
-        lastSimTime     = simTime;
-        lastShowSL      = showSL;
-        lastShowGSL     = showGSL;
-        lastGhostX      = gx;
-        lastGhostY      = gy;
-        lastSpanX       = spanX;
-        lastSpanY       = spanY;
-        lastC           = config.c;
-        lastChargeCount = chargeRuntimes.length;
+        lastEpoch                       = epoch;
+        lastSimTime                     = simTime;
+        lastShowSL                      = showSL;
+        lastShowGSL                     = showGSL;
+        lastGhostX                      = gx;
+        lastGhostY                      = gy;
+        lastSpanX                       = spanX;
+        lastSpanY                       = spanY;
+        lastC                           = config.c;
+        lastChargeCount                 = chargeRuntimes.length;
+        lastStoppedShellHistoryRecorded = stoppedShellHistoryRecorded;
       }
 
       // Draw to the DPR-scaled canvas.

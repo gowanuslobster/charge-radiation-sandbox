@@ -99,44 +99,52 @@ function inSinkRadius(pt: Vec2, sinks: Vec2[] | undefined, radius: number): bool
 // geometry indicates RK4 with the current `stepSize` is no longer resolving
 // the field.
 //
-// Two complementary detectors:
-//   • Hard kink — the per-step angle between the last accepted segment and
-//     the proposed segment exceeds KINK_DOT_THRESHOLD (dot < 0.5 ↔ turn
-//     > 60°). Catches the one-step overshoot of a saddle.
-//   • Tortuosity — the chord from `next` back to the point WINDOW segments
-//     ago is short relative to the known arc length over that window.
-//     Catches slow tight winding where each individual per-step turn is
-//     below the kink threshold but the line is orbiting.
+// Two detectors, both visual / numerical heuristics — not physical
+// impossibility claims. Real time-dependent LW fields can have legitimate
+// sharp local direction changes near radiation features and nulls; the
+// thresholds are tuned to allow those through and only flag geometry that
+// is clearly the under-resolved-orbit failure mode.
 //
-// These constants are CONSERVATIVE VISUAL / NUMERICAL guards, not proven
-// physics classifiers. They are calibrated so well-resolved radiation
-// closed loops (≈ 22 steps / revolution at the default DEFAULT_STREAMLINE_
-// OPTIONS for water modes at c = 1, ω = 4) pass through unchanged; only
-// orbits that wind through more than ~2/3 of a revolution within an
-// 8-step window are flagged.
-const KINK_DOT_THRESHOLD  = 0.5;
+//   • Tortuosity — primary defense. The chord from `next` back to the
+//     point WINDOW segments ago is short relative to the known arc length
+//     over that window (chord/arc < MIN_CHORD_FRACTION ↔ ~235° accumulated
+//     arc in 8 steps). Catches the slow tight winding pattern that the
+//     spiral failure mode produces, while well-resolved closed loops
+//     (≈ 22+ steps / revolution at the default DEFAULT_STREAMLINE_OPTIONS
+//     for water modes at c = 1, ω = 4) pass unchanged.
+//
+//   • Near-reversal kink — secondary. The per-step angle between the last
+//     accepted segment and the proposed segment exceeds 120° (dot < -0.5).
+//     Catches the "trace bounced back" artifact of RK4 overshooting a
+//     saddle and reversing direction within a single step. The threshold
+//     is intentionally permissive: ordinary 60–120° physical turns
+//     (radiation-band crossings, sudden-stop shells) pass through, and
+//     only effectively-reversing rotations are flagged.
+const KINK_DOT_THRESHOLD  = -0.5;
 const TORTUOSITY_WINDOW   = 8;
 const MIN_CHORD_FRACTION  = 0.42;
 
 /**
- * Numerical validity guard for fixed-step streamline tracing. Returns true
- * when the proposed next step indicates the trace is no longer resolving the
- * underlying field — either because one step turned through a large angle
- * (overshooting a saddle / null) or because the line has been winding
- * tightly around an under-resolved closed orbit.
- *
- * This is a numerical check, not a physics rule: detached / closed E-field
- * loops are legitimate (`curl E = −∂B/∂t` allows them in source-free space)
- * and well-resolved loops pass this guard unchanged. The guard only fires
- * when local geometry shows that RK4 with the current `stepSize` can no
- * longer be trusted.
+ * Visual / numerical heuristic guard for fixed-step streamline tracing.
+ * Returns true when the proposed next step indicates the trace is no
+ * longer resolving the underlying field. Both branches are heuristics,
+ * not physical-impossibility classifiers: detached / closed E-field loops
+ * are legitimate (`curl E = −∂B/∂t` allows them in source-free space) and
+ * real LW fields can have sharp local direction changes near radiation
+ * features and nulls. The thresholds are tuned to flag only the under-
+ * resolved-orbit failure mode and near-reversal/bounce artifacts.
  *
  * Thresholds:
- *   • KINK_DOT_THRESHOLD = 0.5 — per-step rotation > 60° is interpreted as
- *     an under-resolved saddle/null overshoot.
- *   • Tortuosity over TORTUOSITY_WINDOW = 8 steps: chord/arc < 0.42
- *     corresponds to roughly 235–240° of arc within the window. (The
- *     exact crossover follows `chord/arc = 2 sin(θ/2) / θ`.)
+ *   • Tortuosity (primary) over TORTUOSITY_WINDOW = 8 steps: chord/arc
+ *     < 0.42 corresponds to roughly 235–240° of arc within the window.
+ *     (Crossover follows `chord/arc = 2 sin(θ/2) / θ`.) Well-resolved
+ *     closed loops (~22+ steps/revolution at the default
+ *     DEFAULT_STREAMLINE_OPTIONS) pass unchanged.
+ *   • KINK_DOT_THRESHOLD = -0.5 (secondary) — per-step rotation > 120° is
+ *     interpreted as a near-reversal/bounce, the artifact of RK4
+ *     overshooting a saddle and reversing direction within a single step.
+ *     Ordinary 60–120° physical turns (radiation-band crossings,
+ *     sudden-stop shells) pass through.
  *
  * Cheap O(1): mul/add/sqrt/dot only — no acos/atan2 in the hot loop.
  *
@@ -157,8 +165,8 @@ export function shouldStopForUnderresolvedTrace(
   next: Vec2,
   stepSize: number,
 ): boolean {
-  // Hard kink — needs the previous accepted segment, so points.length >= 2
-  // (points[len-2] → current is the previous segment).
+  // Near-reversal kink — needs the previous accepted segment, so
+  // points.length >= 2 (points[len-2] → current is the previous segment).
   if (points.length >= 2) {
     const prev = points[points.length - 2];
     const ax = current.x - prev.x;
@@ -317,7 +325,8 @@ function traceSingleLine(
 
     // Sink-entry takes strict priority over the under-resolved guard so a
     // line that bends sharply right as it arrives at a sink still terminates
-    // at the sink point rather than being rejected by the kink test.
+    // at the sink point rather than being rejected by the kink/tortuosity
+    // heuristic.
     const nextEntersSink = inSinkRadius(next, sinks, opts.seedOffsetRadius);
     if (!nextEntersSink &&
         opts.enableUnderresolvedGuard &&

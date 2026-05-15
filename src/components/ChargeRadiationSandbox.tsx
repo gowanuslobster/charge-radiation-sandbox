@@ -191,6 +191,25 @@ export function ChargeRadiationSandbox() {
   // non-null = sim time when the student clicked Stop now (= brakeStartTime).
   const stopTriggerTimeRef = useRef<number | null>(null);
 
+  // stoppedShellHistoryRecordedRef: false until the simulation tick has
+  // actually called recordStoppedFrame and begun writing stop-aware (brake)
+  // history into each charge's buffer. The brake-end anchor itself is only
+  // written by whatever later tick first straddles brakeEnd (see
+  // brakingSubstepTimes), so this flag may flip true while only the early
+  // interior brake substeps exist. That is sufficient for the streamline
+  // overlay: by the time a paused frame is observed, the LW retarded-time
+  // solver finds whatever brake history has been recorded so far, and the
+  // streamline overlay needs the relaxed tracing policy regardless of
+  // whether the brake-end anchor has landed yet.
+  // Distinct from stopTriggerTimeRef !== null (which flips on click)
+  // because the streamline overlay's tracing policy must NOT change until
+  // the shell actually exists in the history — clicking Stop now while
+  // paused leaves the simulation idle, so the tick never runs and the
+  // shell never materializes until playback resumes. Read by
+  // StreamlineCanvas as the gating signal for the stopped-shell tracing
+  // policy. Cleared alongside stopTriggerTimeRef.
+  const stoppedShellHistoryRecordedRef = useRef<boolean>(false);
+
   // showGhostRef: mirrors showGhost state for synchronous read by the tick.
   const showGhostRef = useRef(false);
   useEffect(() => { showGhostRef.current = showGhost; }, [showGhost]);
@@ -282,6 +301,7 @@ export function ChargeRadiationSandbox() {
   const reseed = useCallback((mode: DemoMode, db: WorldBounds) => {
     // Clear moving_charge trigger state unconditionally on every reseed.
     stopTriggerTimeRef.current = null;
+    stoppedShellHistoryRecordedRef.current = false;
     ghostPosRef.current = null;
 
     // Reset camera so reseedBoundsRef is always source-centered.
@@ -571,6 +591,7 @@ export function ChargeRadiationSandbox() {
     lastWallTimeRef.current = performance.now();
     simEpochRef.current += 1;
     stopTriggerTimeRef.current = null;
+    stoppedShellHistoryRecordedRef.current = false;
     ghostPosRef.current = null;
     reseedBoundsRef.current = null;
 
@@ -672,6 +693,15 @@ export function ChargeRadiationSandbox() {
           viewBoundsRef.current,
           configRef.current,
         );
+        // The history has begun receiving brake-phase entries; signal the
+        // streamline overlay it can switch to the stopped-shell tracing
+        // policy. The brake-end anchor specifically is only written by a
+        // later tick that straddles brakeEnd (see brakingSubstepTimes),
+        // but the policy switch does not need to wait for it — the
+        // overlay's purpose is to render the partially-recorded shell as
+        // it materializes. Idempotent and monotonic until the next
+        // reseed/reset.
+        stoppedShellHistoryRecordedRef.current = true;
         // moving_charge ghost overlay (only visible in moving_charge mode):
         // marker tracks the would-have-been position of the still-moving charge.
         if (mode === 'moving_charge' && showGhostRef.current) {
@@ -844,6 +874,8 @@ export function ChargeRadiationSandbox() {
         showGhostStreamlines={showGhostStreamlines}
         ghostPosRef={ghostPosRef}
         ghostVel={demoMode === 'moving_charge' ? { x: SUDDEN_STOP_V, y: 0 } : undefined}
+        demoMode={demoMode}
+        stoppedShellHistoryRecordedRef={stoppedShellHistoryRecordedRef}
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 17 }}
       />
       {(demoMode === 'moving_charge' || demoMode === 'oscillating' || demoMode === 'dipole' || demoMode === 'hydrogen' || demoMode === 'draggable' || demoMode === 'water_stretch' || demoMode === 'water_bend' || demoMode === 'water_asym_stretch') && (

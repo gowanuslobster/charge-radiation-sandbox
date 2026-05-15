@@ -30,6 +30,15 @@ export type StreamlineOptions = {
   seedOffsetRadius: number;
   /** Number of evenly-spaced seeds placed radially around the charge. */
   seedCount: number;
+  /**
+   * Whether `traceSingleLine` consults `shouldStopForUnderresolvedTrace` at
+   * each candidate step. Default true: protects periodic-radiation-mode
+   * topologies (oscillating, dipole, hydrogen, water modes) where field lines
+   * can wind around an under-resolved null. Callers that trace through a
+   * legitimate sharp-but-non-spiraling discontinuity — notably the
+   * moving_charge radiation shell — should explicitly pass `false`.
+   */
+  enableUnderresolvedGuard: boolean;
 };
 
 export const DEFAULT_STREAMLINE_OPTIONS: StreamlineOptions = {
@@ -38,6 +47,7 @@ export const DEFAULT_STREAMLINE_OPTIONS: StreamlineOptions = {
   minFieldMagnitude: 0.002,
   seedOffsetRadius: 0.12,
   seedCount: 16,
+  enableUnderresolvedGuard: true,
 };
 
 // Ghost-line alignment heuristics for the sudden-stop demo.
@@ -89,44 +99,52 @@ function inSinkRadius(pt: Vec2, sinks: Vec2[] | undefined, radius: number): bool
 // geometry indicates RK4 with the current `stepSize` is no longer resolving
 // the field.
 //
-// Two complementary detectors:
-//   • Hard kink — the per-step angle between the last accepted segment and
-//     the proposed segment exceeds KINK_DOT_THRESHOLD (dot < 0.5 ↔ turn
-//     > 60°). Catches the one-step overshoot of a saddle.
-//   • Tortuosity — the chord from `next` back to the point WINDOW segments
-//     ago is short relative to the known arc length over that window.
-//     Catches slow tight winding where each individual per-step turn is
-//     below the kink threshold but the line is orbiting.
+// Two detectors, both visual / numerical heuristics — not physical
+// impossibility claims. Real time-dependent LW fields can have legitimate
+// sharp local direction changes near radiation features and nulls; the
+// thresholds are tuned to allow those through and only flag geometry that
+// is clearly the under-resolved-orbit failure mode.
 //
-// These constants are CONSERVATIVE VISUAL / NUMERICAL guards, not proven
-// physics classifiers. They are calibrated so well-resolved radiation
-// closed loops (≈ 22 steps / revolution at the default DEFAULT_STREAMLINE_
-// OPTIONS for water modes at c = 1, ω = 4) pass through unchanged; only
-// orbits that wind through more than ~2/3 of a revolution within an
-// 8-step window are flagged.
-const KINK_DOT_THRESHOLD  = 0.5;
+//   • Tortuosity — primary defense. The chord from `next` back to the
+//     point WINDOW segments ago is short relative to the known arc length
+//     over that window (chord/arc < MIN_CHORD_FRACTION ↔ ~235° accumulated
+//     arc in 8 steps). Catches the slow tight winding pattern that the
+//     spiral failure mode produces, while well-resolved closed loops
+//     (≈ 22+ steps / revolution at the default DEFAULT_STREAMLINE_OPTIONS
+//     for water modes at c = 1, ω = 4) pass unchanged.
+//
+//   • Near-reversal kink — secondary. The per-step angle between the last
+//     accepted segment and the proposed segment exceeds 120° (dot < -0.5).
+//     Catches the "trace bounced back" artifact of RK4 overshooting a
+//     saddle and reversing direction within a single step. The threshold
+//     is intentionally permissive: ordinary 60–120° physical turns
+//     (radiation-band crossings, sudden-stop shells) pass through, and
+//     only effectively-reversing rotations are flagged.
+const KINK_DOT_THRESHOLD  = -0.5;
 const TORTUOSITY_WINDOW   = 8;
 const MIN_CHORD_FRACTION  = 0.42;
 
 /**
- * Numerical validity guard for fixed-step streamline tracing. Returns true
- * when the proposed next step indicates the trace is no longer resolving the
- * underlying field — either because one step turned through a large angle
- * (overshooting a saddle / null) or because the line has been winding
- * tightly around an under-resolved closed orbit.
- *
- * This is a numerical check, not a physics rule: detached / closed E-field
- * loops are legitimate (`curl E = −∂B/∂t` allows them in source-free space)
- * and well-resolved loops pass this guard unchanged. The guard only fires
- * when local geometry shows that RK4 with the current `stepSize` can no
- * longer be trusted.
+ * Visual / numerical heuristic guard for fixed-step streamline tracing.
+ * Returns true when the proposed next step indicates the trace is no
+ * longer resolving the underlying field. Both branches are heuristics,
+ * not physical-impossibility classifiers: detached / closed E-field loops
+ * are legitimate (`curl E = −∂B/∂t` allows them in source-free space) and
+ * real LW fields can have sharp local direction changes near radiation
+ * features and nulls. The thresholds are tuned to flag only the under-
+ * resolved-orbit failure mode and near-reversal/bounce artifacts.
  *
  * Thresholds:
- *   • KINK_DOT_THRESHOLD = 0.5 — per-step rotation > 60° is interpreted as
- *     an under-resolved saddle/null overshoot.
- *   • Tortuosity over TORTUOSITY_WINDOW = 8 steps: chord/arc < 0.42
- *     corresponds to roughly 235–240° of arc within the window. (The
- *     exact crossover follows `chord/arc = 2 sin(θ/2) / θ`.)
+ *   • Tortuosity (primary) over TORTUOSITY_WINDOW = 8 steps: chord/arc
+ *     < 0.42 corresponds to roughly 235–240° of arc within the window.
+ *     (Crossover follows `chord/arc = 2 sin(θ/2) / θ`.) Well-resolved
+ *     closed loops (~22+ steps/revolution at the default
+ *     DEFAULT_STREAMLINE_OPTIONS) pass unchanged.
+ *   • KINK_DOT_THRESHOLD = -0.5 (secondary) — per-step rotation > 120° is
+ *     interpreted as a near-reversal/bounce, the artifact of RK4
+ *     overshooting a saddle and reversing direction within a single step.
+ *     Ordinary 60–120° physical turns (radiation-band crossings,
+ *     sudden-stop shells) pass through.
  *
  * Cheap O(1): mul/add/sqrt/dot only — no acos/atan2 in the hot loop.
  *
@@ -147,8 +165,8 @@ export function shouldStopForUnderresolvedTrace(
   next: Vec2,
   stepSize: number,
 ): boolean {
-  // Hard kink — needs the previous accepted segment, so points.length >= 2
-  // (points[len-2] → current is the previous segment).
+  // Near-reversal kink — needs the previous accepted segment, so
+  // points.length >= 2 (points[len-2] → current is the previous segment).
   if (points.length >= 2) {
     const prev = points[points.length - 2];
     const ax = current.x - prev.x;
@@ -307,9 +325,11 @@ function traceSingleLine(
 
     // Sink-entry takes strict priority over the under-resolved guard so a
     // line that bends sharply right as it arrives at a sink still terminates
-    // at the sink point rather than being rejected by the kink test.
+    // at the sink point rather than being rejected by the kink/tortuosity
+    // heuristic.
     const nextEntersSink = inSinkRadius(next, sinks, opts.seedOffsetRadius);
     if (!nextEntersSink &&
+        opts.enableUnderresolvedGuard &&
         shouldStopForUnderresolvedTrace(points, current, next, opts.stepSize)) {
       break;
     }
@@ -411,22 +431,28 @@ export function buildStreamlines(
 }
 
 /**
- * Pick which charges to seed field lines from in a multi-charge configuration.
+ * Pick which charges to seed field lines from in the BASE source-to-sink
+ * trace pass of the multi-charge field-line policy.
  *
- * Convention: a 2D field line begins on a + charge and ends on a − charge or
- * at infinity. Seeding only the + sources reproduces the textbook line set
- * with no double-coverage of closed dipole lines (which the previous
- * per-charge seeding policy traced once from each end). If the system has no
- * + charges, the helper falls back to seeding the − charges with `dirSign=-1`
- * so each line traces outward against E from its source — the rendered
- * polyline is then reversed in `buildStreamlines` so tick-marks point in the
- * local E direction, matching the existing single-charge convention.
+ * Convention: a 2D field line begins on a + charge and ends on a − charge.
+ * Seeding only the + sources for this pass avoids the perimeter clustering
+ * an earlier per-charge seeding policy produced by tracing each closed line
+ * once from each end. If the system has no + charges, the helper falls back
+ * to seeding the − charges with `dirSign=-1` so each line traces outward
+ * against E from its source — the rendered polyline is then reversed in
+ * `buildStreamlines` so tick-marks point in the local E direction, matching
+ * the existing single-charge convention.
  *
- * Flux-balance note for the water modes: with `q_O = −0.8` and
- * `q_H+ = q_H- = +0.4`, total positive flux equals total negative flux, so
- * seeding the two hydrogens captures the full field-line set without
- * double-tracing the closed lines that terminate on the oxygen. For dipole
- * and hydrogen the polarity-only rule is sufficient on its own.
+ * The base pass alone does NOT render every visible piece of the field-line
+ * structure: in a net-neutral multi-charge system, closed lines whose +
+ * source-side trace exits the finite trace region (padded view bounds,
+ * `maxSteps`, or under-resolved-trace guard) before reaching a − sink show
+ * up only as escape-from-+ stubs with no visible approach to −. The
+ * companion helper `buildSinkSideEscapeCompletions` draws those missing
+ * sink-side portions; together the two passes form the multi-charge field-
+ * line policy used by `StreamlineCanvas`. For dipole, hydrogen, and the
+ * water modes the two passes give symmetric coverage; for single-polarity
+ * systems only this base pass runs.
  *
  * Returns an empty array when the input is empty or all charges are zero.
  */
@@ -444,6 +470,96 @@ export function selectFieldLineSources(
   return [];
 }
 
+/**
+ * Completes the sink-side portions of source-traced field lines whose
+ * source-side polyline exited the finite trace region (padded view bounds,
+ * `maxSteps`, or under-resolved-trace guard) before reaching its sink.
+ * Without this pass, those lines appear in the rendered set as
+ * escape-from-+ stubs with no visible mirror approaching −.
+ *
+ * Operates only on net-neutral multi-charge systems; for non-neutral or
+ * single-charge systems returns `[]`. Each kept polyline ends inside
+ * `seedOffsetRadius` of a − charge and starts (after the `dirSign < 0`
+ * reversal in `buildStreamlines`) far from any + — which identifies a
+ * sink-side completion whose source-side counterpart did not reach this
+ * sink within the finite trace budget.
+ *
+ * Mechanism: for each − charge, seed `seedCount` lines at `seedOffsetRadius`
+ * around its newest position and trace with `dirSign = -1` (outward against
+ * the local E field at −, since the field points inward there). The
+ * positive newest positions are passed as `sinks` so closed `−→+` traces
+ * cleanly terminate inside `seedOffsetRadius` of a +. The post-trace filter
+ * then drops every polyline whose far end sits inside that radius — those
+ * are the closed lines already drawn by the base source pass; keeping them
+ * would re-introduce the perimeter clustering that the source-only seeding
+ * policy was added to fix. The lines that survive the filter are the
+ * sink-side completions. Polyline orientation is set by the `dirSign < 0`
+ * reversal inside `buildStreamlines`, so the rendered stroke direction
+ * matches local E (incoming to −) and the existing tick-mark renderer
+ * draws arrows pointing INTO the − charge.
+ *
+ * Forwards `opts` so a stopped-shell tracing policy
+ * (`enableUnderresolvedGuard: false`) propagates correctly when called
+ * from a stopped frame.
+ */
+export function buildSinkSideEscapeCompletions(
+  chargeRuntimes: ChargeRuntime[],
+  observationTime: number,
+  config: SimConfig,
+  bounds: TraceBounds,
+  opts?: Partial<StreamlineOptions>,
+): Vec2[][] {
+  if (chargeRuntimes.length < 2) return [];
+
+  let totalCharge = 0;
+  for (const r of chargeRuntimes) totalCharge += r.charge;
+  if (Math.abs(totalCharge) > 1e-6) return [];
+
+  // Positive newest positions serve two purposes: as sinks for the backward
+  // trace (so closed −→+ paths terminate cleanly at +), and as filter
+  // targets (so those closed-line duplicates can be dropped post-trace).
+  const positivePositions: Vec2[] = [];
+  for (const r of chargeRuntimes) {
+    if (r.charge > 0 && !r.history.isEmpty()) {
+      positivePositions.push(r.history.newest()!.pos);
+    }
+  }
+  if (positivePositions.length === 0) return [];
+
+  const options: StreamlineOptions = { ...DEFAULT_STREAMLINE_OPTIONS, ...opts };
+  const filterRadiusSq = options.seedOffsetRadius * options.seedOffsetRadius;
+
+  const lines: Vec2[][] = [];
+  for (const r of chargeRuntimes) {
+    if (r.charge >= 0 || r.history.isEmpty()) continue;
+    const sinkPos = r.history.newest()!.pos;
+
+    const traced = buildStreamlines(
+      sinkPos, observationTime, chargeRuntimes, config, bounds,
+      opts, false, undefined, -1, positivePositions,
+    );
+
+    for (const line of traced) {
+      // After the dirSign<0 reversal inside buildStreamlines, line[0] is
+      // the "far" end of the original backward trace from −. If that far
+      // end is inside seedOffsetRadius of any +, the trace closed on a +
+      // and the polyline is a duplicate of a base-pass line — drop it.
+      const farEnd = line[0];
+      let nearPositive = false;
+      for (const p of positivePositions) {
+        const dx = farEnd.x - p.x;
+        const dy = farEnd.y - p.y;
+        if (dx * dx + dy * dy <= filterRadiusSq) {
+          nearPositive = true;
+          break;
+        }
+      }
+      if (!nearPositive) lines.push(line);
+    }
+  }
+  return lines;
+}
+
 function analyticGhostSeedAngle(realSeedAngle: number, ghostVel: Vec2, c: number): number {
   return Math.atan2(
     c * Math.sin(realSeedAngle) - ghostVel.y,
@@ -451,7 +567,20 @@ function analyticGhostSeedAngle(realSeedAngle: number, ghostVel: Vec2, c: number
   );
 }
 
-function findGhostAnchorOnRealLine(
+/**
+ * Scan along a real streamline for the first point that lies on the settled
+ * outer branch of the radiation shell — the point used to anchor a matching
+ * ghost-charge streamline. A point qualifies once the acceleration-field
+ * contribution has first risen through the band (`accelRatio ≥ 0.12`) and
+ * then fallen back below `0.05` for `GHOST_EXIT_RUN_LENGTH` consecutive
+ * samples. Returns null when the line never settles within the traced span.
+ *
+ * Exported so the moving-charge regression test can directly assert that the
+ * upstream precondition for accurate ghost seed-angle matching holds (rather
+ * than only checking the final ghost-line geometry, which is downstream of
+ * both this anchor and the numeric seed-angle solve).
+ */
+export function findGhostAnchorOnRealLine(
   line: Vec2[],
   observationTime: number,
   history: ChargeHistory,

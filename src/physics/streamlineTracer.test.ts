@@ -3,7 +3,10 @@ import { ChargeHistory } from './chargeHistory';
 import type { ChargeRuntime } from './chargeRuntime';
 import type { SimConfig, Vec2 } from './types';
 import {
+  buildSinkSideEscapeCompletions,
   buildStreamlines,
+  DEFAULT_STREAMLINE_OPTIONS,
+  findGhostAnchorOnRealLine,
   selectFieldLineSources,
   shouldStopForUnderresolvedTrace,
 } from './streamlineTracer';
@@ -176,6 +179,286 @@ describe('buildStreamlines — sink termination', () => {
   });
 });
 
+describe('buildStreamlines — moving_charge stop-shell regression', () => {
+  // Tracer-level fixture that reproduces the moving_charge sudden-stop
+  // history in-test from primitives (mirrors `sampleSuddenStopState`; not
+  // imported so the tracer test stays free of demoModes coupling).
+  //
+  // Locks the precondition that fails when the under-resolved-trace guard
+  // fires across the radiation shell:
+  //   • Most real seed lines extend past the shell margin around the rest
+  //     position (measured from the stopped charge, not the world origin).
+  //   • For those same lines, `findGhostAnchorOnRealLine` returns a
+  //     non-null settled-outer-branch anchor — the actual upstream
+  //     condition for accurate ghost-line seed-angle matching.
+  it('real lines reach past shell margin and ghost anchors are findable (guard off)', () => {
+    const V       = 0.6;
+    const T_BRAKE = 0.2;
+    const T_trig  = 1.0;
+    const t_obs   = 3.0;
+    const cVal    = 1.0;
+
+    // Rest position of the stopped charge.
+    const xStop = V * T_trig + V * T_BRAKE / 2;
+
+    // Shell-margin distance: two brake-window thicknesses past the leading
+    // edge — a deliberately conservative margin so the assertion is
+    // comfortably outside the radiation band. The shell band itself spans
+    // [c·(t_obs − brakeEnd), c·(t_obs − T_trig)] and so has thickness
+    // c·T_BRAKE; the assertion adds 2·c·T_BRAKE past the outer edge. All
+    // distances are measured from the rest position of the stopped charge
+    // so the fixture stays valid if T_trig or V change.
+    const shellLeadingEdgeRadius = cVal * (t_obs - T_trig);
+    const shellMargin            = shellLeadingEdgeRadius + 2 * cVal * T_BRAKE;
+
+    // Cover retarded-time look-back from the farthest in-bounds trace
+    // point with margin to spare.
+    const history = new ChargeHistory();
+    const dt = 0.025;
+    const tStart = -8;
+    const N = Math.round((t_obs - tStart) / dt);
+    for (let i = 0; i <= N; i++) {
+      const t = tStart + i * dt;
+      let pos: Vec2, vel: Vec2, accel: Vec2;
+      if (t < T_trig) {
+        pos   = { x: V * t, y: 0 };
+        vel   = { x: V,     y: 0 };
+        accel = { x: 0,     y: 0 };
+      } else if (t < T_trig + T_BRAKE) {
+        const elapsed    = t - T_trig;
+        const brakeAccel = -V / T_BRAKE;
+        pos   = {
+          x: V * T_trig + V * elapsed + 0.5 * brakeAccel * elapsed * elapsed,
+          y: 0,
+        };
+        vel   = { x: V + brakeAccel * elapsed, y: 0 };
+        accel = { x: brakeAccel,               y: 0 };
+      } else {
+        pos   = { x: xStop, y: 0 };
+        vel   = { x: 0,     y: 0 };
+        accel = { x: 0,     y: 0 };
+      }
+      history.recordState({ t, pos, vel, accel });
+    }
+
+    const runtime: ChargeRuntime = { history, charge: +1 };
+    const cfg: SimConfig = { c: cVal, softening: 0.01 };
+    const traceBounds = { minX: -3, maxX: 4, minY: -3, maxY: 3 };
+    const seedCount = 16;
+
+    const lines = buildStreamlines(
+      { x: xStop, y: 0 }, t_obs, [runtime], cfg, traceBounds,
+      { enableUnderresolvedGuard: false, seedCount },
+    );
+
+    // Most seeds should produce a traceable line in the first place.
+    expect(lines.length).toBeGreaterThanOrEqual(14);
+
+    let reachedFar    = 0;
+    let anchorsFound  = 0;
+    for (const line of lines) {
+      const reached = line.some(p =>
+        Math.hypot(p.x - xStop, p.y) >= shellMargin,
+      );
+      if (reached) reachedFar++;
+
+      const anchor = findGhostAnchorOnRealLine(line, t_obs, history, +1, cfg);
+      if (anchor !== null) anchorsFound++;
+    }
+
+    expect(reachedFar).toBeGreaterThanOrEqual(14);
+    expect(anchorsFound).toBeGreaterThanOrEqual(14);
+  });
+});
+
+describe('buildStreamlines — oscillating stop-shell regression', () => {
+  // Tracer-level fixture mirroring an oscillating-mode sudden-stop history
+  // (sinusoidal motion until T_trig, Hermite-cubic brake to rest over
+  // T_BRAKE, then at rest at the equilibrium origin). Constructed from
+  // primitives so the tracer test stays free of demoModes coupling.
+  //
+  // Pins the user-visible behavior of the stopped-shell tracing policy
+  // adopted by StreamlineCanvas: when a mode has been stopped, the
+  // under-resolved-trace guard is disabled so lines can cross the
+  // finite-thickness radiation shell (where the LW acceleration-term field
+  // is mostly tangential and would otherwise trip the tortuosity branch
+  // before the line emerges on the outside). An adaptive future guard
+  // that hits the same target through a different mechanism would still
+  // pass — this test pins the user-visible reach, not the particular
+  // guard parameters.
+  it('lines reach past shell margin under stopped-shell tracing policy (guard off)', () => {
+    // Match production OSCILLATING_AMPLITUDE / OSCILLATING_OMEGA /
+    // SUDDEN_STOP_T_BRAKE; see src/physics/demoModes.ts.
+    const A       = 0.125;
+    const omega   = 4.0;
+    const T_BRAKE = 0.2;
+    const T_trig  = 1.0;
+    const t_obs   = 3.0;
+    const cVal    = 1.0;
+
+    // Equilibrium / rest position of the oscillating charge is the origin.
+    const xRest = 0;
+    const yRest = 0;
+
+    // Shell-margin distance: two brake-window thicknesses past the leading
+    // edge — same conservative margin as the moving-charge fixture above so
+    // both tests share a single notion of "lines reach past the shell". The
+    // shell band itself spans [c·(t_obs − brakeEnd), c·(t_obs − T_trig)]
+    // and so has thickness c·T_BRAKE; the assertion adds 2·c·T_BRAKE past
+    // the outer edge. Measured from the rest position.
+    const shellLeadingEdgeRadius = cVal * (t_obs - T_trig);
+    const shellMargin            = shellLeadingEdgeRadius + 2 * cVal * T_BRAKE;
+
+    const history = new ChargeHistory();
+    const dt = 0.025;
+    const tStart = -10;
+    const N = Math.round((t_obs - tStart) / dt);
+    const brakeEnd = T_trig + T_BRAKE;
+    for (let i = 0; i <= N; i++) {
+      const t = tStart + i * dt;
+      let pos: Vec2, vel: Vec2, accel: Vec2;
+      if (t < T_trig) {
+        // Phase 1 — pre-trigger sinusoidal motion along x.
+        pos   = { x: A * Math.sin(omega * t),                    y: 0 };
+        vel   = { x: A * omega * Math.cos(omega * t),            y: 0 };
+        accel = { x: -A * omega * omega * Math.sin(omega * t),   y: 0 };
+      } else if (t < brakeEnd) {
+        // Phase 2 — Hermite cubic brake in the scalar amplitude.
+        const tau   = (t - T_trig) / T_BRAKE;
+        const s0    = A * Math.sin(omega * T_trig);
+        const sDot0 = A * omega * Math.cos(omega * T_trig);
+        const f   = s0    * (2 * tau ** 3 - 3 * tau ** 2 + 1)
+                  + sDot0 * T_BRAKE * (tau ** 3 - 2 * tau ** 2 + tau);
+        const fp  = s0    * (6 * tau ** 2 - 6 * tau)
+                  + sDot0 * T_BRAKE * (3 * tau ** 2 - 4 * tau + 1);
+        const fpp = s0    * (12 * tau - 6)
+                  + sDot0 * T_BRAKE * (6 * tau - 4);
+        pos   = { x: f,                          y: 0 };
+        vel   = { x: fp / T_BRAKE,               y: 0 };
+        accel = { x: fpp / (T_BRAKE * T_BRAKE),  y: 0 };
+      } else {
+        // Phase 3 — at rest at equilibrium.
+        pos   = { x: xRest, y: yRest };
+        vel   = { x: 0,     y: 0 };
+        accel = { x: 0,     y: 0 };
+      }
+      history.recordState({ t, pos, vel, accel });
+    }
+
+    const runtime: ChargeRuntime = { history, charge: +1 };
+    const cfg: SimConfig = { c: cVal, softening: 0.01 };
+    const traceBounds = { minX: -3, maxX: 3, minY: -3, maxY: 3 };
+    const seedCount = 16;
+
+    // Match the production policy: StreamlineCanvas disables the guard for
+    // any stopped-state frame so the line can traverse the radiation shell.
+    const lines = buildStreamlines(
+      { x: xRest, y: yRest }, t_obs, [runtime], cfg, traceBounds,
+      { enableUnderresolvedGuard: false, seedCount },
+    );
+
+    expect(lines.length).toBeGreaterThanOrEqual(14);
+
+    let reachedFar = 0;
+    for (const line of lines) {
+      const reached = line.some(p =>
+        Math.hypot(p.x - xRest, p.y - yRest) >= shellMargin,
+      );
+      if (reached) reachedFar++;
+    }
+    expect(reachedFar).toBeGreaterThanOrEqual(14);
+  });
+});
+
+describe('buildSinkSideEscapeCompletions — multi-charge two-pass policy', () => {
+  const seedR  = DEFAULT_STREAMLINE_OPTIONS.seedOffsetRadius;
+  const seedR2 = seedR * seedR;
+
+  function distSq(a: { x: number; y: number }, b: { x: number; y: number }): number {
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    return dx * dx + dy * dy;
+  }
+
+  it('static dipole: completion lines mirror source-side escape count and pass the filter contract', () => {
+    // Charges placed wide enough that several base-pass + traces escape the
+    // padded trace region before reaching −, leaving room for completions
+    // to mirror them.
+    const pPlusPos: Vec2  = { x: -1, y: 0 };
+    const pMinusPos: Vec2 = { x: +1, y: 0 };
+    const pPlus  = makeStaticChargeRuntime(+1, pPlusPos.x,  pPlusPos.y);
+    const pMinus = makeStaticChargeRuntime(-1, pMinusPos.x, pMinusPos.y);
+    const runtimes = [pPlus, pMinus];
+
+    // Production-mirroring baseline call: + seeded, combined runtimes,
+    // dirSign = +1, sinks = [negativeNewest.pos]. Without the sinks
+    // argument, base-pass + traces could overshoot − and the
+    // "escape from +" count below would be inflated.
+    const baseline = buildStreamlines(
+      pPlusPos, 0, runtimes, config, bounds,
+      undefined, false, undefined, +1, [pMinusPos],
+    );
+
+    const completions = buildSinkSideEscapeCompletions(runtimes, 0, config, bounds);
+
+    // (a) Helper produces at least one completion for this geometry.
+    expect(completions.length).toBeGreaterThanOrEqual(1);
+
+    for (const line of completions) {
+      const farEnd  = line[0];
+      const nearEnd = line[line.length - 1];
+
+      // (b) Filter contract: far end (post-reversal line[0]) is NOT inside
+      //     the + filter radius — proves duplicates were dropped.
+      expect(distSq(farEnd, pPlusPos)).toBeGreaterThan(seedR2);
+
+      // (c) Arrival contract: near end (post-reversal line[last]) is
+      //     inside the − sink radius — proves the line actually
+      //     terminates at − rather than escaping the bounds. Tolerance
+      //     allows for floating-point noise in cos/sin → dx² + dy²: the
+      //     seed itself is placed by construction at exactly seedR from
+      //     the sink, so the boundary case is on the rounding edge.
+      expect(Math.hypot(nearEnd.x - pMinusPos.x, nearEnd.y - pMinusPos.y))
+        .toBeLessThanOrEqual(seedR + 1e-9);
+    }
+
+    // (d) Mirror-symmetry count: in a perfectly symmetric static dipole,
+    //     the number of source-side escape lines (base + traces whose
+    //     endpoint is NOT inside − sink radius) must equal the number of
+    //     sink-side completions (− backward traces whose far end is NOT
+    //     near +). This is the textbook mirror that the old c2097d4
+    //     source-only policy was missing on the screen.
+    const baselineEscapes = baseline.filter(
+      line => distSq(line[line.length - 1], pMinusPos) > seedR2,
+    ).length;
+    expect(completions.length).toBe(baselineEscapes);
+  });
+
+  it('non-neutral system (two positives) returns []', () => {
+    const r1 = makeStaticChargeRuntime(+1, -1, 0);
+    const r2 = makeStaticChargeRuntime(+1, +1, 0);
+    expect(buildSinkSideEscapeCompletions([r1, r2], 0, config, bounds)).toEqual([]);
+  });
+
+  it('single-charge inputs return []', () => {
+    expect(buildSinkSideEscapeCompletions(
+      [makeStaticChargeRuntime(+1)], 0, config, bounds,
+    )).toEqual([]);
+    expect(buildSinkSideEscapeCompletions(
+      [makeStaticChargeRuntime(-1)], 0, config, bounds,
+    )).toEqual([]);
+  });
+
+  it('net-neutral but no positive history (defensive): returns []', () => {
+    // Net charges sum to zero, but the + runtime's history is empty so it
+    // contributes no sink position — the helper must not crash and must
+    // not seed completions targeting a sink that isn't yet placed.
+    const pNeg = makeStaticChargeRuntime(-1, +1, 0);
+    const pPos: ChargeRuntime = { history: new ChargeHistory(), charge: +1 };
+    expect(buildSinkSideEscapeCompletions([pPos, pNeg], 0, config, bounds)).toEqual([]);
+  });
+});
+
 describe('shouldStopForUnderresolvedTrace — numerical validity guard', () => {
   const STEP = 0.035;
 
@@ -215,18 +498,29 @@ describe('shouldStopForUnderresolvedTrace — numerical validity guard', () => {
     expect(shouldStopForUnderresolvedTrace(points, current, next, STEP)).toBe(false);
   });
 
-  it('hard kink: stops via dot threshold (no tortuosity history needed)', () => {
-    // Two prior points along +x then a 90° turn into +y. Tortuosity branch is
-    // inactive because points.length < TORTUOSITY_WINDOW (=8).
+  it('near-reversal kink: stops via dot threshold (no tortuosity history needed)', () => {
+    // Two prior points along +x then a 135° turn (well past the −0.5 dot
+    // threshold; cos 135° ≈ −0.707). The tortuosity branch is inactive
+    // because points.length < TORTUOSITY_WINDOW (=8).
+    const points: Vec2[] = [{ x: -STEP, y: 0 }, { x: 0, y: 0 }];
+    const current = points[1];
+    const next = { x: -STEP * Math.SQRT1_2, y: STEP * Math.SQRT1_2 };
+    expect(shouldStopForUnderresolvedTrace(points, current, next, STEP)).toBe(true);
+  });
+
+  it('moderate sharp turn (90°): does NOT stop (passes the −0.5 kink threshold)', () => {
+    // Locks the new threshold semantics: a 90° turn is a legitimate sharp
+    // physical change (e.g. a radiation-band crossing) and must pass the
+    // guard. cos 90° = 0, well above the −0.5 dot threshold.
     const points: Vec2[] = [{ x: -STEP, y: 0 }, { x: 0, y: 0 }];
     const current = points[1];
     const next = { x: 0, y: STEP };
-    expect(shouldStopForUnderresolvedTrace(points, current, next, STEP)).toBe(true);
+    expect(shouldStopForUnderresolvedTrace(points, current, next, STEP)).toBe(false);
   });
 
   it('tight orbit: stops via tortuosity even when every per-step turn is below the kink threshold', () => {
     // 8 points on a tight circle where each per-step turn is 40°
-    // (dot ≈ cos 40° ≈ 0.766, well above the 0.5 kink threshold).
+    // (dot ≈ cos 40° ≈ 0.766, far above the −0.5 kink threshold).
     // Total arc over the 8-step window: 320°, chord/arc ≈ 0.12 ≪ 0.42.
     const dThetaTarget = (40 * Math.PI) / 180;
     const R = STEP / (2 * Math.sin(dThetaTarget / 2));
@@ -244,7 +538,7 @@ describe('shouldStopForUnderresolvedTrace — numerical validity guard', () => {
       if (!bMagPrev) continue;
       const dot = (a.x * bMagPrev.x + a.y * bMagPrev.y)
         / (Math.hypot(a.x, a.y) * Math.hypot(bMagPrev.x, bMagPrev.y));
-      expect(dot).toBeGreaterThan(0.5);
+      expect(dot).toBeGreaterThan(-0.5);
     }
     // Also check the candidate segment's per-step dot is above the kink threshold,
     // so the assertion below is unambiguously about the tortuosity branch.
@@ -254,7 +548,7 @@ describe('shouldStopForUnderresolvedTrace — numerical validity guard', () => {
     const seg2 = { x: next.x - last.x, y: next.y - last.y };
     const dotLast = (seg1.x * seg2.x + seg1.y * seg2.y)
       / (Math.hypot(seg1.x, seg1.y) * Math.hypot(seg2.x, seg2.y));
-    expect(dotLast).toBeGreaterThan(0.5);
+    expect(dotLast).toBeGreaterThan(-0.5);
 
     expect(shouldStopForUnderresolvedTrace(points, current, next, STEP)).toBe(true);
   });
@@ -302,11 +596,15 @@ describe('shouldStopForUnderresolvedTrace — numerical validity guard', () => {
     const next3 = { x: R * Math.cos(nextTheta3), y: R * Math.sin(nextTheta3) };
     expect(shouldStopForUnderresolvedTrace(pts3, current3, next3, STEP)).toBe(false);
 
-    // (d) Length-3 with a 90° kink → true (kink branch is active at length ≥ 2).
+    // (d) Length-3 with a 135° near-reversal kink → true (kink branch is
+    //     active at length ≥ 2). Prior segment heads +y; candidate segment
+    //     heads (−√½, −√½), giving dot ≈ −0.707 < −0.5.
     const kinkPts: Vec2[] = [{ x: -STEP, y: 0 }, { x: 0, y: 0 }, { x: 0, y: STEP }];
+    const dx = -STEP * Math.SQRT1_2;
+    const dy = -STEP * Math.SQRT1_2;
     expect(
       shouldStopForUnderresolvedTrace(
-        kinkPts, kinkPts[2], { x: -STEP, y: STEP }, STEP,
+        kinkPts, kinkPts[2], { x: kinkPts[2].x + dx, y: kinkPts[2].y + dy }, STEP,
       ),
     ).toBe(true);
 

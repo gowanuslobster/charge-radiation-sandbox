@@ -29,11 +29,14 @@ import {
 } from 'react';
 import {
   buildStreamlines,
+  buildSinkSideEscapeCompletions,
   buildGhostHistory,
   deriveGhostSeedAnglesFromRealLines,
   selectFieldLineSources,
+  type StreamlineOptions,
 } from '@/physics/streamlineTracer';
 import type { ChargeRuntime } from '@/physics/chargeRuntime';
+import type { DemoMode } from '@/physics/demoModes';
 import {
   getWorldToScreenTransform,
   transformWorldPoint,
@@ -56,6 +59,30 @@ type Props = {
   ghostPosRef?: RefObject<Vec2 | null>;
   /** Constant velocity of the ghost charge, used to build its synthetic history. */
   ghostVel?: Vec2;
+  /**
+   * Active demo mode. Used to choose tracer policy: moving_charge disables the
+   * under-resolved-trace guard so the legitimate sharp E-direction change
+   * across the radiation shell does not truncate real or ghost lines.
+   */
+  demoMode: DemoMode;
+  /**
+   * Ref pointing at a flag the simulation tick flips to `true` once it has
+   * begun writing stop-aware (brake) history into each charge's buffer.
+   * The brake-end anchor itself is written later, by the first subsequent
+   * tick that straddles brakeEnd, so this flag may flip true while only
+   * the early interior brake substeps exist — that is intentional and
+   * sufficient for tracing-policy purposes.
+   *
+   * The streamline overlay reads this ref directly (rather than mirroring
+   * the React-state Stop-now flag) so it does NOT retrace on the click
+   * event itself — paused Stop-now stays visually inert until playback
+   * resumes and the tick begins writing the shell, after which the
+   * overlay retraces under the stopped-shell tracing policy (under-
+   * resolved guard disabled so lines can cross the finite-thickness shell
+   * whose tangential acceleration-band geometry would otherwise trip the
+   * tortuosity branch and truncate lines mid-shell).
+   */
+  stoppedShellHistoryRecordedRef: RefObject<boolean>;
   style?: CSSProperties;
 };
 
@@ -167,21 +194,26 @@ export function StreamlineCanvas({
   showGhostStreamlines,
   ghostPosRef,
   ghostVel,
+  demoMode,
+  stoppedShellHistoryRecordedRef,
   style,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Mirror React props into refs so the long-lived RAF closure reads fresh values
   // without needing to restart the effect when props change.
+  // (stoppedShellHistoryRecordedRef is already a ref — no mirror needed.)
   const boundsRef             = useRef(bounds);
   const showStreamlinesRef    = useRef(showStreamlines);
   const showGhostStreamlinesRef = useRef(showGhostStreamlines);
   const ghostVelRef           = useRef(ghostVel);
+  const demoModeRef           = useRef(demoMode);
 
   useEffect(() => { boundsRef.current = bounds; },                       [bounds]);
   useEffect(() => { showStreamlinesRef.current = showStreamlines; },     [showStreamlines]);
   useEffect(() => { showGhostStreamlinesRef.current = showGhostStreamlines; }, [showGhostStreamlines]);
   useEffect(() => { ghostVelRef.current = ghostVel; },                   [ghostVel]);
+  useEffect(() => { demoModeRef.current = demoMode; },                   [demoMode]);
 
   // Long-lived RAF loop with retrace-on-demand.
   // Empty dep array: reads all mutable state via refs; never restarts.
@@ -198,16 +230,23 @@ export function StreamlineCanvas({
     // Cache keys: retrace when any physics input changes.
     // Bounds span is also tracked: a significant zoom-out invalidates the cache
     // because the padded clip region at trace-time may no longer extend far enough.
-    let lastEpoch       = -1;
-    let lastSimTime     = NaN;
-    let lastShowSL      = false;
-    let lastShowGSL     = false;
-    let lastGhostX      = NaN;
-    let lastGhostY      = NaN;
-    let lastSpanX       = 0;
-    let lastSpanY       = 0;
-    let lastC           = NaN;
-    let lastChargeCount = 0;
+    let lastEpoch          = -1;
+    let lastSimTime        = NaN;
+    let lastShowSL         = false;
+    let lastShowGSL        = false;
+    let lastGhostX         = NaN;
+    let lastGhostY         = NaN;
+    let lastSpanX          = 0;
+    let lastSpanY          = 0;
+    let lastC              = NaN;
+    let lastChargeCount    = 0;
+    // Cache key for the stopped-shell tracing policy. Mirrors the recorded-
+    // history flag (NOT the React stopTriggered button state). Flips inside
+    // a sim tick, after recordStoppedFrame has run and the brake substeps
+    // are in history; the next streamline frame sees the change and
+    // retraces under the stopped-shell policy. A paused Stop-now click does
+    // NOT change this — the tick is what writes the shell.
+    let lastStoppedShellHistoryRecorded = false;
 
     // DPR-aware canvas sizing.
     const ro = new ResizeObserver(() => {
@@ -262,19 +301,41 @@ export function StreamlineCanvas({
           (spanY - lastSpanY) / lastSpanY > 0.3
         );
 
+      const stoppedShellHistoryRecorded = stoppedShellHistoryRecordedRef.current ?? false;
       const needsRetrace =
-        epoch   !== lastEpoch   ||
-        simTime !== lastSimTime ||
-        showSL  !== lastShowSL  ||
-        showGSL !== lastShowGSL ||
-        gx !== lastGhostX       ||
-        gy !== lastGhostY       ||
-        spanExpandedLarge       ||
-        config.c !== lastC      ||
-        chargeRuntimes.length !== lastChargeCount;
+        epoch          !== lastEpoch          ||
+        simTime        !== lastSimTime        ||
+        showSL         !== lastShowSL         ||
+        showGSL        !== lastShowGSL        ||
+        gx             !== lastGhostX         ||
+        gy             !== lastGhostY         ||
+        spanExpandedLarge                     ||
+        config.c       !== lastC              ||
+        chargeRuntimes.length !== lastChargeCount ||
+        stoppedShellHistoryRecorded !== lastStoppedShellHistoryRecorded;
 
       if (needsRetrace) {
         let realLinesForGhost: Vec2[][] = [];
+
+        // Disable the under-resolved-trace guard for any frame whose
+        // history actually contains a finite-thickness radiation shell:
+        //   • moving_charge always (its constant-velocity-then-brake
+        //     kinematics produce the inner-Coulomb / outer-extrapolated
+        //     direction discontinuity even before the Stop trigger fires,
+        //     because the trigger IS the only way the mode ever stops).
+        //   • Any other mode once the simulation tick has actually
+        //     recorded the brake event into history (signalled by the
+        //     stoppedShellHistoryRecordedRef flip — NOT by the React
+        //     stopTriggered button state, which flips on click and would
+        //     otherwise change the policy before the shell exists).
+        // Pre-stop periodic modes (oscillating, dipole, hydrogen, water_*)
+        // continue to inherit the default guard-on policy from
+        // DEFAULT_STREAMLINE_OPTIONS so the original spiraling-near-saddle
+        // failure mode that a135e95 fixed remains protected.
+        const traceOpts: Partial<StreamlineOptions> | undefined =
+          demoModeRef.current === 'moving_charge' || stoppedShellHistoryRecorded
+            ? { enableUnderresolvedGuard: false }
+            : undefined;
 
         // Main streamlines — combined LW E field at the paused frame.
         // For single-charge modes: seed from one position (existing behavior).
@@ -287,6 +348,7 @@ export function StreamlineCanvas({
             if (newest !== null) {
               const computedMainLines = buildStreamlines(
                 newest.pos, simTime, chargeRuntimes, config, currentBounds,
+                traceOpts,
               );
               tracedLines = showSL ? computedMainLines : [];
               realLinesForGhost = computedMainLines;
@@ -294,10 +356,21 @@ export function StreamlineCanvas({
               tracedLines = [];
             }
           } else {
-            // Multi-charge: seed only one polarity per the textbook field-line
-            // rule (see selectFieldLineSources). Opposite-sign charges become
-            // sinks so lines arrive cleanly at their target charge instead of
-            // overshooting through the softened singularity and oscillating.
+            // Multi-charge two-pass policy:
+            //   Pass 1 (base source-to-sink) — seeds one polarity per
+            //     selectFieldLineSources; opposite-sign charges become sinks
+            //     so closed lines terminate cleanly at their target charge
+            //     instead of overshooting through the softened singularity
+            //     and oscillating. Covers all closed lines whose source-
+            //     side trace reaches its sink within the trace budget,
+            //     plus any source-side escape stubs.
+            //   Pass 2 (sink-side escape completions) — only runs in
+            //     net-neutral systems. Adds the sink-side portions of
+            //     closed lines whose pass-1 source-side trace exited the
+            //     finite trace region (padded bounds, maxSteps, or
+            //     under-resolved-trace guard) before reaching its sink.
+            //     Without it, those closed lines render as escape-from-+
+            //     stubs with no visible mirror approaching −.
             const sources = selectFieldLineSources(chargeRuntimes);
             const seedDirSign = sources[0]?.dirSign ?? +1;
             const sinks: Vec2[] = [];
@@ -313,9 +386,12 @@ export function StreamlineCanvas({
               const newest = runtime.history.newest()!;
               allLines.push(...buildStreamlines(
                 newest.pos, simTime, chargeRuntimes, config, currentBounds,
-                undefined, false, undefined, dirSign, sinks,
+                traceOpts, false, undefined, dirSign, sinks,
               ));
             }
+            allLines.push(...buildSinkSideEscapeCompletions(
+              chargeRuntimes, simTime, config, currentBounds, traceOpts,
+            ));
             tracedLines = showSL ? allLines : [];
           }
         } else {
@@ -338,6 +414,7 @@ export function StreamlineCanvas({
 
           // Match each ghost line to the settled outer branch of a traced real
           // streamline, not to the idealized zero-thickness shell crossing.
+          // traceOpts also propagates into solveGhostSeedAngle's search traces.
           const ghostAngles = newest !== null
             ? deriveGhostSeedAnglesFromRealLines(
                 realLinesForGhost,
@@ -350,6 +427,7 @@ export function StreamlineCanvas({
                 config,
                 ghostHistory,
                 currentBounds,
+                traceOpts,
               )
             : [];
 
@@ -360,7 +438,7 @@ export function StreamlineCanvas({
               ghostPos, simTime,
               [{ history: ghostHistory, charge }], // ghost's single runtime
               config, currentBounds,
-              undefined,
+              traceOpts,
               true, // velocityOnly — ghost represents constant-velocity, no radiation term
               ghostAngles,
             );
@@ -369,16 +447,17 @@ export function StreamlineCanvas({
           tracedGhostLines = [];
         }
 
-        lastEpoch       = epoch;
-        lastSimTime     = simTime;
-        lastShowSL      = showSL;
-        lastShowGSL     = showGSL;
-        lastGhostX      = gx;
-        lastGhostY      = gy;
-        lastSpanX       = spanX;
-        lastSpanY       = spanY;
-        lastC           = config.c;
-        lastChargeCount = chargeRuntimes.length;
+        lastEpoch                       = epoch;
+        lastSimTime                     = simTime;
+        lastShowSL                      = showSL;
+        lastShowGSL                     = showGSL;
+        lastGhostX                      = gx;
+        lastGhostY                      = gy;
+        lastSpanX                       = spanX;
+        lastSpanY                       = spanY;
+        lastC                           = config.c;
+        lastChargeCount                 = chargeRuntimes.length;
+        lastStoppedShellHistoryRecorded = stoppedShellHistoryRecorded;
       }
 
       // Draw to the DPR-scaled canvas.
